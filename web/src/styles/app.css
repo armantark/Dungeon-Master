@@ -1,0 +1,389 @@
+/*
+ * The Oracle's Ledger — an aged-grimoire aesthetic, chat-first.
+ *
+ * Type system (three voices):
+ *   Cormorant Garamond  -> the DM's narrative voice (prose, body)
+ *   IM Fell English SC  -> chapter / scene heads (rare, ceremonial)
+ *   Alagard (pixel)     -> the engine's voice (chaos number, dice, tags,
+ *                          kicker labels, system messages, receipts)
+ *
+ * Pixel + parchment isn't a contradiction: Fear & Hunger, Souls demakes,
+ * and old computer-RPG manuals all stack pixel UI on illustrated paper.
+ * Alagard goes wherever the *machine* speaks, Cormorant wherever the
+ * *story* speaks. Don't mix.
+ *
+ * Pigments. Resist adding more or introducing semantic names like
+ * "primary"/"accent" - those tell you nothing about pigment behavior.
+ */
+
+@font-face {
+  font-family: "Alagard";
+  src:
+    local("Alagard"),
+    url("/fonts/alagard.ttf") format("truetype"),
+    /* VT323 is loaded via Google Fonts as the fallback, see index.html. */
+    local("VT323");
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  /* Pigments. */
+  --ink-black: #0c0a08;
+  --ink-deep: #14110d;
+  --ink-bruise: #2a1b14;
+  --paper-bone: #dccaac;
+  --paper-warm: #e7d6b6;
+  --paper-stained: #c4ad84;
+  --paper-shadow: #8e7a55;
+  --gold-tarnished: #a8853f;
+  --gold-candle: #c39a4a;
+  --gold-bright: #d9b15a;
+  --rust-iron: #7a2820;
+  --rust-blood: #4d1612;
+  --green-verdigris: #586b3a;
+
+  --rule-hair: 1px solid color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+  --rule-gold: 1px solid var(--gold-tarnished);
+  --shadow-deep: 0 24px 48px -16px rgba(0, 0, 0, 0.85);
+  --shadow-leather: inset 0 0 80px rgba(0, 0, 0, 0.45);
+
+  --font-display: "IM Fell English SC", "Cormorant Garamond", Georgia, serif;
+  --font-body: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-pixel: "Alagard", "VT323", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--paper-bone);
+  background: var(--ink-black);
+  background-image:
+    radial-gradient(circle at 18% -8%, rgba(168, 133, 63, 0.28), transparent 40%),
+    radial-gradient(circle at 92% 4%, rgba(122, 40, 32, 0.30), transparent 45%),
+    radial-gradient(circle at 50% 110%, rgba(20, 17, 13, 1), rgba(8, 7, 6, 1) 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.10;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0.84 0 0 0 0 0.78 0 0 0 0 0.65 0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 200px 200px;
+}
+
+/* --- Typography ------------------------------------------------------- */
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.4em 0;
+  color: var(--paper-warm);
+}
+
+h1 { font-size: 2.4rem; line-height: 1.05; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; letter-spacing: 0.04em; }
+
+p { margin: 0 0 1em 0; }
+
+em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
+
+.kicker {
+  font-family: var(--font-pixel);
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold-tarnished);
+  margin-bottom: 0.5em;
+}
+
+.muted { color: var(--paper-shadow); }
+
+.pixel {
+  font-family: var(--font-pixel);
+  font-variant-numeric: tabular-nums;
+  /*
+   * Force per-pixel rendering. Without this Safari and Chrome both
+   * smooth pixel fonts at non-integer sizes, which destroys the
+   * stair-stepped silhouette that gives Alagard its character.
+   */
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+  font-smooth: never;
+  image-rendering: pixelated;
+}
+
+/* --- Surfaces --------------------------------------------------------- */
+
+.parchment {
+  position: relative;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(74, 38, 22, 0.16), transparent 45%),
+    radial-gradient(circle at 88% 82%, rgba(74, 38, 22, 0.22), transparent 55%),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--paper-warm) 96%, var(--ink-bruise)) 0%,
+      var(--paper-bone) 50%,
+      color-mix(in oklab, var(--paper-stained) 92%, var(--ink-bruise)) 100%
+    );
+  color: var(--ink-deep);
+  border: 1px solid color-mix(in oklab, var(--ink-bruise) 60%, transparent);
+  box-shadow:
+    inset 0 0 60px rgba(60, 30, 10, 0.22),
+    0 18px 36px -12px rgba(0, 0, 0, 0.65);
+  padding: 1.4rem 1.6rem;
+}
+
+.parchment .kicker {
+  color: color-mix(in oklab, var(--rust-blood) 85%, var(--ink-black));
+}
+.parchment h2,
+.parchment h3 {
+  color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
+}
+.parchment .muted {
+  color: color-mix(in oklab, var(--ink-bruise) 65%, var(--paper-shadow));
+}
+
+.deckle {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><filter id='r'><feTurbulence type='fractalNoise' baseFrequency='0.018 0.04' numOctaves='2' seed='9'/><feDisplacementMap in='SourceGraphic' scale='6'/></filter><rect x='1' y='1' width='98' height='98' fill='black' filter='url(%23r)'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><filter id='r'><feTurbulence type='fractalNoise' baseFrequency='0.018 0.04' numOctaves='2' seed='9'/><feDisplacementMap in='SourceGraphic' scale='6'/></filter><rect x='1' y='1' width='98' height='98' fill='black' filter='url(%23r)'/></svg>");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+.iron {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--ink-deep) 98%, var(--rust-iron)) 0%,
+      var(--ink-black) 100%
+    );
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+  box-shadow: var(--shadow-deep), var(--shadow-leather);
+  color: var(--paper-bone);
+}
+
+/* --- Buttons ---------------------------------------------------------- */
+
+button,
+.btn {
+  --btn-bg: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--ink-deep) 90%, var(--rust-iron)) 0%,
+    var(--ink-black) 100%
+  );
+  --btn-color: var(--paper-warm);
+  --btn-border: color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+
+  appearance: none;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-color);
+  font-family: var(--font-pixel);
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  border-radius: 0;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 140, 0.06),
+    0 6px 14px -8px rgba(0, 0, 0, 0.6);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  --btn-border: var(--gold-bright);
+  color: var(--gold-bright);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  --btn-bg: transparent;
+  --btn-border: color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+}
+
+button.link {
+  --btn-bg: transparent;
+  --btn-border: transparent;
+  padding: 0.2rem 0.4rem;
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+/* --- Form controls --------------------------------------------------- */
+
+input[type="text"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  background: color-mix(in oklab, var(--ink-deep) 92%, var(--paper-stained));
+  color: var(--paper-warm);
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+  border-radius: 0;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.45;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+
+textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--gold-bright);
+}
+
+label {
+  display: block;
+  font-family: var(--font-pixel);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gold-tarnished);
+  margin-bottom: 0.3rem;
+}
+
+/* --- Utility ---------------------------------------------------------- */
+
+.hr-gold {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--gold-tarnished) 12%,
+    var(--gold-bright) 50%,
+    var(--gold-tarnished) 88%,
+    transparent 100%
+  );
+  margin: 0.8rem 0;
+  opacity: 0.55;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-pixel);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+  color: var(--gold-bright);
+  background: rgba(0, 0, 0, 0.2);
+  -webkit-font-smoothing: none;
+}
+
+.tag--player    { color: var(--paper-warm); border-color: color-mix(in oklab, var(--paper-bone) 50%, transparent); }
+.tag--oracle    { color: var(--gold-bright); }
+.tag--narrative { color: color-mix(in oklab, var(--paper-warm) 85%, var(--gold-bright)); }
+.tag--system    { color: color-mix(in oklab, var(--rust-iron) 70%, var(--paper-stained)); border-color: color-mix(in oklab, var(--rust-iron) 50%, transparent); }
+
+.error {
+  border-left: 3px solid var(--rust-iron);
+  background: rgba(122, 40, 32, 0.18);
+  color: color-mix(in oklab, var(--paper-warm) 90%, var(--rust-iron));
+  padding: 0.6rem 0.8rem;
+  font-family: var(--font-pixel);
+  font-size: 0.85rem;
+  -webkit-font-smoothing: none;
+}
+
+.spinner-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-pixel);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  color: var(--gold-tarnished);
+  text-transform: uppercase;
+  -webkit-font-smoothing: none;
+}
+
+.spinner-row::before {
+  content: "";
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1px solid var(--gold-tarnished);
+  border-top-color: var(--gold-bright);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- App shell (chat-first) ------------------------------------------ */
+
+.app {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app__main {
+  display: grid;
+  grid-template-columns: minmax(190px, 248px) minmax(0, 1fr);
+  gap: 1rem;
+  overflow: hidden;
+  position: relative;
+  padding: 1rem 1.2rem 0;
+}
+
+.column {
+  width: min(72ch, 100%);
+  margin: 0 auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  height: 100%;
+  overflow: hidden;
+}
+
