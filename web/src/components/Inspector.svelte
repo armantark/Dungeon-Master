@@ -14,12 +14,15 @@ chaos value mid-conversation is a deliberate, infrequent act; pulling
 it into a drawer keeps that ceremony.
 -->
 <script lang="ts">
+  import { hasCairnMechanics } from "../lib/cairn";
+  import { combatFromState } from "../lib/combat";
   import { game } from "../lib/store.svelte";
   import type { GameState } from "../lib/types";
   import ThreadsPanel from "./ThreadsPanel.svelte";
   import NPCsPanel from "./NPCsPanel.svelte";
   import NotesEditor from "./NotesEditor.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
+  import CombatTracker from "./CombatTracker.svelte";
   import Drawer from "./Drawer.svelte";
 
   type Props = { state: GameState };
@@ -30,6 +33,28 @@ it into a drawer keeps that ceremony.
   // History is shown newest-first inside the inspector because, unlike
   // the chat (forward narrative), this is a reference surface.
   const history = $derived([...gs.oracle_history].reverse());
+
+  // The build-notes drawer surfaces the LLM-authored Cairn backfill
+  // rationale (`character.cairn.notes`). The folio rail intentionally
+  // doesn't show this — it would crowd the always-visible surface — so
+  // the inspector is the right home for "why these stats / why this
+  // loadout?". We hide the drawer entirely when:
+  //   - the character hasn't been backfilled yet (`source === "unset"`),
+  //     because there's nothing real to show; or
+  //   - the backfill ran but didn't author any notes,
+  // to avoid an empty collapsed flap pretending to hold information.
+  const cairnNotes = $derived(gs.character?.cairn.notes ?? "");
+  const cairnSource = $derived(gs.character?.cairn.source ?? "unset");
+  const showCairnNotes = $derived(
+    hasCairnMechanics(cairnSource) && cairnNotes.trim() !== "",
+  );
+
+  // The combat tracker only renders when an encounter is being
+  // tracked. We fold it into a Drawer (default-open) rather than a
+  // raw block so the player can collapse it during exploration even if
+  // a stale encounter still lingers in state.
+  const encounter = $derived(combatFromState(gs));
+  const hasCombat = $derived(encounter !== null);
   let pendingChaos: number | null = $state(null);
   const displayChaos = $derived(pendingChaos ?? gs.chaos_factor);
 
@@ -79,6 +104,12 @@ it into a drawer keeps that ceremony.
       </div>
     </div>
 
+    {#if hasCombat}
+      <Drawer title="Combat" open={true} maxHeight="22rem">
+        <CombatTracker state={gs} />
+      </Drawer>
+    {/if}
+
     <Drawer title="Threads" open={false} maxHeight="11rem">
       <ThreadsPanel threads={gs.threads} />
     </Drawer>
@@ -90,6 +121,12 @@ it into a drawer keeps that ceremony.
     <Drawer title="Notes" open={false} maxHeight="12rem">
       <NotesEditor state={gs} />
     </Drawer>
+
+    {#if showCairnNotes}
+      <Drawer title="Cairn build notes" open={false} maxHeight="12rem">
+        <p class="cairn-notes">{cairnNotes}</p>
+      </Drawer>
+    {/if}
 
     <Drawer title="Oracle history" open={false} maxHeight="14rem">
       {#if history.length === 0}
@@ -220,5 +257,12 @@ it into a drawer keeps that ceremony.
     padding-top: 0.55rem;
     background: linear-gradient(180deg, transparent, var(--ink-black) 35%);
     border-top: var(--rule-hair);
+  }
+  .cairn-notes {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: var(--paper-bone);
   }
 </style>

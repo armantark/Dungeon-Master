@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Protocol
 
-from dungeon_master.campaign import CampaignGenerator, CharacterDraftMode, CharacterGenerator
+from dungeon_master.cairn import CairnEngine
+from dungeon_master.campaign import (
+    CampaignGenerator,
+    CampaignWorldResult,
+    CharacterDraftMode,
+    CharacterDraftResult,
+    CharacterGenerator,
+    CharacterQuizResult,
+    CharacterTemplatesResult,
+)
+from dungeon_master.cancel import CancellationToken
+from dungeon_master.memory import CommittedTurnMemory, MemoryManager, MemoryState
 from dungeon_master.models import (
+    AttackStance,
+    CairnAbility,
+    CairnRestKind,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
@@ -16,19 +33,98 @@ from dungeon_master.models import (
     OracleOutcome,
     SceneStatus,
 )
-from dungeon_master.narrative import NarrativeEngine
+from dungeon_master.narrative import CompletionDelta, NarrativeEngine, NarrativeResult
 from dungeon_master.oracle import OracleEngine
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import TurnRoute, TurnRouter
+from dungeon_master.state_store import StateStore, TurnCheckpointRecord
+from dungeon_master.turn_router import PlannedTurnOpKind, TurnPlan, TurnRouter
+
+
+@dataclass(frozen=True)
+class ExecutedTurn:
+    outcome: OracleOutcome
+    oracle_title: str | None
+    execution_context: str | None = None
 
 
 class NarrativePort(Protocol):
-    def generate(self, state: GameState, outcome: OracleOutcome, player_input: str) -> str:
+    def generate(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
         raise NotImplementedError
 
 
 class CampaignPort(Protocol):
     def generate(self, character: CharacterSheet) -> GameState:
+        raise NotImplementedError
+
+    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
+        raise NotImplementedError
+
+    def iter_generate(
+        self,
+        character: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
+        raise NotImplementedError
+
+
+class CairnPort(Protocol):
+    def ensure_character_state(
+        self,
+        state: GameState,
+        *,
+        allow_backfill: bool,
+        cancel_token: CancellationToken | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+        raise NotImplementedError
+
+    def resolve_attack(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        weapon_item_id: str | None,
+        stance: AttackStance,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        raise NotImplementedError
+
+    def suffer_harm(
+        self,
+        state: GameState,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> OracleOutcome:
+        raise NotImplementedError
+
+    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+        raise NotImplementedError
+
+    def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
+        raise NotImplementedError
+
+    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+        raise NotImplementedError
+
+    def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
+        raise NotImplementedError
+
+    def drop_item(self, state: GameState, *, item_id: str) -> str:
         raise NotImplementedError
 
 
@@ -37,6 +133,16 @@ class CharacterPort(Protocol):
         raise NotImplementedError
 
     def generate_templates(self) -> list[CharacterSheet]:
+        raise NotImplementedError
+
+    def generate_templates_result(self) -> CharacterTemplatesResult:
+        raise NotImplementedError
+
+    def iter_generate_templates(
+        self,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
         raise NotImplementedError
 
     def generate_draft(
@@ -48,7 +154,37 @@ class CharacterPort(Protocol):
     ) -> CharacterSheet:
         raise NotImplementedError
 
+    def generate_draft_result(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+    ) -> CharacterDraftResult:
+        raise NotImplementedError
+
+    def iter_generate_draft(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        raise NotImplementedError
+
     def generate_quiz(self, concept: str) -> CharacterQuiz:
+        raise NotImplementedError
+
+    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
+        raise NotImplementedError
+
+    def iter_generate_quiz(
+        self,
+        concept: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
         raise NotImplementedError
 
     def generate_quizzed_draft(
@@ -60,6 +196,25 @@ class CharacterPort(Protocol):
     ) -> CharacterSheet:
         raise NotImplementedError
 
+    def generate_quizzed_draft_result(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+    ) -> CharacterDraftResult:
+        raise NotImplementedError
+
+    def iter_generate_quizzed_draft(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        raise NotImplementedError
+
 
 class GameService:
     def __init__(  # noqa: PLR0913
@@ -69,17 +224,29 @@ class GameService:
         narrative: NarrativePort | None = None,
         campaign_generator: CampaignPort | None = None,
         character_generator: CharacterPort | None = None,
+        cairn_engine: CairnPort | None = None,
         turn_router: TurnRouter | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> None:
         self._store = store
         self._oracle = oracle or OracleEngine()
         self._narrative = narrative or NarrativeEngine()
         self._campaign_generator = campaign_generator or CampaignGenerator.from_env()
         self._character_generator = character_generator or CharacterGenerator.from_env()
+        self._cairn = cairn_engine or CairnEngine()
         self._turn_router = turn_router or TurnRouter()
+        self._memory = memory_manager or MemoryManager()
 
-    def load_state(self) -> GameState:
-        return self._store.load_or_create(self._new_setup_state)
+    def load_state(self, *, cancel_token: CancellationToken | None = None) -> GameState:
+        state = self._store.load_or_create(self._new_setup_state)
+        changed = self._cairn.ensure_character_state(
+            state,
+            allow_backfill=state.campaign_status == CampaignStatus.ACTIVE,
+            cancel_token=cancel_token,
+        )
+        if changed:
+            self._store.save(state, create_checkpoint=False)
+        return state
 
     def reset(self) -> GameState:
         state = self._new_setup_state()
@@ -91,7 +258,7 @@ class GameService:
                 content="Returned to character creation.",
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(state, create_checkpoint=True)
         return state
 
     def _new_setup_state(self) -> GameState:
@@ -99,6 +266,16 @@ class GameService:
 
     def list_character_templates(self) -> list[CharacterSheet]:
         return self._character_generator.generate_templates()
+
+    def list_character_templates_result(self) -> CharacterTemplatesResult:
+        return self._character_generator.generate_templates_result()
+
+    def stream_character_templates(
+        self,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
+        return self._character_generator.iter_generate_templates(cancel_token=cancel_token)
 
     def generate_character_draft(
         self,
@@ -113,8 +290,32 @@ class GameService:
             template=template,
         )
 
+    def generate_character_draft_result(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+    ) -> CharacterDraftResult:
+        return self._character_generator.generate_draft_result(
+            mode=mode,
+            prompt=prompt,
+            template=template,
+        )
+
     def generate_character_quiz(self, concept: str) -> CharacterQuiz:
         return self._character_generator.generate_quiz(concept)
+
+    def generate_character_quiz_result(self, concept: str) -> CharacterQuizResult:
+        return self._character_generator.generate_quiz_result(concept)
+
+    def stream_character_quiz(
+        self,
+        concept: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
+        return self._character_generator.iter_generate_quiz(concept, cancel_token=cancel_token)
 
     def generate_quizzed_character_draft(
         self,
@@ -129,9 +330,53 @@ class GameService:
             final_note=final_note,
         )
 
+    def generate_quizzed_character_draft_result(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+    ) -> CharacterDraftResult:
+        return self._character_generator.generate_quizzed_draft_result(
+            concept=concept,
+            answers=answers,
+            final_note=final_note,
+        )
+
+    def stream_quizzed_character_draft(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        return self._character_generator.iter_generate_quizzed_draft(
+            concept=concept,
+            answers=answers,
+            final_note=final_note,
+            cancel_token=cancel_token,
+        )
+
+    def stream_character_draft(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        return self._character_generator.iter_generate_draft(
+            mode=mode,
+            prompt=prompt,
+            template=template,
+            cancel_token=cancel_token,
+        )
+
     def finalize_character(self, character: CharacterSheet) -> GameState:
         state = self.load_state()
-        state.character = character
+        state.character = character.model_copy(deep=True)
+        self._cairn.ensure_character_state(state, allow_backfill=False)
         state.player_notes = character.backstory
         state.campaign_status = CampaignStatus.READY_TO_START
         self._record_event(
@@ -142,28 +387,190 @@ class GameService:
                 content=f"{character.name} is ready to enter the world.",
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(state, create_checkpoint=True)
         return state
 
     def start_campaign(self) -> GameState:
+        return self.start_campaign_result().state
+
+    def start_campaign_result(self) -> CampaignWorldResult:
         state = self.load_state()
         if state.campaign_status == CampaignStatus.ACTIVE:
-            return state
+            return CampaignWorldResult(state=state)
         if state.campaign_status != CampaignStatus.READY_TO_START:
             message = "Finalize a character before starting the campaign."
             raise ValueError(message)
 
-        next_state = self._campaign_generator.generate(state.character)
+        generated = self._campaign_generator.generate_result(state.character)
+        next_state = generated.state
+        self._cairn.ensure_character_state(next_state, allow_backfill=True)
         self._record_event(
             next_state,
             GameEvent(
                 event_type=EventType.SYSTEM,
                 title="Campaign initialized",
                 content="Opening state and oracle tables were generated for this campaign.",
+                thinking=generated.thinking,
             ),
         )
-        self._store.save(next_state, create_checkpoint=True)
-        return next_state
+        self._save_state_commit(next_state, create_checkpoint=True)
+        return CampaignWorldResult(state=next_state, thinking=generated.thinking)
+
+    def stream_start_campaign(
+        self,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
+        state = self.load_state(cancel_token=cancel_token)
+        if state.campaign_status == CampaignStatus.ACTIVE:
+            result = CampaignWorldResult(state=state)
+
+            def _active() -> Generator[CompletionDelta, None, CampaignWorldResult]:
+                yield CompletionDelta(content=state.model_dump_json())
+                return result
+
+            return _active()
+        if state.campaign_status != CampaignStatus.READY_TO_START:
+            message = "Finalize a character before starting the campaign."
+            raise ValueError(message)
+
+        generator = self._campaign_generator.iter_generate(
+            state.character,
+            cancel_token=cancel_token,
+        )
+
+        def _wrapped() -> Generator[CompletionDelta, None, CampaignWorldResult]:
+            generated = yield from generator
+            next_state = generated.state
+            self._raise_if_cancelled(cancel_token)
+            self._cairn.ensure_character_state(
+                next_state,
+                allow_backfill=True,
+                cancel_token=cancel_token,
+            )
+            self._raise_if_cancelled(cancel_token)
+            queued_events: list[GameEvent] = []
+            self._queue_event(
+                next_state,
+                queued_events,
+                GameEvent(
+                    event_type=EventType.SYSTEM,
+                    title="Campaign initialized",
+                    content="Opening state and oracle tables were generated for this campaign.",
+                    thinking=generated.thinking,
+                ),
+            )
+            self._persist_streamed_state(
+                next_state,
+                queued_events,
+                cancel_token=cancel_token,
+            )
+            return CampaignWorldResult(state=next_state, thinking=generated.thinking)
+
+        return _wrapped()
+
+    def resolve_cairn_save(self, ability: CairnAbility, reason: str) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        outcome = self._cairn.resolve_save(state, ability, reason)
+        self._commit_oracle_turn(
+            state=state,
+            player_input=f"{ability.value} save: {reason}",
+            outcome=outcome,
+            oracle_title="Cairn save",
+        )
+        return state
+
+    def attack_target(
+        self,
+        *,
+        target_name: str,
+        target_armor: int,
+        weapon_item_id: str | None,
+        stance: AttackStance,
+    ) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        outcome = self._cairn.resolve_attack(
+            state,
+            target_name=target_name,
+            target_armor=target_armor,
+            weapon_item_id=weapon_item_id,
+            stance=stance,
+        )
+        self._commit_oracle_turn(
+            state=state,
+            player_input=f"Attack {target_name}",
+            outcome=outcome,
+            oracle_title="Attack resolution",
+        )
+        return state
+
+    def suffer_harm(
+        self,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        outcome = self._cairn.suffer_harm(
+            state,
+            amount=amount,
+            source=source,
+            in_combat=in_combat,
+            armor_applies=armor_applies,
+        )
+        self._commit_oracle_turn(
+            state=state,
+            player_input=f"Suffer harm from {source}",
+            outcome=outcome,
+            oracle_title="Harm resolution",
+        )
+        return state
+
+    def recover_character(self, kind: CairnRestKind) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        outcome = self._cairn.recover(state, kind)
+        self._commit_oracle_turn(
+            state=state,
+            player_input=f"Recovery: {kind.value}",
+            outcome=outcome,
+            oracle_title="Recovery",
+        )
+        return state
+
+    def retreat_from_encounter(self, reason: str) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        outcome = self._cairn.resolve_retreat(state, reason)
+        self._commit_oracle_turn(
+            state=state,
+            player_input=f"Retreat: {reason}",
+            outcome=outcome,
+            oracle_title="Retreat resolution",
+        )
+        return state
+
+    def set_item_equipped(self, *, item_id: str, equipped: bool) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        self._cairn.set_item_equipped(state, item_id=item_id, equipped=equipped)
+        title = "Equipment updated"
+        verb = "equipped" if equipped else "unequipped"
+        self._record_event(
+            state,
+            GameEvent(
+                event_type=EventType.SYSTEM,
+                title=title,
+                content=f"Item {item_id} {verb}.",
+            ),
+        )
+        self._save_state_commit(state, create_checkpoint=True)
+        return state
 
     def set_chaos_factor(self, value: int) -> GameState:
         state = self.load_state()
@@ -177,7 +584,7 @@ class GameService:
                 content=f"Chaos factor set to {state.chaos_factor}.",
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(state, create_checkpoint=True)
         return state
 
     def update_notes(self, *, setting_notes: str, player_notes: str) -> GameState:
@@ -193,7 +600,7 @@ class GameService:
                 content="Setting and player notes were updated.",
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(state, create_checkpoint=True)
         return state
 
     def ask_oracle(self, question: str, likelihood: Likelihood) -> GameState:
@@ -256,17 +663,35 @@ class GameService:
             player_input=action,
             state=state,
         )
-        narration = self._narrative.generate(state, outcome, action)
+        narration = self._generate_narrative(
+            state,
+            outcome,
+            action,
+            memory_context=self._memory_context_for_narrator(
+                state,
+                player_input=action,
+                outcome=outcome,
+            ),
+        )
         self._record_event(
             state,
             GameEvent(
                 event_type=EventType.NARRATIVE,
                 title="Narrative response",
-                content=narration,
+                content=narration.content,
+                thinking=narration.thinking,
                 oracle_outcome_id=outcome.id,
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(
+            state,
+            create_checkpoint=True,
+            committed_turn=CommittedTurnMemory(
+                player_input=action,
+                outcome=outcome,
+                narrative_text=narration.content,
+            ),
+        )
         return state
 
     def submit_player_turn(self, text: str) -> GameState:
@@ -277,72 +702,20 @@ class GameService:
         decides whether a roll is required, and the LLM still only narrates
         after Python has produced the mechanical outcome.
         """
-        routed = self._turn_router.route(text)
-        state = self.load_state()
+        plan, state = self._plan_turn_and_load_state(text)
         self._ensure_active(state)
         self._record_event(
             state,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
-
-        if routed.route == TurnRoute.YES_NO:
-            likelihood = routed.likelihood or Likelihood.EVEN
-            outcome = self._oracle.ask_yes_no(state, routed.text, likelihood)
-            self._commit_oracle_turn(
-                state=state,
-                player_input=f"Player asked: {routed.text}",
-                outcome=outcome,
-                oracle_title="Oracle answer",
-            )
-            return state
-
-        if routed.route == TurnRoute.RANDOM_EVENT:
-            outcome = self._oracle.generate_random_event(state)
-            self._commit_oracle_turn(
-                state=state,
-                player_input=f"Player invited a complication: {routed.text}",
-                outcome=outcome,
-                oracle_title="Random event",
-            )
-            return state
-
-        if routed.route == TurnRoute.SCENE_CHECK:
-            outcome = self._oracle.check_scene(state, routed.text)
-            if outcome.scene_status is not None:
-                state.scene_status = outcome.scene_status
-                state.scene_number += 1
-                state.current_scene = self._scene_text(routed.text, outcome.scene_status)
-            self._commit_oracle_turn(
-                state=state,
-                player_input=f"Player pushes into a new scene: {routed.text}",
-                outcome=outcome,
-                oracle_title="Scene check",
-            )
-            return state
-
-        outcome = OracleOutcome(
-            kind=OracleKind.PLAYER_ACTION,
-            summary="Narrative continuation requested without an oracle roll.",
-            chaos_factor=state.chaos_factor,
-        )
-        state.oracle_history.append(outcome)
-        self._store.write_turn_checkpoint(
-            turn_id=outcome.id,
-            oracle_outcome_id=outcome.id,
-            player_input=routed.text,
+        executed = self._execute_turn_plan(state, plan)
+        self._commit_oracle_turn(
             state=state,
+            player_input=text,
+            outcome=executed.outcome,
+            oracle_title=executed.oracle_title,
+            execution_context=executed.execution_context,
         )
-        narration = self._narrative.generate(state, outcome, routed.text)
-        self._record_event(
-            state,
-            GameEvent(
-                event_type=EventType.NARRATIVE,
-                title="Narrative response",
-                content=narration,
-                oracle_outcome_id=outcome.id,
-            ),
-        )
-        self._store.save(state, create_checkpoint=True)
         return state
 
     def regenerate_response(self, narrative_event_id: str) -> GameState:
@@ -397,18 +770,364 @@ class GameService:
                 content="Repaired the latest DM response after a retry request.",
             ),
         )
-        narration = self._narrative.generate(restored_state, outcome, checkpoint.player_input)
+        narration = self._generate_narrative(
+            restored_state,
+            outcome,
+            checkpoint.player_input,
+            execution_context=checkpoint.execution_context,
+            memory_context=self._memory_context_for_narrator(
+                restored_state,
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+            ),
+        )
         self._record_event(
             restored_state,
             GameEvent(
                 event_type=EventType.NARRATIVE,
                 title="Narrative response",
-                content=narration,
+                content=narration.content,
+                thinking=narration.thinking,
                 oracle_outcome_id=outcome.id,
             ),
         )
-        self._store.save(restored_state, create_checkpoint=True)
+        self._save_state_commit(
+            restored_state,
+            create_checkpoint=True,
+            committed_turn=CommittedTurnMemory(
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+                narrative_text=narration.content,
+                execution_context=checkpoint.execution_context or "",
+            ),
+        )
         return restored_state
+
+    def stream_submit_player_action(
+        self,
+        action: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, GameState]:
+        state = self.load_state(cancel_token=cancel_token)
+        self._ensure_active(state)
+        outcome = OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary="Narrative continuation requested without an oracle roll.",
+            chaos_factor=state.chaos_factor,
+        )
+        queued_events: list[GameEvent] = []
+        self._queue_event(
+            state,
+            queued_events,
+            GameEvent(event_type=EventType.PLAYER, title="Player action", content=action),
+        )
+        state.oracle_history.append(outcome)
+        turn_checkpoint = TurnCheckpointRecord(
+            turn_id=outcome.id,
+            oracle_outcome_id=outcome.id,
+            player_input=action,
+            state=state.model_copy(deep=True),
+        )
+        memory_context = self._memory_context_for_narrator(
+            state,
+            player_input=action,
+            outcome=outcome,
+        )
+        self._raise_if_cancelled(cancel_token)
+        narration = yield from self._iter_stream_narrative(
+            state,
+            outcome,
+            action,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        self._queue_event(
+            state,
+            queued_events,
+            GameEvent(
+                event_type=EventType.NARRATIVE,
+                title="Narrative response",
+                content=narration.content,
+                thinking=narration.thinking,
+                oracle_outcome_id=outcome.id,
+            ),
+        )
+        self._persist_streamed_state(
+            state,
+            queued_events,
+            turn_checkpoint=turn_checkpoint,
+            cancel_token=cancel_token,
+            committed_turn=CommittedTurnMemory(
+                player_input=action,
+                outcome=outcome,
+                narrative_text=narration.content,
+            ),
+        )
+        return state
+
+    def stream_submit_player_turn(
+        self,
+        text: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, GameState]:
+        plan, state = self._plan_turn_and_load_state(text, cancel_token=cancel_token)
+        self._ensure_active(state)
+        queued_events: list[GameEvent] = []
+        self._queue_event(
+            state,
+            queued_events,
+            GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
+        )
+        self._raise_if_cancelled(cancel_token)
+        executed = self._execute_turn_plan(state, plan, cancel_token=cancel_token)
+        return (yield from self._stream_oracle_turn(
+            state=state,
+            player_input=text,
+            outcome=executed.outcome,
+            oracle_title=executed.oracle_title,
+            queued_events=queued_events,
+            execution_context=executed.execution_context,
+            cancel_token=cancel_token,
+        ))
+
+    def stream_regenerate_response(
+        self,
+        narrative_event_id: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, GameState]:
+        state = self.load_state(cancel_token=cancel_token)
+        self._ensure_active(state)
+        latest_narrative = next(
+            (
+                event
+                for event in reversed(state.action_log)
+                if event.event_type == EventType.NARRATIVE
+            ),
+            None,
+        )
+        if latest_narrative is None or latest_narrative.id != narrative_event_id:
+            message = "Only the latest DM response can be regenerated."
+            raise ValueError(message)
+        if latest_narrative.oracle_outcome_id is None:
+            message = "This response cannot be regenerated."
+            raise ValueError(message)
+
+        checkpoint = self._store.load_turn_checkpoint(latest_narrative.oracle_outcome_id)
+        restored_state = checkpoint.state.model_copy(deep=True)
+        prefix_len = len(restored_state.action_log)
+        repair_events = [
+            event
+            for event in state.action_log[prefix_len:-1]
+            if event.event_type == EventType.SYSTEM and event.title == "Narrative regenerated"
+        ]
+        restored_state.action_log.extend(repair_events)
+        queued_events: list[GameEvent] = []
+
+        outcome = next(
+            (
+                item
+                for item in restored_state.oracle_history
+                if item.id == checkpoint.oracle_outcome_id
+            ),
+            None,
+        )
+        if outcome is None:
+            message = "Turn checkpoint is missing the original oracle outcome."
+            raise ValueError(message)
+
+        self._queue_event(
+            restored_state,
+            queued_events,
+            GameEvent(
+                event_type=EventType.SYSTEM,
+                title="Narrative regenerated",
+                content="Repaired the latest DM response after a retry request.",
+            ),
+        )
+        self._raise_if_cancelled(cancel_token)
+        narration = yield from self._iter_stream_narrative(
+            restored_state,
+            outcome,
+            checkpoint.player_input,
+            execution_context=checkpoint.execution_context,
+            memory_context=self._memory_context_for_narrator(
+                restored_state,
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+            ),
+            cancel_token=cancel_token,
+        )
+        self._queue_event(
+            restored_state,
+            queued_events,
+            GameEvent(
+                event_type=EventType.NARRATIVE,
+                title="Narrative response",
+                content=narration.content,
+                thinking=narration.thinking,
+                oracle_outcome_id=outcome.id,
+            ),
+        )
+        self._persist_streamed_state(
+            restored_state,
+            queued_events,
+            cancel_token=cancel_token,
+            committed_turn=CommittedTurnMemory(
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+                narrative_text=narration.content,
+                execution_context=checkpoint.execution_context or "",
+            ),
+        )
+        return restored_state
+
+    def _execute_turn_plan(  # noqa: PLR0912, PLR0915, C901
+        self,
+        state: GameState,
+        plan: TurnPlan,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> ExecutedTurn:
+        step_summaries: list[str] = []
+        primary_outcome: OracleOutcome | None = None
+        oracle_title: str | None = None
+
+        for op in plan.ops:
+            if op.kind == PlannedTurnOpKind.INSPECT_INVENTORY:
+                step_summaries.append(self._inspect_inventory_summary(state))
+                continue
+
+            if op.kind == PlannedTurnOpKind.SEARCH_SCENE:
+                step_summaries.append(self._search_scene_summary(op.text))
+                continue
+
+            if op.kind == PlannedTurnOpKind.USE_ITEM and op.item_name is not None:
+                item_id = self._require_item_id_from_name(state.character, op.item_name)
+                step_summaries.append(
+                    self._cairn.use_item(state, item_id=item_id, intent=op.text),
+                )
+                continue
+
+            if op.kind == PlannedTurnOpKind.DROP_ITEM and op.item_name is not None:
+                item_id = self._require_item_id_from_name(state.character, op.item_name)
+                step_summaries.append(self._cairn.drop_item(state, item_id=item_id))
+                continue
+
+            if op.kind == PlannedTurnOpKind.EQUIP and op.item_name is not None:
+                item_id = self._require_item_id_from_name(state.character, op.item_name)
+                equipped = True if op.equipped is None else op.equipped
+                self._cairn.set_item_equipped(state, item_id=item_id, equipped=equipped)
+                step_summaries.append(
+                    f"Equipment updated: {op.item_name} "
+                    f"{'equipped' if equipped else 'unequipped'}.",
+                )
+                continue
+
+            if op.kind == PlannedTurnOpKind.YES_NO:
+                likelihood = op.likelihood or Likelihood.EVEN
+                primary_outcome = self._oracle.ask_yes_no(state, op.text, likelihood)
+                oracle_title = "Oracle answer"
+                step_summaries.append(f"Oracle resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.RANDOM_EVENT:
+                primary_outcome = self._oracle.generate_random_event(state)
+                oracle_title = "Random event"
+                step_summaries.append(f"Oracle resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.SCENE_CHECK:
+                primary_outcome = self._oracle.check_scene(state, op.text)
+                if primary_outcome.scene_status is not None:
+                    state.scene_status = primary_outcome.scene_status
+                    state.scene_number += 1
+                    state.current_scene = self._scene_text(op.text, primary_outcome.scene_status)
+                oracle_title = "Scene check"
+                step_summaries.append(f"Scene resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.SAVE and op.ability is not None:
+                primary_outcome = self._cairn.resolve_save(state, op.ability, op.text)
+                oracle_title = "Cairn save"
+                step_summaries.append(f"Save resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is not None:
+                primary_outcome = self._cairn.resolve_attack(
+                    state,
+                    target_name=op.target_name,
+                    target_armor=0,
+                    weapon_item_id=self._item_id_from_name(state.character, op.item_name),
+                    stance=op.stance or AttackStance.NORMAL,
+                    cancel_token=cancel_token,
+                )
+                oracle_title = "Attack resolution"
+                step_summaries.append(f"Attack resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.HARM:
+                primary_outcome = self._cairn.suffer_harm(
+                    state,
+                    amount=op.harm_amount or 1,
+                    source=op.harm_source or op.text,
+                    in_combat=op.in_combat if op.in_combat is not None else True,
+                    armor_applies=(op.armor_applies if op.armor_applies is not None else True),
+                )
+                oracle_title = "Harm resolution"
+                step_summaries.append(f"Harm resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is not None:
+                primary_outcome = self._cairn.recover(state, op.rest_kind)
+                oracle_title = "Recovery"
+                step_summaries.append(f"Recovery resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.RETREAT:
+                primary_outcome = self._cairn.resolve_retreat(state, op.text)
+                oracle_title = "Retreat resolution"
+                step_summaries.append(f"Retreat resolved: {primary_outcome.summary}")
+                continue
+
+        if primary_outcome is None:
+            summary = self._player_action_plan_summary(step_summaries)
+            primary_outcome = OracleOutcome(
+                kind=OracleKind.PLAYER_ACTION,
+                summary=summary,
+                chaos_factor=state.chaos_factor,
+            )
+        execution_context = self._format_execution_context(step_summaries)
+        return ExecutedTurn(
+            outcome=primary_outcome,
+            oracle_title=oracle_title,
+            execution_context=execution_context,
+        )
+
+    def _inspect_inventory_summary(self, state: GameState) -> str:
+        inventory = state.character.inventory
+        names = ", ".join(item.name for item in inventory) if inventory else "nothing"
+        return (
+            f"Checked carried gear ({state.character.cairn.slots_used}/"
+            f"{state.character.cairn.slots_total} slots): {names}."
+        )
+
+    def _search_scene_summary(self, step_text: str) -> str:
+        return f"Searched the immediate scene carefully: {step_text}."
+
+    def _player_action_plan_summary(self, step_summaries: list[str]) -> str:
+        if not step_summaries:
+            return "Narrative continuation requested without an oracle roll."
+        if len(step_summaries) == 1:
+            return step_summaries[0]
+        return "Plan executed without an oracle roll: " + " ".join(step_summaries)
+
+    def _format_execution_context(self, step_summaries: list[str]) -> str | None:
+        if not step_summaries:
+            return None
+        return "Executed backend steps:\n" + "\n".join(f"- {summary}" for summary in step_summaries)
 
     def _commit_oracle_turn(
         self,
@@ -416,39 +1135,163 @@ class GameService:
         state: GameState,
         player_input: str,
         outcome: OracleOutcome,
-        oracle_title: str,
+        oracle_title: str | None,
+        execution_context: str | None = None,
     ) -> None:
         state.oracle_history.append(outcome)
-        self._record_event(
-            state,
-            GameEvent(
-                event_type=EventType.ORACLE,
-                title=oracle_title,
-                content=outcome.summary,
-                oracle_outcome_id=outcome.id,
-            ),
-        )
+        if oracle_title is not None:
+            self._record_event(
+                state,
+                GameEvent(
+                    event_type=EventType.ORACLE,
+                    title=oracle_title,
+                    content=outcome.summary,
+                    oracle_outcome_id=outcome.id,
+                ),
+            )
         self._store.write_turn_checkpoint(
             turn_id=outcome.id,
             oracle_outcome_id=outcome.id,
             player_input=player_input,
+            execution_context=execution_context,
             state=state,
         )
-        narration = self._narrative.generate(state, outcome, player_input)
+        memory_context = self._memory_context_for_narrator(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+        )
+        narration = self._generate_narrative(
+            state,
+            outcome,
+            player_input,
+            execution_context=execution_context,
+            memory_context=memory_context,
+        )
         self._record_event(
             state,
             GameEvent(
                 event_type=EventType.NARRATIVE,
                 title="Narrative response",
-                content=narration,
+                content=narration.content,
+                thinking=narration.thinking,
                 oracle_outcome_id=outcome.id,
             ),
         )
-        self._store.save(state, create_checkpoint=True)
+        self._save_state_commit(
+            state,
+            create_checkpoint=True,
+            committed_turn=CommittedTurnMemory(
+                player_input=player_input,
+                outcome=outcome,
+                narrative_text=narration.content,
+                execution_context=execution_context or "",
+            ),
+        )
+
+    def _stream_oracle_turn(  # noqa: PLR0913
+        self,
+        *,
+        state: GameState,
+        player_input: str,
+        outcome: OracleOutcome,
+        oracle_title: str | None,
+        queued_events: list[GameEvent],
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, GameState]:
+        state.oracle_history.append(outcome)
+        if oracle_title is not None:
+            self._queue_event(
+                state,
+                queued_events,
+                GameEvent(
+                    event_type=EventType.ORACLE,
+                    title=oracle_title,
+                    content=outcome.summary,
+                    oracle_outcome_id=outcome.id,
+                ),
+            )
+        turn_checkpoint = TurnCheckpointRecord(
+            turn_id=outcome.id,
+            oracle_outcome_id=outcome.id,
+            player_input=player_input,
+            execution_context=execution_context,
+            state=state.model_copy(deep=True),
+        )
+        self._raise_if_cancelled(cancel_token)
+        memory_context = self._memory_context_for_narrator(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+        )
+        narration = yield from self._iter_stream_narrative(
+            state,
+            outcome,
+            player_input,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        self._queue_event(
+            state,
+            queued_events,
+            GameEvent(
+                event_type=EventType.NARRATIVE,
+                title="Narrative response",
+                content=narration.content,
+                thinking=narration.thinking,
+                oracle_outcome_id=outcome.id,
+            ),
+        )
+        self._persist_streamed_state(
+            state,
+            queued_events,
+            turn_checkpoint=turn_checkpoint,
+            cancel_token=cancel_token,
+            committed_turn=CommittedTurnMemory(
+                player_input=player_input,
+                outcome=outcome,
+                narrative_text=narration.content,
+                execution_context=execution_context or "",
+            ),
+        )
+        return state
 
     def _record_event(self, state: GameState, event: GameEvent) -> None:
         state.action_log.append(event)
         self._store.append_event(event)
+
+    def _queue_event(self, state: GameState, queue: list[GameEvent], event: GameEvent) -> None:
+        state.action_log.append(event)
+        queue.append(event)
+
+    def _persist_streamed_state(
+        self,
+        state: GameState,
+        events: list[GameEvent],
+        *,
+        turn_checkpoint: TurnCheckpointRecord | None = None,
+        committed_turn: CommittedTurnMemory | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> None:
+        self._raise_if_cancelled(cancel_token)
+        if turn_checkpoint is not None:
+            self._store.write_turn_checkpoint(
+                turn_id=turn_checkpoint.turn_id,
+                oracle_outcome_id=turn_checkpoint.oracle_outcome_id,
+                player_input=turn_checkpoint.player_input,
+                execution_context=turn_checkpoint.execution_context,
+                state=turn_checkpoint.state,
+            )
+            self._raise_if_cancelled(cancel_token)
+        self._store.append_events(events)
+        self._raise_if_cancelled(cancel_token)
+        self._save_state_commit(
+            state,
+            create_checkpoint=True,
+            committed_turn=committed_turn,
+        )
 
     def _ensure_active(self, state: GameState) -> None:
         if state.campaign_status != CampaignStatus.ACTIVE:
@@ -461,3 +1304,222 @@ class GameService:
         if status == SceneStatus.ALTERED:
             return f"Altered: {expected_scene}"
         return f"Interrupted before: {expected_scene}"
+
+    def _generate_narrative(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> NarrativeResult:
+        generate_result = getattr(self._narrative, "generate_result", None)
+        if callable(generate_result):
+            generated = generate_result(
+                state,
+                outcome,
+                player_input,
+                execution_context=execution_context,
+                memory_context=memory_context,
+                cancel_token=cancel_token,
+            )
+            if isinstance(generated, NarrativeResult):
+                return generated
+            if isinstance(generated, str):
+                return NarrativeResult(content=generated)
+        return NarrativeResult(
+            content=self._narrative.generate(
+                state,
+                outcome,
+                player_input,
+                execution_context=execution_context,
+                memory_context=memory_context,
+                cancel_token=cancel_token,
+            ),
+        )
+
+    def _iter_stream_narrative(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, NarrativeResult]:
+        iter_stream = getattr(self._narrative, "iter_stream", None)
+        if callable(iter_stream):
+            streamed = iter_stream(
+                state,
+                outcome,
+                player_input,
+                execution_context=execution_context,
+                memory_context=memory_context,
+                cancel_token=cancel_token,
+            )
+            result = yield from streamed
+            if isinstance(result, NarrativeResult):
+                return result
+            if isinstance(result, str):
+                return NarrativeResult(content=result)
+        generated = self._generate_narrative(
+            state,
+            outcome,
+            player_input,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        yield CompletionDelta(content=generated.content, thinking=generated.thinking)
+        return generated
+
+    def _plan_turn_and_load_state(
+        self,
+        text: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> tuple[TurnPlan, GameState]:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            memory_future = executor.submit(self._store.load_memory_or_none)
+            state = self.load_state(cancel_token=cancel_token)
+            existing_memory = memory_future.result()
+        planner_memory = self._memory_for_state(state, existing_memory=existing_memory)
+        planner_context = self._memory.retrieve_for_planner(
+            state,
+            planner_memory,
+            text,
+        ).render()
+        plan = self._turn_router.plan(
+            text,
+            memory_context=planner_context,
+            cancel_token=cancel_token,
+        )
+        self._raise_if_cancelled(cancel_token)
+        return plan, state
+
+    def _memory_context_for_narrator(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+    ) -> str | None:
+        existing_memory = self._store.load_memory_or_none()
+        context = self._memory.retrieve_for_narrator(
+            state,
+            self._memory_for_state(state, existing_memory=existing_memory),
+            player_input,
+            outcome,
+        ).render()
+        return context or None
+
+    def _save_state_commit(
+        self,
+        state: GameState,
+        *,
+        create_checkpoint: bool,
+        committed_turn: CommittedTurnMemory | None = None,
+    ) -> None:
+        del committed_turn
+        self._store.save(state, create_checkpoint=create_checkpoint)
+        self._store.save_memory(self._memory_for_state(state, force_rebuild=True))
+
+    def _memory_for_state(
+        self,
+        state: GameState,
+        *,
+        existing_memory: MemoryState | None = None,
+        force_rebuild: bool = False,
+    ) -> MemoryState:
+        memory = self._store.load_memory_or_none() if existing_memory is None else existing_memory
+        if force_rebuild or self._memory_needs_rebuild(state, memory):
+            return self._memory.bootstrap_from_turns(state, self._committed_turns_for_state(state))
+        return self._memory.sync_from_state(state, memory)
+
+    def _memory_needs_rebuild(self, state: GameState, memory: MemoryState | None) -> bool:
+        if memory is None:
+            return True
+        return (
+            memory.state_id != state.id
+            or memory.turn_count != len(state.oracle_history)
+        )
+
+    def _committed_turns_for_state(self, state: GameState) -> list[CommittedTurnMemory]:
+        player_events = [
+            event for event in state.action_log if event.event_type == EventType.PLAYER
+        ]
+        player_event_index = 0
+        latest_narrative_by_outcome_id = {
+            event.oracle_outcome_id: event
+            for event in state.action_log
+            if event.event_type == EventType.NARRATIVE and event.oracle_outcome_id is not None
+        }
+        turns: list[CommittedTurnMemory] = []
+        for outcome in state.oracle_history:
+            checkpoint = self._store.load_turn_checkpoint_or_none(outcome.id)
+            if checkpoint is not None:
+                player_input = checkpoint.player_input
+                execution_context = checkpoint.execution_context or ""
+            else:
+                player_input = (
+                    player_events[player_event_index].content
+                    if player_event_index < len(player_events)
+                    else outcome.summary
+                )
+                execution_context = ""
+            if player_event_index < len(player_events):
+                player_event = player_events[player_event_index]
+                if player_event.content == player_input:
+                    player_event_index += 1
+            narrative = latest_narrative_by_outcome_id.get(outcome.id)
+            turns.append(
+                CommittedTurnMemory(
+                    player_input=player_input,
+                    outcome=outcome,
+                    narrative_text="" if narrative is None else narrative.content,
+                    execution_context=execution_context,
+                ),
+            )
+        return turns
+
+    def _raise_if_cancelled(self, cancel_token: CancellationToken | None) -> None:
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+
+    def _item_id_from_name(self, character: CharacterSheet, item_name: str | None) -> str | None:
+        # We tolerate partial item names because the LLM-backed turn router
+        # routinely shortens fuller names ("notched cudgel" for "Notched iron
+        # cudgel"). Exact match wins; otherwise we score by overlapping word
+        # tokens (ignoring tiny stop-token-ish words) and pick the best
+        # candidate that shares at least one token.
+        if item_name is None:
+            return None
+        cleaned = item_name.strip().lower()
+        if not cleaned:
+            return None
+        min_token_length = 3
+        cleaned_tokens = {token for token in cleaned.split() if len(token) >= min_token_length}
+        best_id: str | None = None
+        best_score = 0
+        for item in character.inventory:
+            name = item.name.lower()
+            if cleaned == name or cleaned in name or name in cleaned:
+                return item.id
+            name_tokens = {token for token in name.split() if len(token) >= min_token_length}
+            if not cleaned_tokens or not name_tokens:
+                continue
+            overlap = len(cleaned_tokens & name_tokens)
+            if overlap > best_score:
+                best_score = overlap
+                best_id = item.id
+        return best_id
+
+    def _require_item_id_from_name(self, character: CharacterSheet, item_name: str) -> str:
+        item_id = self._item_id_from_name(character, item_name)
+        if item_id is not None:
+            return item_id
+        message = f"Unknown inventory item: {item_name}"
+        raise ValueError(message)

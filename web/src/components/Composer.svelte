@@ -6,12 +6,49 @@ Slash commands are documented in `lib/slash.ts`. The placeholder rotates
 through suggestions so first-time users discover them organically.
 Cmd / Ctrl + Enter sends; bare Enter inserts a newline (mirroring chat
 tools the user already has muscle memory for).
+
+Slash suggestion menu: when the textarea begins with `/` and no
+argument has been typed yet, a small dropdown surfaces matching
+commands. Up/Down navigates, Tab/Enter completes, Esc dismisses. We
+prefer Tab/Enter for completion so a fast typist can fall through the
+menu without breaking flow.
 -->
 <script lang="ts">
+  import { combatFromState } from "../lib/combat";
   import { game } from "../lib/store.svelte";
+  import {
+    suggestSlashCommands,
+    type SlashCommandDescriptor,
+  } from "../lib/slash";
 
   let value = $state("");
   let textarea: HTMLTextAreaElement;
+  // Suggestion menu state. We keep it flat (rather than a `menu: { ... }`
+  // object) because the menu only has two coupled fields and Svelte 5
+  // runes pick up direct field reads cheaply.
+  let suggestionIndex = $state(0);
+  let suggestionDismissed = $state(false);
+
+  const suggestions = $derived<readonly SlashCommandDescriptor[]>(
+    suggestionDismissed ? [] : suggestSlashCommands(value),
+  );
+  const showSuggestions = $derived(suggestions.length > 0 && !game.isLoading);
+
+  // Whenever the suggestion list changes shape, clamp the selection so
+  // the highlight never drifts past the visible items.
+  $effect(() => {
+    if (suggestionIndex >= suggestions.length) {
+      suggestionIndex = 0;
+    }
+  });
+
+  // When the player edits the line so the slash prefix is gone, the
+  // dismiss flag becomes meaningless — re-arm it for the next slash.
+  $effect(() => {
+    if (!value.trimStart().startsWith("/")) {
+      suggestionDismissed = false;
+    }
+  });
 
   // Auto-grow the textarea up to 6 lines so multi-paragraph actions
   // don't push the chat off-screen.
@@ -23,7 +60,6 @@ tools the user already has muscle memory for).
   }
 
   $effect(() => {
-    // Re-run on every value change.
     void value;
     autoGrow();
   });
@@ -34,7 +70,54 @@ tools the user already has muscle memory for).
     if (consumed) value = "";
   }
 
+  function applySuggestion(cmd: SlashCommandDescriptor): void {
+    // Replace just the head (everything up to the first space) with
+    // the canonical command name, then add a trailing space so the
+    // player can keep typing the argument body. Commands with no
+    // argument body (e.g. /event, /reset, /help) are still followed
+    // by a space — harmless, and keeps the rule simple.
+    const head = value.trimStart();
+    const spaceIdx = head.indexOf(" ");
+    const tail = spaceIdx === -1 ? "" : head.slice(spaceIdx);
+    value = `/${cmd.name}${tail || " "}`;
+    suggestionDismissed = true;
+    queueMicrotask(() => {
+      textarea?.focus();
+      // Place the caret after the inserted command + space so the
+      // player can immediately type the argument.
+      const pos = `/${cmd.name} `.length;
+      textarea?.setSelectionRange(pos, pos);
+    });
+  }
+
   function onKey(event: KeyboardEvent): void {
+    if (showSuggestions) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        suggestionIndex = (suggestionIndex + 1) % suggestions.length;
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        suggestionIndex =
+          (suggestionIndex - 1 + suggestions.length) % suggestions.length;
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.metaKey && !event.ctrlKey)) {
+        const cmd = suggestions[suggestionIndex];
+        if (cmd) {
+          event.preventDefault();
+          applySuggestion(cmd);
+          return;
+        }
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        suggestionDismissed = true;
+        return;
+      }
+    }
+
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       void send();
@@ -46,26 +129,79 @@ tools the user already has muscle memory for).
     "/ask Is the abbey gate watched? [likely]",
     "/event",
     "/scene I cross the bone bridge before dawn.",
+    "/retreat down the chapel stair",
     "/help",
   ];
   // Pick once per mount - rotating mid-session is more annoying than helpful.
   const placeholder = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]!;
+
+  // Surface a context-sensitive hint when an encounter is active so
+  // the player learns the retreat affordance without having to open
+  // /help. We don't change the placeholder mid-session (placeholders
+  // are sticky for muscle memory), but the footer hint can shift —
+  // it's an explicit signal, not a guess at intent.
+  const encounter = $derived(
+    game.state === null ? null : combatFromState(game.state),
+  );
+  const inActiveCombat = $derived(
+    encounter !== null && encounter.active,
+  );
 </script>
 
 <form class="composer" onsubmit={(e) => { e.preventDefault(); void send(); }}>
-  <textarea
-    bind:this={textarea}
-    bind:value
-    onkeydown={onKey}
-    {placeholder}
-    rows="2"
-    spellcheck="false"
-    aria-label="Player command"
-  ></textarea>
+  <div class="textarea-wrap">
+    <textarea
+      bind:this={textarea}
+      bind:value
+      onkeydown={onKey}
+      {placeholder}
+      rows="2"
+      spellcheck="false"
+      aria-label="Player command"
+      aria-autocomplete="list"
+      aria-controls={showSuggestions ? "composer-slash-menu" : undefined}
+    ></textarea>
+
+    {#if showSuggestions}
+      <ul
+        id="composer-slash-menu"
+        class="suggestions"
+        role="listbox"
+        aria-label="Slash commands"
+      >
+        {#each suggestions as cmd, idx (cmd.name)}
+          <li role="presentation">
+            <button
+              type="button"
+              role="option"
+              aria-selected={idx === suggestionIndex}
+              class="suggestion"
+              class:active={idx === suggestionIndex}
+              onmousedown={(e) => {
+                // mousedown so the textarea doesn't lose focus before we
+                // re-target it inside applySuggestion's microtask.
+                e.preventDefault();
+                applySuggestion(cmd);
+              }}
+              onmouseenter={() => (suggestionIndex = idx)}
+            >
+              <span class="pixel name">/{cmd.name}</span>
+              <span class="summary">{cmd.summary}</span>
+              <span class="usage">{cmd.usage}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
 
   <div class="row">
     <span class="hint pixel">
-      Cmd/Ctrl + Enter to send · /help for commands
+      {#if inActiveCombat}
+        Cmd/Ctrl + Enter to send · /retreat to disengage
+      {:else}
+        Cmd/Ctrl + Enter to send · / for commands · /help
+      {/if}
     </span>
     <div class="actions">
       {#if game.isLoading && game.cancelLabel}
@@ -89,6 +225,9 @@ tools the user already has muscle memory for).
     flex-direction: column;
     gap: 0.4rem;
   }
+  .textarea-wrap {
+    position: relative;
+  }
   textarea {
     background: color-mix(in oklab, var(--ink-deep) 80%, var(--ink-black));
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
@@ -96,10 +235,69 @@ tools the user already has muscle memory for).
     min-height: 44px;
     resize: none;
     overflow-y: auto;
+    width: 100%;
+    box-sizing: border-box;
   }
   textarea:focus {
     border-color: var(--gold-bright);
   }
+
+  /*
+   * The suggestion menu rises *above* the textarea (anchored to its
+   * bottom edge) so it doesn't push the cancel/send row off-screen on
+   * short viewports, and so the visual weight of the menu lands inside
+   * the chat column rather than over the player's typing.
+   */
+  .suggestions {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0;
+    right: 0;
+    max-height: 14rem;
+    overflow-y: auto;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem;
+    background: color-mix(in oklab, var(--ink-deep) 92%, var(--ink-black));
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
+    border-radius: 2px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    z-index: 5;
+    display: grid;
+    gap: 0.15rem;
+  }
+  .suggestion {
+    display: grid;
+    grid-template-columns: max-content 1fr max-content;
+    align-items: baseline;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    background: transparent;
+    border: 0;
+    color: var(--paper-bone);
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.88rem;
+  }
+  .suggestion:hover,
+  .suggestion.active {
+    background: color-mix(in oklab, var(--gold-tarnished) 18%, transparent);
+    color: var(--paper-warm);
+  }
+  .suggestion .name {
+    color: var(--gold-bright);
+    font-size: 0.82rem;
+  }
+  .suggestion .summary {
+    color: var(--paper-bone);
+  }
+  .suggestion .usage {
+    color: var(--paper-shadow);
+    font-size: 0.78rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+  }
+
   .row {
     display: flex;
     align-items: center;

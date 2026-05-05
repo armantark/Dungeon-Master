@@ -1,19 +1,81 @@
 from __future__ import annotations
 
+import json
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from dungeon_master.models import Likelihood
+from pydantic import Field, ValidationError
+
+from dungeon_master.cancel import CancellationToken
+from dungeon_master.models import AttackStance, CairnAbility, CairnRestKind, Likelihood, StrictModel
+from dungeon_master.narrative import (
+    LITELLM_RETRYABLE_ERRORS,
+    CompletionFunction,
+    CompletionRequest,
+    NarrativeConfig,
+    _completion,
+    complete_text,
+    extract_json_object,
+)
 
 
 class TurnRoute(StrEnum):
-    """Mechanical route selected for a natural-language player turn."""
+    """Legacy summary route surfaced to the rest of the backend/frontend."""
 
     PLAYER_ACTION = "player_action"
     YES_NO = "yes_no"
     RANDOM_EVENT = "random_event"
     SCENE_CHECK = "scene_check"
+    SAVE = "save"
+    ATTACK = "attack"
+    HARM = "harm"
+    RECOVERY = "recovery"
+    EQUIP = "equip"
+    RETREAT = "retreat"
+
+
+class PlannedTurnOpKind(StrEnum):
+    YES_NO = "yes_no"
+    RANDOM_EVENT = "random_event"
+    SCENE_CHECK = "scene_check"
+    SAVE = "save"
+    ATTACK = "attack"
+    HARM = "harm"
+    RECOVERY = "recovery"
+    EQUIP = "equip"
+    RETREAT = "retreat"
+    INSPECT_INVENTORY = "inspect_inventory"
+    SEARCH_SCENE = "search_scene"
+    USE_ITEM = "use_item"
+    DROP_ITEM = "drop_item"
+    NARRATE = "narrate"
+
+
+@dataclass(frozen=True)
+class PlannedTurnOp:
+    kind: PlannedTurnOpKind
+    text: str
+    likelihood: Likelihood | None = None
+    ability: CairnAbility | None = None
+    target_name: str | None = None
+    stance: AttackStance | None = None
+    rest_kind: CairnRestKind | None = None
+    item_name: str | None = None
+    equipped: bool | None = None
+    harm_amount: int | None = None
+    harm_source: str | None = None
+    armor_applies: bool | None = None
+    in_combat: bool | None = None
+
+
+@dataclass(frozen=True)
+class TurnPlan:
+    route: TurnRoute
+    text: str
+    ops: tuple[PlannedTurnOp, ...]
 
 
 @dataclass(frozen=True)
@@ -21,6 +83,55 @@ class RoutedTurn:
     route: TurnRoute
     text: str
     likelihood: Likelihood | None = None
+    ability: CairnAbility | None = None
+    target_name: str | None = None
+    stance: AttackStance | None = None
+    rest_kind: CairnRestKind | None = None
+    item_name: str | None = None
+    equipped: bool | None = None
+    harm_amount: int | None = None
+    harm_source: str | None = None
+    armor_applies: bool | None = None
+    in_combat: bool | None = None
+    plan: TurnPlan | None = None
+
+
+class GeneratedPlannedTurnOp(StrictModel):
+    kind: PlannedTurnOpKind
+    text: str = Field(min_length=1)
+    likelihood: Likelihood | None = None
+    ability: CairnAbility | None = None
+    target_name: str | None = None
+    stance: AttackStance | None = None
+    rest_kind: CairnRestKind | None = None
+    item_name: str | None = None
+    equipped: bool | None = None
+    harm_amount: int | None = Field(default=None, ge=0)
+    harm_source: str | None = None
+    armor_applies: bool | None = None
+    in_combat: bool | None = None
+
+
+class GeneratedTurnPlan(StrictModel):
+    route: TurnRoute
+    text: str = Field(min_length=1)
+    ops: list[GeneratedPlannedTurnOp] = Field(min_length=1, max_length=3)
+
+
+RouterClassifier = Callable[[str, Likelihood | None], RoutedTurn | TurnPlan]
+
+
+class EmptyRouteContentError(ValueError):
+    pass
+
+
+class TurnPlanningError(ValueError):
+    pass
+
+
+def _raise_empty_route_content_error() -> None:
+    message = "Route classifier returned empty content."
+    raise EmptyRouteContentError(message)
 
 
 LIKELIHOOD_HINTS: dict[str, Likelihood] = {
@@ -43,85 +154,406 @@ LIKELIHOOD_HINTS: dict[str, Likelihood] = {
     "nearly certain": Likelihood.NEARLY_CERTAIN,
 }
 
-YES_NO_STARTERS: frozenset[str] = frozenset(
-    {
-        "am",
-        "are",
-        "can",
-        "could",
-        "did",
-        "do",
-        "does",
-        "has",
-        "have",
-        "is",
-        "may",
-        "might",
-        "must",
-        "shall",
-        "should",
-        "was",
-        "were",
-        "will",
-        "would",
-    },
-)
 
-SCENE_TRANSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"^i\s+(?:enter|cross|leave|travel|ride|sail|descend|ascend|climb)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^i\s+(?:go|head|make my way|push on|press on)\s+"
-        r"(?:to|toward|into|through)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^we\s+(?:enter|cross|leave|travel|ride|sail|descend|ascend|climb)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\b(?:new scene|next scene|scene check)\b", re.IGNORECASE),
-)
+TURN_ROUTER_SYSTEM_PROMPT = """You plan a bounded backend action sequence for a solo
+TTRPG player's free-text turn before narration happens.
 
-RANDOM_EVENT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"\b(?:something happens|what happens|random event|complication|twist)\b",
-        re.IGNORECASE,
-    ),
+Return only valid JSON.
+
+`route` is the legacy summary label for the whole turn:
+- player_action
+- yes_no
+- random_event
+- scene_check
+- save
+- attack
+- harm
+- recovery
+- equip
+- retreat
+
+`ops` is an ordered list of 1-3 bounded backend steps.
+
+Allowed op kinds:
+- narrate: pure narration, no deterministic backend step inferred
+- yes_no: an explicit yes/no oracle question
+- random_event: the player is explicitly asking for a complication, twist, or random event
+- scene_check: the player is explicitly pushing into a new scene, location, or travel transition
+- save: the player is attempting one risky immediate action that should
+  resolve as a Cairn-style save
+- attack: the player is attacking or striking a concrete foe right now
+- harm: the player is explicitly taking damage or a blow should be resolved directly
+- recovery: the player is explicitly resting, catching breath, or recovering
+- equip: the player is explicitly readying, drawing, donning, stowing,
+  equipping, or unequipping gear
+- retreat: the player is explicitly disengaging, falling back, fleeing,
+  withdrawing, or trying to escape an active fight
+- inspect_inventory: the player is checking carried gear, supplies, burden,
+  or what they currently have
+- search_scene: the player is rummaging, checking, or inspecting the
+  immediate area without definitely transitioning scenes
+- use_item: the player is explicitly drinking, lighting, applying,
+  consuming, or otherwise using a carried item
+- drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
+
+Rules:
+- Be conservative. If uncertain, return route `player_action` and a single `narrate` op.
+- Do not invent mechanics not implied by the text.
+- Do not invent items, foes, or scene discoveries that the text does not support.
+- Use any supplied memory context as support, not as permission to invent.
+- Prefer canonical supplied memory over improvising from tone.
+- Preserve the player's meaning; clean wording lightly but do not rewrite
+  it into a different action.
+- You may emit preparatory ops before one primary deterministic op,
+  e.g. `equip` then `attack`, or `inspect_inventory` then `scene_check`.
+- Emit at most one primary oracle/mechanical op from this set:
+  `yes_no`, `random_event`, `scene_check`, `save`, `attack`, `harm`, `recovery`.
+- If ops contain one of those primary oracle/mechanical ops, `route` must match it.
+- If ops contain only `equip`, `route` may be `equip`.
+- If ops contain only `inspect_inventory`, `search_scene`, `use_item`,
+  `drop_item`, or `narrate`, route must be `player_action`.
+- Use `save` only when the player is attempting one concrete risky action right now.
+- If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
+- If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
+- If kind is `recovery`, choose one `rest_kind`: `breather`, `full_rest`, or `week_recovery`.
+- If kind is `equip`, include `item_name` and whether the player is
+  equipping (`true`) or unequipping (`false`).
+- If kind is `retreat`, use it only for an explicit attempt to break contact or flee.
+- If kind is `use_item` or `drop_item`, include `item_name`.
+- Use `harm` sparingly. Prefer `save` for risky actions and `attack` for offensive actions.
+- If kind is `yes_no`, preserve a supplied likelihood hint if one was explicitly given.
+"""
+
+
+TURN_ROUTER_USER_PROMPT_TEMPLATE = (
+    "Return JSON with this shape:\n"
+    "{\n"
+    '  "route": "player_action | yes_no | random_event | scene_check | save | '
+    'attack | harm | recovery | equip | retreat",\n'
+    '  "text": "normalized player text",\n'
+    '  "ops": [\n'
+    "    {\n"
+    '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
+    'harm | recovery | equip | retreat | '
+    'inspect_inventory | search_scene | use_item | drop_item",\n'
+    '      "text": "normalized text for this step",\n'
+    '      "likelihood": "one Likelihood value or null",\n'
+    '      "ability": "STR | DEX | WIL | null",\n'
+    '      "target_name": "string or null",\n'
+    '      "stance": "normal | impaired | enhanced | null",\n'
+    '      "rest_kind": "breather | full_rest | week_recovery | null",\n'
+    '      "item_name": "string or null",\n'
+    '      "equipped": "true | false | null",\n'
+    '      "harm_amount": "integer or null",\n'
+    '      "harm_source": "string or null",\n'
+    '      "armor_applies": "true | false | null",\n'
+    '      "in_combat": "true | false | null"\n'
+    "    }\n"
+    "  ]\n"
+    "}\n\n"
+    "Player turn:\n"
+    "<<TURN>>\n\n"
+    "Bounded memory context (may be empty):\n"
+    "<<MEMORY>>\n\n"
+    "Explicit likelihood hint (may be null):\n"
+    "<<LIKELIHOOD>>\n"
 )
 
 
 class TurnRouter:
-    """Classify natural player chat into deterministic game operations.
+    def __init__(
+        self,
+        classifier: RouterClassifier | None = None,
+        config: NarrativeConfig | None = None,
+        completion_function: CompletionFunction = _completion,
+    ) -> None:
+        self._classifier = classifier
+        self._config = config or NarrativeConfig.from_env()
+        self._completion = completion_function
 
-    This is intentionally conservative. The router only claims mechanics
-    when player intent is obvious: explicit yes/no questions, explicit
-    random-event language, or strong scene-transition verbs. Ambiguous
-    free text stays narrative-only so the game does not surprise the
-    player with unwanted rolls.
-    """
-
-    def route(self, text: str) -> RoutedTurn:
+    def plan(
+        self,
+        text: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> TurnPlan:
         body, likelihood = self._strip_likelihood_hint(text)
         normalized = body.strip()
         if not normalized:
-            return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=text.strip())
+            return self._fallback_plan(text.strip() or text)
 
-        if self._looks_like_random_event(normalized):
-            return RoutedTurn(route=TurnRoute.RANDOM_EVENT, text=normalized)
+        if self._classifier is not None:
+            classified = self._classifier(normalized, likelihood)
+            return self._normalize_classifier_result(classified, normalized, likelihood)
 
-        if self._looks_like_yes_no_question(normalized):
-            return RoutedTurn(
-                route=TurnRoute.YES_NO,
-                text=normalized,
-                likelihood=likelihood or Likelihood.EVEN,
+        if not self._config.is_usable():
+            return self._fallback_plan(normalized)
+
+        prompt = (
+            TURN_ROUTER_USER_PROMPT_TEMPLATE.replace("<<TURN>>", normalized)
+            .replace("<<MEMORY>>", memory_context or "(none)")
+            .replace("<<LIKELIHOOD>>", likelihood.value if likelihood is not None else "null")
+        )
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": TURN_ROUTER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=max(self._config.max_tokens, 1600),
+            timeout=self._config.timeout_seconds,
+            stream=True,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort="low",
+            reasoning={
+                "max_tokens": 700,
+                "exclude": self._config.exclude_reasoning,
+            },
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+
+        last_error: Exception | None = None
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                completed = complete_text(request, self._completion)
+                content = completed.content
+                if not content:
+                    _raise_empty_route_content_error()
+                payload = extract_json_object(content)
+                parsed = GeneratedTurnPlan.model_validate_json(payload)
+                return self._normalize_generated_plan(parsed, normalized, likelihood)
+            except (
+                *LITELLM_RETRYABLE_ERRORS,
+                ValidationError,
+                json.JSONDecodeError,
+                EmptyRouteContentError,
+                ValueError,
+            ) as exc:
+                last_error = exc
+                if attempt < self._config.max_retries:
+                    time.sleep(0.4 * (attempt + 1))
+
+        if last_error is None:
+            return self._fallback_plan(normalized)
+        message = (
+            "Turn planning failed before any deterministic resolution could be chosen. "
+            "Please retry or use an explicit command."
+        )
+        raise TurnPlanningError(message) from last_error
+
+    def route(
+        self,
+        text: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> RoutedTurn:
+        return self._routed_turn_from_plan(
+            self.plan(text, memory_context=memory_context, cancel_token=cancel_token),
+        )
+
+    def _fallback_plan(self, text: str) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+        )
+
+    def _normalize_classifier_result(
+        self,
+        classified: RoutedTurn | TurnPlan,
+        normalized_text: str,
+        likelihood: Likelihood | None,
+    ) -> TurnPlan:
+        if isinstance(classified, TurnPlan):
+            return self._finalize_plan(classified, normalized_text, likelihood)
+        return self._finalize_plan(
+            TurnPlan(
+                route=classified.route,
+                text=classified.text,
+                ops=(self._planned_op_from_routed_turn(classified),),
+            ),
+            normalized_text,
+            likelihood,
+        )
+
+    def _normalize_generated_plan(
+        self,
+        parsed: GeneratedTurnPlan,
+        normalized_text: str,
+        likelihood: Likelihood | None,
+    ) -> TurnPlan:
+        plan = TurnPlan(
+            route=parsed.route,
+            text=parsed.text,
+            ops=tuple(
+                PlannedTurnOp(
+                    kind=op.kind,
+                    text=op.text,
+                    likelihood=op.likelihood,
+                    ability=op.ability,
+                    target_name=op.target_name,
+                    stance=op.stance,
+                    rest_kind=op.rest_kind,
+                    item_name=op.item_name,
+                    equipped=op.equipped,
+                    harm_amount=op.harm_amount,
+                    harm_source=op.harm_source,
+                    armor_applies=op.armor_applies,
+                    in_combat=op.in_combat,
+                )
+                for op in parsed.ops
+            ),
+        )
+        return self._finalize_plan(plan, normalized_text, likelihood)
+
+    def _finalize_plan(
+        self,
+        plan: TurnPlan,
+        normalized_text: str,
+        likelihood: Likelihood | None,
+    ) -> TurnPlan:
+        text = plan.text.strip() or normalized_text
+        ops = tuple(
+            self._normalize_op(
+                op,
+                route=plan.route,
+                fallback_likelihood=likelihood,
             )
+            for op in plan.ops
+        )
+        if not ops:
+            return self._fallback_plan(text)
+        return TurnPlan(route=plan.route, text=text, ops=ops)
 
-        if self._looks_like_scene_transition(normalized):
-            return RoutedTurn(route=TurnRoute.SCENE_CHECK, text=normalized)
+    def _normalize_op(
+        self,
+        op: PlannedTurnOp,
+        *,
+        route: TurnRoute,
+        fallback_likelihood: Likelihood | None,
+    ) -> PlannedTurnOp:
+        step_text = op.text.strip()
+        if not step_text:
+            message = "Planned op text cannot be empty."
+            raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.YES_NO:
+            final_likelihood = op.likelihood or fallback_likelihood or Likelihood.EVEN
+        else:
+            final_likelihood = None
+        if op.kind == PlannedTurnOpKind.SAVE and op.ability is None:
+            message = "Save ops require an ability."
+            raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is None:
+            message = "Attack ops require a target_name."
+            raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is None:
+            message = "Recovery ops require a rest_kind."
+            raise ValueError(message)
+        if op.kind in (
+            PlannedTurnOpKind.EQUIP,
+            PlannedTurnOpKind.USE_ITEM,
+            PlannedTurnOpKind.DROP_ITEM,
+        ) and op.item_name is None:
+            message = f"{op.kind.value} ops require an item_name."
+            raise ValueError(message)
+        if op.kind in (
+            PlannedTurnOpKind.INSPECT_INVENTORY,
+            PlannedTurnOpKind.SEARCH_SCENE,
+            PlannedTurnOpKind.USE_ITEM,
+            PlannedTurnOpKind.DROP_ITEM,
+            PlannedTurnOpKind.NARRATE,
+        ) and route != TurnRoute.PLAYER_ACTION:
+            # Preparatory ops are allowed ahead of a primary mechanical op; the
+            # route summary remains whatever the primary op is. We therefore only
+            # need to normalize these, not remap the route.
+            pass
+        return PlannedTurnOp(
+            kind=op.kind,
+            text=step_text,
+            likelihood=final_likelihood,
+            ability=op.ability,
+            target_name=op.target_name,
+            stance=op.stance,
+            rest_kind=op.rest_kind,
+            item_name=op.item_name,
+            equipped=op.equipped,
+            harm_amount=op.harm_amount,
+            harm_source=op.harm_source,
+            armor_applies=op.armor_applies,
+            in_combat=op.in_combat,
+        )
 
-        return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=normalized)
+    def _planned_op_from_routed_turn(self, routed: RoutedTurn) -> PlannedTurnOp:
+        kind = {
+            TurnRoute.YES_NO: PlannedTurnOpKind.YES_NO,
+            TurnRoute.RANDOM_EVENT: PlannedTurnOpKind.RANDOM_EVENT,
+            TurnRoute.SCENE_CHECK: PlannedTurnOpKind.SCENE_CHECK,
+            TurnRoute.SAVE: PlannedTurnOpKind.SAVE,
+            TurnRoute.ATTACK: PlannedTurnOpKind.ATTACK,
+            TurnRoute.HARM: PlannedTurnOpKind.HARM,
+            TurnRoute.RECOVERY: PlannedTurnOpKind.RECOVERY,
+            TurnRoute.EQUIP: PlannedTurnOpKind.EQUIP,
+            TurnRoute.RETREAT: PlannedTurnOpKind.RETREAT,
+            TurnRoute.PLAYER_ACTION: PlannedTurnOpKind.NARRATE,
+        }[routed.route]
+        return PlannedTurnOp(
+            kind=kind,
+            text=routed.text,
+            likelihood=routed.likelihood,
+            ability=routed.ability,
+            target_name=routed.target_name,
+            stance=routed.stance,
+            rest_kind=routed.rest_kind,
+            item_name=routed.item_name,
+            equipped=routed.equipped,
+            harm_amount=routed.harm_amount,
+            harm_source=routed.harm_source,
+            armor_applies=routed.armor_applies,
+            in_combat=routed.in_combat,
+        )
+
+    def _routed_turn_from_plan(self, plan: TurnPlan) -> RoutedTurn:
+        primary = self._primary_op(plan)
+        return RoutedTurn(
+            route=plan.route,
+            text=plan.text,
+            likelihood=primary.likelihood if plan.route == TurnRoute.YES_NO else None,
+            ability=primary.ability,
+            target_name=primary.target_name,
+            stance=primary.stance,
+            rest_kind=primary.rest_kind,
+            item_name=primary.item_name,
+            equipped=primary.equipped,
+            harm_amount=primary.harm_amount,
+            harm_source=primary.harm_source,
+            armor_applies=primary.armor_applies,
+            in_combat=primary.in_combat,
+            plan=plan,
+        )
+
+    def _primary_op(self, plan: TurnPlan) -> PlannedTurnOp:
+        legacy_kind = {
+            TurnRoute.YES_NO: PlannedTurnOpKind.YES_NO,
+            TurnRoute.RANDOM_EVENT: PlannedTurnOpKind.RANDOM_EVENT,
+            TurnRoute.SCENE_CHECK: PlannedTurnOpKind.SCENE_CHECK,
+            TurnRoute.SAVE: PlannedTurnOpKind.SAVE,
+            TurnRoute.ATTACK: PlannedTurnOpKind.ATTACK,
+            TurnRoute.HARM: PlannedTurnOpKind.HARM,
+            TurnRoute.RECOVERY: PlannedTurnOpKind.RECOVERY,
+            TurnRoute.EQUIP: PlannedTurnOpKind.EQUIP,
+            TurnRoute.RETREAT: PlannedTurnOpKind.RETREAT,
+            TurnRoute.PLAYER_ACTION: PlannedTurnOpKind.NARRATE,
+        }[plan.route]
+        for op in reversed(plan.ops):
+            if op.kind == legacy_kind:
+                return op
+        return plan.ops[-1]
 
     def _strip_likelihood_hint(self, text: str) -> tuple[str, Likelihood | None]:
         match = re.search(r"\[([^\]]+)\]\s*$", text)
@@ -137,12 +569,12 @@ class TurnRouter:
             return text, None
         return text[: match.start()].strip(), likelihood
 
-    def _looks_like_yes_no_question(self, text: str) -> bool:
-        first_word = text.split(maxsplit=1)[0].strip("?!.,;:").lower()
-        return text.endswith("?") and first_word in YES_NO_STARTERS
-
-    def _looks_like_scene_transition(self, text: str) -> bool:
-        return any(pattern.search(text) for pattern in SCENE_TRANSITION_PATTERNS)
-
-    def _looks_like_random_event(self, text: str) -> bool:
-        return any(pattern.search(text) for pattern in RANDOM_EVENT_PATTERNS)
+    def _openrouter_headers(self) -> dict[str, str] | None:
+        if not self._config.model.startswith("openrouter/"):
+            return None
+        headers: dict[str, str] = {}
+        if self._config.site_url is not None:
+            headers["HTTP-Referer"] = self._config.site_url
+        if self._config.app_name is not None:
+            headers["X-Title"] = self._config.app_name
+        return headers or None

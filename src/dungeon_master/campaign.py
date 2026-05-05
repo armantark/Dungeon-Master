@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Generator
 from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import Field, ValidationError
 
+from dungeon_master.cancel import CancellationToken
 from dungeon_master.models import (
     NPC,
     CampaignStatus,
@@ -24,10 +26,15 @@ from dungeon_master.models import (
 )
 from dungeon_master.narrative import (
     LITELLM_RETRYABLE_ERRORS,
+    CompletionDelta,
     CompletionFunction,
     CompletionRequest,
+    CompletionText,
     NarrativeConfig,
     _completion,
+    complete_text,
+    extract_json_object,
+    iter_text_deltas,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +57,10 @@ Creative direction:
 Design constraints:
 - Do not roll dice.
 - Do not generate the wider campaign, scene, or oracle tables here.
-- Inventory should be concrete, grimy, and limited.
+- Inventory should be concrete, grimy, limited, and practically usable in play.
+- Do not literalize every body-horror or biographical detail into carried gear.
+- Prefer a practical starting bundle (weapon, clothing/armor, light, supplies, tools)
+  plus at most one or two signature biography-derived items.
 """
 
 CHARACTER_TEMPLATES_USER_PROMPT = """Return JSON with this shape:
@@ -89,12 +99,19 @@ DRAFT_SCRATCH_PROMPT = """Return JSON for one playable custom character with thi
 }
 
 If the user prompt is sparse, fill the gaps with a plausible archetypal survivor.
-Return 2-6 inventory items.
+Return 3-6 practical inventory items.
+Most biography should influence backstory, condition, flaw, and abilities rather than
+becoming literal inventory objects.
 """
 
 DRAFT_TEMPLATE_PROMPT = """Refine the provided template into a fuller editable draft.
 Keep the archetype recognizable, sharpen the backstory, drive, flaw, and
 inventory, and return the same JSON shape as above.
+
+Inventory guidance:
+- Choose a practical starting loadout that fits the archetype.
+- At most one or two items should be directly biography-derived keepsakes or relics.
+- Put grotesque or symbolic flavor into backstory/condition more than gear.
 """
 
 # Quiz path: the player gives a one-line concept, the LLM designs a
@@ -165,8 +182,11 @@ Hard rules:
 - Do NOT invent religion, geography, magic system, or culture details that
   conflict with the supplied concept (e.g. if the concept names a real-world
   religious or cultural tradition, honor it; do not generic-fantasy it).
-- Every inventory item must trace back to something the player said.
-- Return 2-6 inventory items.
+- Let the interview answers primarily shape stats, condition, abilities, and flaw.
+- Inventory should be a practical starting bundle that fits the character profile.
+- At most one or two items may be directly biography-derived signature pieces.
+- Do NOT convert every symbolic, bodily, or traumatic detail into a carried object.
+- Return 3-6 inventory items.
 
 Player concept:
 <<CONCEPT>>
@@ -297,6 +317,30 @@ class GeneratedCharacterQuiz(StrictModel):
                 for question in self.questions
             ],
         )
+
+
+@dataclass(frozen=True)
+class CharacterTemplatesResult:
+    templates: list[CharacterSheet]
+    thinking: str = ""
+
+
+@dataclass(frozen=True)
+class CharacterQuizResult:
+    quiz: CharacterQuiz
+    thinking: str = ""
+
+
+@dataclass(frozen=True)
+class CharacterDraftResult:
+    draft: CharacterSheet
+    thinking: str = ""
+
+
+@dataclass(frozen=True)
+class CampaignWorldResult:
+    state: GameState
+    thinking: str = ""
 
 
 class GeneratedCampaignWorld(StrictModel):
@@ -683,8 +727,11 @@ class CharacterGenerator:
         return _setup_state(configured=self.config.is_usable())
 
     def generate_templates(self) -> list[CharacterSheet]:
+        return self.generate_templates_result().templates
+
+    def generate_templates_result(self) -> CharacterTemplatesResult:
         if not self.config.is_usable():
-            return _fallback_templates()
+            return CharacterTemplatesResult(templates=_fallback_templates())
 
         # Why medium reasoning + 12000 max_tokens for character work:
         # Kimi K2.6 Thinking *always* burns 2-3k reasoning tokens
@@ -706,23 +753,80 @@ class CharacterGenerator:
             temperature=0.95,
             max_tokens=max(self.config.max_tokens, 12000),
             timeout=self.config.timeout_seconds,
-            stream=False,
+            stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             reasoning_effort="medium",
             reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
             extra_headers=self._openrouter_headers(),
-            response_format={"type": "json_object"},
+            response_format=None,
         )
         try:
-            payload = self._complete_json(request)
-            parsed = GeneratedCharacterTemplates.model_validate_json(payload)
-            return [template.to_character_sheet() for template in parsed.templates]
+            completed = self._complete_json(request)
+            payload = completed.content
+            parsed = GeneratedCharacterTemplates.model_validate_json(extract_json_object(payload))
+            return CharacterTemplatesResult(
+                templates=[template.to_character_sheet() for template in parsed.templates],
+                thinking=completed.thinking,
+            )
         except GENERATION_ERRORS:
             logger.exception("Character template generation fell back.")
-            return _fallback_templates()
+            return CharacterTemplatesResult(templates=_fallback_templates())
+
+    def iter_generate_templates(
+        self,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
+        if not self.config.is_usable():
+            fallback = CharacterTemplatesResult(templates=_fallback_templates())
+            yield CompletionDelta(
+                content=json.dumps(
+                    {"templates": [template.model_dump() for template in fallback.templates]},
+                ),
+            )
+            return fallback
+
+        request = CompletionRequest(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "user", "content": CHARACTER_TEMPLATES_USER_PROMPT},
+            ],
+            temperature=0.95,
+            max_tokens=max(self.config.max_tokens, 12000),
+            timeout=self.config.timeout_seconds,
+            stream=True,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            reasoning_effort="medium",
+            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+        try:
+            completed = yield from self._iter_json(request)
+            payload_json = extract_json_object(completed.content)
+            parsed = GeneratedCharacterTemplates.model_validate_json(payload_json)
+            return CharacterTemplatesResult(
+                templates=[template.to_character_sheet() for template in parsed.templates],
+                thinking=completed.thinking,
+            )
+        except GENERATION_ERRORS:
+            logger.exception("Character template generation fell back.")
+            fallback = CharacterTemplatesResult(templates=_fallback_templates())
+            yield CompletionDelta(
+                content=json.dumps(
+                    {"templates": [template.model_dump() for template in fallback.templates]},
+                ),
+            )
+            return fallback
 
     def generate_quiz(self, concept: str) -> CharacterQuiz:
+        return self.generate_quiz_result(concept).quiz
+
+    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
         """Produce an interview tailored to the player's concept.
 
         On any LLM failure we return the static fallback quiz so the
@@ -731,7 +835,7 @@ class CharacterGenerator:
         """
         cleaned = concept.strip()
         if not cleaned or not self.config.is_usable():
-            return _fallback_quiz(cleaned or "An unspecified survivor.")
+            return CharacterQuizResult(quiz=_fallback_quiz(cleaned or "An unspecified survivor."))
 
         user_prompt = CHARACTER_QUIZ_USER_PROMPT_TEMPLATE.replace("<<CONCEPT>>", cleaned)
         # Quiz generation is structured authoring (fixed JSON shape,
@@ -749,20 +853,66 @@ class CharacterGenerator:
             temperature=0.9,
             max_tokens=max(self.config.max_tokens, 12000),
             timeout=self.config.timeout_seconds,
-            stream=False,
+            stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             reasoning_effort="low",
             reasoning={"effort": "low", "exclude": self.config.exclude_reasoning},
             extra_headers=self._openrouter_headers(),
-            response_format={"type": "json_object"},
+            response_format=None,
         )
         try:
-            payload = self._complete_json(request)
-            return GeneratedCharacterQuiz.model_validate_json(payload).to_quiz(cleaned)
+            completed = self._complete_json(request)
+            payload_json = extract_json_object(completed.content)
+            quiz = GeneratedCharacterQuiz.model_validate_json(payload_json).to_quiz(cleaned)
+            return CharacterQuizResult(quiz=quiz, thinking=completed.thinking)
         except GENERATION_ERRORS:
             logger.exception("Character quiz generation fell back to static questions.")
-            return _fallback_quiz(cleaned)
+            return CharacterQuizResult(quiz=_fallback_quiz(cleaned))
+
+    def iter_generate_quiz(
+        self,
+        concept: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
+        cleaned = concept.strip()
+        if not cleaned or not self.config.is_usable():
+            fallback = CharacterQuizResult(
+                quiz=_fallback_quiz(cleaned or "An unspecified survivor."),
+            )
+            yield CompletionDelta(content=json.dumps({"quiz": fallback.quiz.model_dump()}))
+            return fallback
+
+        user_prompt = CHARACTER_QUIZ_USER_PROMPT_TEMPLATE.replace("<<CONCEPT>>", cleaned)
+        request = CompletionRequest(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": CHARACTER_QUIZ_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.9,
+            max_tokens=max(self.config.max_tokens, 12000),
+            timeout=self.config.timeout_seconds,
+            stream=True,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            reasoning_effort="low",
+            reasoning={"effort": "low", "exclude": self.config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+        try:
+            completed = yield from self._iter_json(request)
+            payload_json = extract_json_object(completed.content)
+            quiz = GeneratedCharacterQuiz.model_validate_json(payload_json).to_quiz(cleaned)
+            return CharacterQuizResult(quiz=quiz, thinking=completed.thinking)
+        except GENERATION_ERRORS:
+            logger.exception("Character quiz generation fell back to static questions.")
+            fallback = CharacterQuizResult(quiz=_fallback_quiz(cleaned))
+            yield CompletionDelta(content=json.dumps({"quiz": fallback.quiz.model_dump()}))
+            return fallback
 
     def generate_quizzed_draft(
         self,
@@ -771,6 +921,19 @@ class CharacterGenerator:
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
     ) -> CharacterSheet:
+        return self.generate_quizzed_draft_result(
+            concept=concept,
+            answers=answers,
+            final_note=final_note,
+        ).draft
+
+    def generate_quizzed_draft_result(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+    ) -> CharacterDraftResult:
         """Draft a character using the concept + interview answers.
 
         This is the one-shot path the assist UI uses after the quiz.
@@ -781,10 +944,12 @@ class CharacterGenerator:
         cleaned_note = (final_note or "").strip()
 
         if not self.config.is_usable():
-            return _fallback_quizzed_draft(
-                concept=cleaned_concept,
-                answers=answers,
-                final_note=cleaned_note,
+            return CharacterDraftResult(
+                draft=_fallback_quizzed_draft(
+                    concept=cleaned_concept,
+                    answers=answers,
+                    final_note=cleaned_note,
+                ),
             )
 
         interview_block = _format_interview(answers)
@@ -807,24 +972,90 @@ class CharacterGenerator:
             temperature=0.9,
             max_tokens=max(self.config.max_tokens, 12000),
             timeout=self.config.timeout_seconds,
-            stream=False,
+            stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             reasoning_effort="medium",
             reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
             extra_headers=self._openrouter_headers(),
-            response_format={"type": "json_object"},
+            response_format=None,
         )
         try:
-            payload = self._complete_json(request)
-            return GeneratedCharacter.model_validate_json(payload).to_character_sheet()
+            completed = self._complete_json(request)
+            payload_json = extract_json_object(completed.content)
+            draft = GeneratedCharacter.model_validate_json(payload_json).to_character_sheet()
+            return CharacterDraftResult(draft=draft, thinking=completed.thinking)
         except GENERATION_ERRORS:
             logger.exception("Quizzed draft generation fell back.")
-            return _fallback_quizzed_draft(
-                concept=cleaned_concept,
-                answers=answers,
-                final_note=cleaned_note,
+            return CharacterDraftResult(
+                draft=_fallback_quizzed_draft(
+                    concept=cleaned_concept,
+                    answers=answers,
+                    final_note=cleaned_note,
+                ),
             )
+
+    def iter_generate_quizzed_draft(
+        self,
+        *,
+        concept: str,
+        answers: list[CharacterQuizAnswer],
+        final_note: str | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        cleaned_concept = concept.strip() or "An unspecified survivor."
+        cleaned_note = (final_note or "").strip()
+        if not self.config.is_usable():
+            fallback = CharacterDraftResult(
+                draft=_fallback_quizzed_draft(
+                    concept=cleaned_concept,
+                    answers=answers,
+                    final_note=cleaned_note,
+                ),
+            )
+            yield CompletionDelta(content=fallback.draft.model_dump_json())
+            return fallback
+
+        interview_block = _format_interview(answers)
+        user_prompt = (
+            DRAFT_FROM_QUIZ_PROMPT.replace("<<CONCEPT>>", cleaned_concept)
+            .replace("<<INTERVIEW>>", interview_block)
+            .replace("<<FINAL_NOTE>>", cleaned_note or "(none)")
+        )
+        request = CompletionRequest(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.9,
+            max_tokens=max(self.config.max_tokens, 12000),
+            timeout=self.config.timeout_seconds,
+            stream=True,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            reasoning_effort="medium",
+            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+        try:
+            completed = yield from self._iter_json(request)
+            payload_json = extract_json_object(completed.content)
+            draft = GeneratedCharacter.model_validate_json(payload_json).to_character_sheet()
+            return CharacterDraftResult(draft=draft, thinking=completed.thinking)
+        except GENERATION_ERRORS:
+            logger.exception("Quizzed draft generation fell back.")
+            fallback = CharacterDraftResult(
+                draft=_fallback_quizzed_draft(
+                    concept=cleaned_concept,
+                    answers=answers,
+                    final_note=cleaned_note,
+                ),
+            )
+            yield CompletionDelta(content=fallback.draft.model_dump_json())
+            return fallback
 
     def generate_draft(
         self,
@@ -833,8 +1064,19 @@ class CharacterGenerator:
         prompt: str | None,
         template: CharacterSheet | None,
     ) -> CharacterSheet:
+        return self.generate_draft_result(mode=mode, prompt=prompt, template=template).draft
+
+    def generate_draft_result(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+    ) -> CharacterDraftResult:
         if not self.config.is_usable():
-            return _fallback_draft(mode=mode, prompt=prompt, template=template)
+            return CharacterDraftResult(
+                draft=_fallback_draft(mode=mode, prompt=prompt, template=template),
+            )
 
         template_json = (
             template.model_dump_json(indent=2)
@@ -860,40 +1102,137 @@ class CharacterGenerator:
             temperature=0.95,
             max_tokens=max(self.config.max_tokens, 12000),
             timeout=self.config.timeout_seconds,
-            stream=False,
+            stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             reasoning_effort="medium",
             reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
             extra_headers=self._openrouter_headers(),
-            response_format={"type": "json_object"},
+            response_format=None,
         )
         try:
-            payload = self._complete_json(request)
-            return GeneratedCharacter.model_validate_json(payload).to_character_sheet()
+            completed = self._complete_json(request)
+            payload_json = extract_json_object(completed.content)
+            draft = GeneratedCharacter.model_validate_json(payload_json).to_character_sheet()
+            return CharacterDraftResult(draft=draft, thinking=completed.thinking)
         except GENERATION_ERRORS:
             logger.exception("Character draft generation fell back.")
-            return _fallback_draft(mode=mode, prompt=prompt, template=template)
+            return CharacterDraftResult(
+                draft=_fallback_draft(mode=mode, prompt=prompt, template=template),
+            )
 
-    def _complete_json(self, request: CompletionRequest) -> str:
+    def iter_generate_draft(
+        self,
+        *,
+        mode: CharacterDraftMode,
+        prompt: str | None,
+        template: CharacterSheet | None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        if not self.config.is_usable():
+            fallback = CharacterDraftResult(
+                draft=_fallback_draft(mode=mode, prompt=prompt, template=template),
+            )
+            yield CompletionDelta(content=fallback.draft.model_dump_json())
+            return fallback
+
+        template_json = (
+            template.model_dump_json(indent=2)
+            if template is not None
+            else "No template provided."
+        )
+        user_prompt = (
+            f"{DRAFT_SCRATCH_PROMPT}\n\nUser prompt:\n{prompt or 'No extra guidance supplied.'}"
+            if mode == CharacterDraftMode.SCRATCH
+            else (
+                f"{DRAFT_TEMPLATE_PROMPT}\n\nTemplate JSON:\n"
+                f"{template_json}\n\n"
+                f"Extra guidance:\n{prompt or 'None.'}"
+            )
+        )
+        request = CompletionRequest(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.95,
+            max_tokens=max(self.config.max_tokens, 12000),
+            timeout=self.config.timeout_seconds,
+            stream=True,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            reasoning_effort="medium",
+            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+        try:
+            completed = yield from self._iter_json(request)
+            payload_json = extract_json_object(completed.content)
+            draft = GeneratedCharacter.model_validate_json(payload_json).to_character_sheet()
+            return CharacterDraftResult(draft=draft, thinking=completed.thinking)
+        except GENERATION_ERRORS:
+            logger.exception("Character draft generation fell back.")
+            fallback = CharacterDraftResult(
+                draft=_fallback_draft(mode=mode, prompt=prompt, template=template),
+            )
+            yield CompletionDelta(content=fallback.draft.model_dump_json())
+            return fallback
+
+    def _complete_json(self, request: CompletionRequest) -> CompletionText:
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
             try:
-                response = self.completion_function(request)
-                content = response.choices[0].message.content
-                if content is None:
+                completed = complete_text(request, self.completion_function)
+                if not completed.content:
                     raise CharacterGenerationError
             except GENERATION_ERRORS as exc:
                 last_error = exc
                 if attempt < self.config.max_retries:
                     time.sleep(0.4 * (attempt + 1))
             else:
-                return content
+                return completed
         # Chain via `from last_error` so the surrounding logger.exception
         # call captures the underlying LiteLLM/Pydantic exception. Without
         # this the chain is lost when the last error type is one that
         # carries an empty `str()` (some litellm exceptions do that and
         # only reveal context in their `__cause__`/repr).
+        message = (
+            f"{type(last_error).__name__}: {last_error!r}"
+            if last_error is not None
+            else "Character generation failed."
+        )
+        raise CharacterGenerationError(message) from last_error
+
+    def _iter_json(
+        self,
+        request: CompletionRequest,
+    ) -> Generator[CompletionDelta, None, CompletionText]:
+        last_error: Exception | None = None
+        for attempt in range(self.config.max_retries + 1):
+            content_parts: list[str] = []
+            thinking_parts: list[str] = []
+            try:
+                for delta in iter_text_deltas(request, self.completion_function):
+                    if delta.content:
+                        content_parts.append(delta.content)
+                    if delta.thinking:
+                        thinking_parts.append(delta.thinking)
+                    yield delta
+                content = "".join(content_parts)
+                if not content:
+                    raise CharacterGenerationError
+                return CompletionText(
+                    content=content,
+                    thinking="".join(thinking_parts).strip(),
+                )
+            except GENERATION_ERRORS as exc:
+                last_error = exc
+                if attempt < self.config.max_retries:
+                    time.sleep(0.4 * (attempt + 1))
+
         message = (
             f"{type(last_error).__name__}: {last_error!r}"
             if last_error is not None
@@ -922,8 +1261,11 @@ class CampaignGenerator:
         return cls(config=NarrativeConfig.from_env())
 
     def generate(self, character: CharacterSheet) -> GameState:
+        return self.generate_result(character).state
+
+    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
         if not self.config.is_usable():
-            return self._configuration_required_state(character)
+            return CampaignWorldResult(state=self._configuration_required_state(character))
 
         request = CompletionRequest(
             model=self.config.model,
@@ -947,30 +1289,101 @@ class CampaignGenerator:
             temperature=0.95,
             max_tokens=max(self.config.max_tokens, 12000),
             timeout=self.config.timeout_seconds,
-            stream=False,
+            stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             reasoning_effort="high",
             reasoning={"effort": "high", "exclude": self.config.exclude_reasoning},
             extra_headers=self._openrouter_headers(),
-            response_format={"type": "json_object"},
+            response_format=None,
         )
 
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
             try:
-                response = self.completion_function(request)
-                content = response.choices[0].message.content
-                if content is None:
+                completed = complete_text(request, self.completion_function)
+                if not completed.content:
                     raise CampaignGenerationError
-                generated = GeneratedCampaignWorld.model_validate_json(content)
-                return generated.to_game_state(character)
+                payload_json = extract_json_object(completed.content)
+                generated = GeneratedCampaignWorld.model_validate_json(payload_json)
+                return CampaignWorldResult(
+                    state=generated.to_game_state(character),
+                    thinking=completed.thinking,
+                )
             except GENERATION_ERRORS as exc:
                 last_error = exc
                 if attempt < self.config.max_retries:
                     time.sleep(0.4 * (attempt + 1))
 
-        return self._configuration_required_state(character, last_error)
+        return CampaignWorldResult(
+            state=self._configuration_required_state(character, last_error),
+        )
+
+    def iter_generate(
+        self,
+        character: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
+        if not self.config.is_usable():
+            fallback = CampaignWorldResult(state=self._configuration_required_state(character))
+            yield CompletionDelta(content=json.dumps(fallback.state.model_dump(mode="json")))
+            return fallback
+
+        request = CompletionRequest(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": CAMPAIGN_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": CAMPAIGN_USER_PROMPT_TEMPLATE.replace(
+                        "<<CHARACTER_JSON>>",
+                        character.model_dump_json(indent=2),
+                    ),
+                },
+            ],
+            temperature=0.95,
+            max_tokens=max(self.config.max_tokens, 12000),
+            timeout=self.config.timeout_seconds,
+            stream=True,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            reasoning_effort="high",
+            reasoning={"effort": "high", "exclude": self.config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+
+        last_error: Exception | None = None
+        for attempt in range(self.config.max_retries + 1):
+            content_parts: list[str] = []
+            thinking_parts: list[str] = []
+            try:
+                for delta in iter_text_deltas(request, self.completion_function):
+                    if delta.content:
+                        content_parts.append(delta.content)
+                    if delta.thinking:
+                        thinking_parts.append(delta.thinking)
+                    yield delta
+                content = "".join(content_parts)
+                if not content:
+                    raise CampaignGenerationError
+                generated = GeneratedCampaignWorld.model_validate_json(extract_json_object(content))
+                return CampaignWorldResult(
+                    state=generated.to_game_state(character),
+                    thinking="".join(thinking_parts).strip(),
+                )
+            except GENERATION_ERRORS as exc:
+                last_error = exc
+                if attempt < self.config.max_retries:
+                    time.sleep(0.4 * (attempt + 1))
+
+        fallback = CampaignWorldResult(
+            state=self._configuration_required_state(character, last_error),
+        )
+        yield CompletionDelta(content=json.dumps(fallback.state.model_dump(mode="json")))
+        return fallback
 
     def _openrouter_headers(self) -> dict[str, str] | None:
         if not self.config.model.startswith("openrouter/"):

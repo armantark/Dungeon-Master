@@ -20,17 +20,24 @@ The project should therefore provide the feeling of a responsive game master whi
 
 ## Current Product Direction
 
-The current preferred path is a Streamlit-based application rather than a terminal-only app. Modern Cursor can likely scaffold a complex UI quickly enough that avoiding UI work is not necessary.
+The project now ships as a FastAPI backend plus a bespoke Svelte 5 + Vite + TypeScript "Oracle's Ledger" UI. Streamlit was explored early and then discarded once the user chose a chat-first grimoire interface with custom visuals, richer layout control, and more game-like feedback.
 
-The project is not married to OSR. OSR and Scarlet Heroes were originally mentioned because they appeared in a Discord server description and were later used as examples for thinking about high-lethality, rules-aware play. The latest recommendation is to avoid a full OSR rules engine at this stage because strict exploration turns, lethality, and resource tracking add too much friction for the current LLM-assisted architecture.
+The project is not married to OSR, 5e, or any other single chassis. Earlier AI-generated exploration leaned heavily on Mythic GME-style oracle play, but the user clarified that those were exploratory assumptions rather than approved design commitments. The actual product requirement is a **fun, rules-grounded experience** with enough structure to feel like a real game rather than freeform prompt-writing.
 
-The preferred mechanical backbone is now a Mythic GME-style deterministic oracle: system-agnostic yes/no resolution, chaos factor, random events, scene checks, threads, and NPC lists implemented in Python. This gives the app enough structure and stakes without requiring a complete RPG rules engine.
+The current mechanical direction is a **Cairn 2e-inspired dark-fantasy adaptation** layered over the existing deterministic oracle architecture:
+
+- keep deterministic state, checkpoints, and validated mechanics outside the LLM
+- keep the chat-first UX and AI-authored world generation
+- add a more structured character/rules layer (stats, HP, inventory burden, item tags/effects) than the current fiction-only character sheet
+- automatically backfill those Cairn-flavored mechanics from the already-authored character sheet instead of forcing the user to recreate the character
+
+The app should therefore evolve from "oracle-only" into a hybrid: a deterministic oracle plus a lightweight but real rules chassis.
 
 ## Primary User Needs
 
 - Private, self-directed play without needing to find a Discord group.
 - A tone that is apolitical, traditional fantasy, and not driven by modern culture-war themes.
-- Deterministic tracking for chaos factor, scenes, threads, NPCs, player notes, and oracle outcomes.
+- Deterministic tracking for chaos factor, scenes, threads, NPCs, player notes, oracle outcomes, and now also a more structured character/rules layer.
 - Clear separation between rules/state logic and creative prose generation.
 - A UI engaging enough to make the project feel like a game, not just a prompt box.
 
@@ -39,7 +46,7 @@ The preferred mechanical backbone is now a Mythic GME-style deterministic oracle
 - Do not build a Discord bot as the first version.
 - Do not rely on an LLM to remember canonical state.
 - Do not assume OSR is required unless later chosen explicitly.
-- Do not implement a full D&D, Pathfinder, or OSR rules engine unless it clearly serves the personal play experience.
+- Do not import a heavyweight rules engine unless it clearly serves the personal play experience better than a lighter structured chassis like Cairn 2e.
 - Do not copy proprietary oracle tables verbatim unless the user supplies licensed material or chooses an open alternative.
 - Do not start by adapting another repository unless it is clearly simpler than building the base architecture directly.
 - Do not change LLM provider or API signature unless explicitly requested.

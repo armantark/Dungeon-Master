@@ -209,6 +209,7 @@ Why three paths plus a quiz step:
         subtitle="Reading your concept and writing 4–6 questions tailored to it."
         cancelLabel={game.cancelLabel}
         onCancel={() => game.cancelCurrentRequest()}
+        showStream={true}
       />
     {:else}
       <div class="scratch iron">
@@ -247,6 +248,7 @@ Why three paths plus a quiz step:
         subtitle="Reading every answer and pinning the sheet to your concept."
         cancelLabel={game.cancelLabel}
         onCancel={() => game.cancelCurrentRequest()}
+        showStream={true}
       />
     {:else}
       <div class="quiz">
@@ -325,6 +327,7 @@ Why three paths plus a quiz step:
         subtitle="Reading every answer and pinning the sheet to your concept."
         cancelLabel={game.cancelLabel}
         onCancel={() => game.cancelCurrentRequest()}
+        showStream={true}
       />
     {:else}
       <div class="review">
@@ -387,6 +390,7 @@ Why three paths plus a quiz step:
         subtitle="Composing the world, threads, NPCs, and oracle word banks around this character."
         cancelLabel={game.cancelLabel}
         onCancel={() => game.cancelCurrentRequest()}
+        showStream={true}
       />
     {/if}
   {/if}

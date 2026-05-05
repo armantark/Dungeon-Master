@@ -36,17 +36,17 @@ Responsible for classifying user input and deciding which subsystem should handl
 Today the interaction router is split across two layers:
 
 - **Frontend slash parser** (`web/src/lib/slash.ts`): the explicit override surface. Slash commands give the player fast, precise control without round-tripping intent classification through the model. `/ask`, `/event`, `/scene`, `/chaos`, `/reset`, `/help` cover every existing oracle and admin operation. This module is unit-tested in `web/src/lib/slash.test.ts`.
-- **Backend turn router** (`src/dungeon_master/turn_router.py` + `/api/turn`): bare natural-language chat goes here. It conservatively routes obvious yes/no questions (including `[likely]` hints), scene transitions, and random-event prompts through deterministic mechanics before narration. Ambiguous text remains narrative-only. This makes the app playable like a human-DM chat without requiring slash commands for every roll.
-- **Backend `GameService`** (`src/dungeon_master/service.py`): receives a typed call (`ask_yes_no`, `random_event`, `scene_check`, `submit_action`, etc.) and runs the deterministic mechanics in the right order, never trusting the LLM with state mutation.
+- **Backend turn planner** (`src/dungeon_master/turn_router.py` + `/api/turn`): bare natural-language chat goes here. It no longer emits only a single coarse route label. The backend now asks the model for a bounded **typed action plan**: 1-3 ordered steps drawn from a fixed vocabulary (`yes_no`, `random_event`, `scene_check`, `save`, `attack`, `harm`, `recovery`, `equip`, plus non-combat prep/state-adjacent steps like `inspect_inventory`, `search_scene`, `use_item`, `drop_item`, and `narrate`). The returned `route` is still the legacy summary label for compatibility, but `GameService` now executes the ordered plan rather than switching on one enum alone. If planning is unavailable, the backend degrades to a one-step `player_action`/`narrate` plan rather than guessing with regex rules.
+- **Backend `GameService`** (`src/dungeon_master/service.py`): receives a typed call (`ask_yes_no`, `random_event`, `scene_check`, `submit_action`, etc.) and runs the deterministic mechanics in the right order, never trusting the LLM with state mutation. Turn-planning failure is now explicit when the model is configured but the planner cannot produce valid structured output; the backend no longer silently degrades that case into a normal `player_action`/`narrate` turn.
 
-Future addition: an **LLM intent classifier** layered over the deterministic `TurnRouter`; the current heuristics remain the fallback/checkpoint path.
-
-Routes that currently exist:
+Planner operations / routes that currently exist:
 
 - Narrative-only action (ambiguous free text / `/action`)
 - Yes/no oracle question (`/ask`, or bare yes/no questions via `/api/turn`)
 - Random event generation (`/event`, or "something happens" prompts via `/api/turn`)
 - Scene setup check (`/scene`, or obvious movement transitions via `/api/turn`)
+- Cairn save / attack / harm / recovery / equip
+- Non-combat prep ops inside planned turns: inspect inventory, search the current scene, use an item, drop an item
 - Chaos factor adjustment (`/chaos`)
 - Campaign reset (`/reset`)
 - Slash help (`/help`, client-side only)
@@ -88,16 +88,36 @@ State should be persisted to local files, most likely JSON for strict validation
 
 The current implementation persists canonical state to `data/game_state.json`, appends event log entries to `data/events.jsonl`, and writes timestamped JSON checkpoints to `data/checkpoints/`.
 
+There is now also a separate derived-memory sidecar at `data/memory.json`. This is **not** canonical state and is intentionally kept outside `GameState`:
+
+- it is rebuilt from committed canon rather than treated as source of truth
+- it holds the app's compacted "GM notes" (`recent_turn_summaries`, `scene_summaries`, `thread_memory`, `npc_memory`, `location_memory`, `revealed_facts`, `open_loops`, `callback_candidates`)
+- it is written only after committed saves, so cancel/discard semantics remain intact
+- it exists to keep planner/narrator prompts bounded without replaying raw logs
+
+The follow-up bug-fix pass tightened two important invariants around that sidecar:
+
+- streamed turns now persist a captured **pre-narration** turn checkpoint, matching the unary regenerate contract instead of checkpointing a state that already contains the old DM response
+- turn checkpoints now also persist `execution_context`, so memory rebuilds and regenerate calls can retain the exact deterministic backend-step summary that originally grounded the narration
+
 ## Mechanics Scope
 
-The first version should avoid a full RPG rules engine. The deterministic mechanics should focus on oracle resolution, scene pacing, threads, NPCs, and consequence prompts. Combat systems, tactical movement, HP math, spell rules, and RPG action economies are intentionally out of scope unless later requested.
+The project started oracle-first: deterministic scene pacing, threads, NPCs, and consequence prompts with a fiction-only character sheet. The user has now clarified that this was **not** a final rejection of structured RPG mechanics; they want the experience grounded in rules and have chosen a **Cairn 2e-inspired dark-fantasy adaptation** as the next layer.
 
-The preferred pattern is:
+That means the mechanics scope is now:
+
+- keep the existing deterministic oracle for yes/no resolution, scene checks, random events, chaos, and campaign pressure
+- add a lightweight but real character rules layer: Cairn-flavored stats, HP, inventory burden/slots, armor/weapon tags, and deterministic item effects
+- automatically backfill those mechanics from the already-authored character sheet and generated opening state so the user does not have to redo character creation
+- keep the LLM out of canonical math, roll resolution, item modifiers, and state mutation
+- in the current backend implementation, the above is realized as a separate `CairnEngine` (`src/dungeon_master/cairn.py`) that sits beside `OracleEngine`, not inside it
+
+The preferred pattern is now:
 
 1. Load current state.
-2. Identify the applicable oracle procedure.
+2. Identify whether the action invokes oracle resolution, Cairn-style mechanical resolution, or both.
 3. Roll internally.
-4. Produce a structured oracle outcome.
+4. Produce a structured outcome (oracle result, mechanical result, or both).
 5. Ask the State Manager to apply validated changes, if any.
 
 The oracle should avoid relying on model memory for procedure knowledge.
@@ -113,7 +133,41 @@ Responsible for prose only after oracle mechanics and state have been resolved. 
 
 It should not independently roll dice, change chaos factor, alter threads, modify NPCs, or mutate canonical state. Any proposed state change must be returned as structured data and validated elsewhere.
 
+Prompt discipline now matters as much as tone. The narrator is instructed to:
+
+- keep responses compact (usually one paragraph, at most two unless a scene transition genuinely needs more room)
+- mirror the player's declared action before extending the scene
+- treat item flavor, atmospheric details, and latent threats as tone rather than hardened present-tense facts unless the supplied oracle outcome / canonical state explicitly licenses them
+- end on one concrete follow-up question rather than manufacturing a menu of dramatic branches
+
+This pattern exists because "good prose" was proving insufficient on its own: the model could write stylish dark-fantasy narration while still overcommitting fiction that the oracle/state had not actually authorized.
+
+The narrator now also receives a short **executed backend steps** summary when available. This is important after the turn-planner refactor: narration should describe what Python actually executed (e.g. checked inventory, dropped an item, then attacked) rather than reverse-engineering intent from raw player text and one coarse route label.
+
+The narrator and turn planner now also receive a bounded **memory context** assembled from `data/memory.json`, not from the raw transcript. The key design choice is that this memory layer avoids ad-hoc lexical heuristics for meaning extraction. Instead, it leans on:
+
+- canonical references already present in state/outcomes (`referenced_thread_id`, `referenced_npc_id`, current scene, active encounter)
+- recency / active-status ordering
+- compacted sidecar cards rather than replaying full `action_log` / `oracle_history`
+
+This preserves separation of concerns: memory compaction/retrieval is an application layer, not an invitation for the narrator to treat past prose as canon.
+
+The first memory pass rebuilt `data/memory.json` from a lossy replay of `GameState` alone. That has now been corrected: `GameService` reconstructs committed turns from canonical outcomes plus exact turn-checkpoint metadata (`player_input`, `execution_context`) before rebuilding the sidecar. This matters because explicit oracle routes (`/ask`, `/event`, `/scene`) do not always emit a player event into `action_log`, and planner-executed deterministic prep steps would otherwise vanish from derived memory.
+
 The current implementation uses LiteLLM for model routing. The default model is OpenRouter Kimi K2.6 via `openrouter/moonshotai/kimi-k2.6`, with task-based reasoning: medium for ordinary player-action and yes/no narration, high for scene checks and random-event synthesis. Reasoning tokens are excluded from the response. When no usable API key/model configuration is present, the app returns deterministic placeholder narration so the oracle loop remains playable.
+
+Streaming pattern:
+
+- `src/dungeon_master/narrative.py` exposes both buffered generation (`generate_result`) and generator-based streaming (`iter_stream`) using a shared `CompletionDelta` / `NarrativeResult` contract.
+- `src/dungeon_master/campaign.py` now mirrors that pattern for non-play setup flows. Character templates, quiz generation, draft generation, quizzed draft generation, and campaign world generation each have both buffered `*_result` entry points and `iter_*` generator entry points, so setup no longer needs a separate bespoke transport.
+- `src/dungeon_master/service.py` lifts those into app-level result + stream methods and persists thinking where canon exists. If the stream resolves to a `GameState`, the final thinking is attached to a persisted `GameEvent`; if the stream resolves to a setup artifact (templates / quiz / draft), the final thinking is returned in the terminal API payload because there is no canonical active campaign state yet.
+- `src/dungeon_master/api.py` standardizes the wire format as **NDJSON** (`Content-Type: application/x-ndjson`, one JSON object per `\n`). The lifecycle is `meta` → `thinking_delta*` → `content_delta*` → exactly one terminal `final_state` / `final_payload` / `error`. SSE was rejected because every streamed endpoint is a POST with a JSON body (EventSource is GET-only) and the frontend was already going to need a custom `fetch` + `ReadableStream` parser; NDJSON is simpler than SSE once you're parsing manually anyway.
+- The frontend speaks the same NDJSON contract via `web/src/lib/streaming.ts` (`consumeStream`) + `web/src/lib/streaming-types.ts` (the discriminated `StreamEvent` union). The store branches on the typed `StreamResult` (`final` / `aborted` / `error`) without reasoning about partial-state HTTP failures. The setup-stream path now also treats server-aborted streams as explicit user-visible errors rather than silently returning `null`.
+- Streaming requests now also have a **process-local cancellation contract**:
+  - `src/dungeon_master/cancel.py` owns a `CancellationRegistry` keyed by `request_id`, returning cooperative `CancellationToken`s backed by `threading.Event`.
+  - `src/dungeon_master/api.py` registers a token before each streamed response, emits the same `request_id` in the leading `meta` event, exposes `POST /api/requests/{request_id}/cancel`, and silently closes the NDJSON stream on `RequestCancelledError` rather than serializing cancellation as an `error`.
+  - `src/dungeon_master/narrative.py`, `turn_router.py`, `campaign.py`, and `cairn.py` thread the token into LiteLLM request objects so route classification, setup generation, encounter seeding, and narrative streaming can all stop cooperatively.
+  - `src/dungeon_master/service.py` treats streamed mutations as **queued until commit**: streamed player/oracle/system events are held in memory, streamed turn checkpoints are deferred until the final commit path, and `_persist_streamed_state` re-checks cancellation before writing anything. The intended semantics are discard-only: a cancelled turn leaves canonical state/event history unchanged.
 
 ## UI Pattern
 
@@ -152,12 +206,23 @@ Frontend state pattern:
 
 Character state pattern:
 
-- `GameState.character` is a structured `CharacterSheet` with `name`, `archetype`, `epithet`, `backstory`, `drive`, `flaw`, `condition`, and `inventory`.
+- `GameState.character` is a structured `CharacterSheet` with the authored narrative fields (`name`, `archetype`, `epithet`, `backstory`, `drive`, `flaw`, `condition`, `inventory`) plus a nested `cairn` mechanics block.
 - `GameState.campaign_status` gates the whole app shell: `character_creation` -> `ready_to_start` -> `active`.
 - `CharacterGenerator` produces archetypal templates and scratch drafts before campaign generation exists.
 - `CampaignGenerator` now accepts a finalized `CharacterSheet` and builds the world around it rather than inventing the player premise itself.
-- `InventoryItem` is intentionally light (`name`, `details`) until the project adds real item mechanics. It is enough for action declaration and player memory without pretending there is a full RPG equipment system.
+- `InventoryItem` now also carries a nested `cairn` item profile (slots, tags, weapon die, armor bonus, uses, equipped), allowing the backend to preserve the authored item prose while still treating gear mechanically.
 - Legacy saves without `character` are accepted. `GameState` seeds a conservative sheet from `player_notes` so old campaigns remain playable and the left folio never crashes.
+- One-time current-character migration pattern: if a live campaign or campaign start sees `character.cairn.source == "unset"`, `CairnEngine.ensure_character_state(..., allow_backfill=True)` asks the LLM for a structured Cairn backfill: stats, skills/abilities (textual specialties, not D&D modifiers), and a practical starting bundle. Biography mostly influences stats, condition, skills, abilities, and notes; inventory is intentionally kept less on-the-nose, with at most one or two biography-derived signature items. The migrated state is then persisted with `source == "narrative_backfill"`.
+- `TurnRouter` now uses LLM-backed structured classification instead of regex routing. More complex Cairn interactions (attacks, incoming harm, recovery, equipment toggles) are exposed as explicit FastAPI operations so the frontend pass can choose deliberate controls rather than over-aggressive NLP inference.
+- The newer combat pass also widened the router's responsibility boundary without overloading the rules engine: the router may classify intent into `attack`, `harm`, `recovery`, or `equip`, but `CairnEngine` still owns all canonical combat math and enemy-state mutation. Separation of concerns remains router -> service orchestration -> deterministic engine.
+- Frontend rendering of Cairn state lives in a small dedicated module:
+  - `web/src/lib/cairn.ts` — pure formatting helpers (defaults, render gating, burden tier, status priority, ability / stance / rest-kind labels, item tag labels, and the receipt headline switch). No inference, no mutation. Exhaustive Vitest coverage in `cairn.test.ts`.
+  - `web/src/components/CairnReadout.svelte` — read-only stat / burden / statuses / skills / abilities / (optional) build-notes block. Surface-agnostic so it can sit inside the folio's iron rail and above the editor's parchment surface.
+  - `CharacterFolio.svelte` hosts the readout for active play and renders per-item tag chips + equipped/primary badges.
+  - `MechanicalReceipt.svelte` is exhaustive over `OracleKind` (TS will fail at build time when a new kind is added without a branch) and surfaces structured Cairn fields in the body when `outcome.cairn` is populated.
+  - `Inspector.svelte` adds a collapsed "Cairn build notes" drawer that is hidden when the character is unset or has no notes.
+  - `CharacterEditor.svelte` shows the read-only Cairn block above the editor only when the draft is already backfilled (`character.cairn.source !== "unset"`).
+- The frontend Cairn pass is intentionally **read-only**. Mutations (`/api/cairn/attack`, `/harm`, `/recover`, `/equip`) stay backend-only until a follow-up explicit-controls pass binds them to UI affordances. Cairn slash commands are deliberately not added: `save` is already covered by the LLM-backed `/api/turn` router, and the other Cairn actions are GM-side / fiddly-inventory operations that don't read naturally as prose.
 
 Regeneration pattern:
 
@@ -177,6 +242,7 @@ The project should include:
 - Validation before persistence
 - Append-only event log for reconstructing state
 - Clear distinction between proposed changes and committed changes
+- Cooperative cancellation tokens for long-running streamed work, with request IDs exposed at the API boundary
 
 ## Framework Direction
 

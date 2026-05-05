@@ -321,6 +321,13 @@ label {
 .tag--oracle    { color: var(--gold-bright); }
 .tag--narrative { color: color-mix(in oklab, var(--paper-warm) 85%, var(--gold-bright)); }
 .tag--system    { color: color-mix(in oklab, var(--rust-iron) 70%, var(--paper-stained)); border-color: color-mix(in oklab, var(--rust-iron) 50%, transparent); }
+/*
+ * Cairn-flavored receipts (save / attack / harm / recovery). We use the
+ * verdigris green to mark them apart from oracle-flavored gold so the
+ * eye separates engine-determinist (oracle) from rules-determinist
+ * (Cairn) at a glance, without inventing a new pigment.
+ */
+.tag--cairn     { color: color-mix(in oklab, var(--green-verdigris) 70%, var(--gold-bright)); border-color: color-mix(in oklab, var(--green-verdigris) 60%, transparent); }
 
 .error {
   border-left: 3px solid var(--rust-iron);
@@ -369,7 +376,21 @@ label {
 
 .app__main {
   display: grid;
-  grid-template-columns: minmax(190px, 248px) minmax(0, 1fr);
+  /*
+   * Folio rail width grows aggressively with the viewport. The chat
+   * column is centered and capped at 72ch (~720px) by `min(72ch,
+   * 100%)` inside `.column`, so any horizontal room past that cap
+   * is wasted gutter unless we hand it to the folio. The folio's
+   * internal layout uses a container query (see CharacterFolio) to
+   * flip from a single-column rail (narrow) into a true two-column
+   * rail (identity left, mechanics + inventory right) once it has
+   * the room — that flip wants ~540px+ of outer rail width, which
+   * `40vw` reaches around a 1350px viewport. The upper clamp keeps
+   * the rail from dwarfing the chat on ultra-wide monitors; the
+   * lower clamp keeps it usable on narrow windows where it falls
+   * back to the single-column layout.
+   */
+  grid-template-columns: minmax(220px, clamp(296px, 40vw, 720px)) minmax(0, 1fr);
   gap: 1rem;
   overflow: hidden;
   position: relative;

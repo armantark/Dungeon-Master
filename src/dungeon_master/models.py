@@ -36,6 +36,11 @@ class OracleKind(StrEnum):
     RANDOM_EVENT = "random_event"
     SCENE_CHECK = "scene_check"
     PLAYER_ACTION = "player_action"
+    SAVE = "save"
+    ATTACK = "attack"
+    HARM = "harm"
+    RECOVERY = "recovery"
+    RETREAT = "retreat"
 
 
 class EventType(StrEnum):
@@ -62,6 +67,60 @@ class CampaignStatus(StrEnum):
     ACTIVE = "active"
 
 
+class CairnMechanicsSource(StrEnum):
+    UNSET = "unset"
+    NARRATIVE_BACKFILL = "narrative_backfill"
+    EXPLICIT = "explicit"
+
+
+class CairnAbility(StrEnum):
+    STR = "STR"
+    DEX = "DEX"
+    WIL = "WIL"
+
+
+class AttackStance(StrEnum):
+    NORMAL = "normal"
+    IMPAIRED = "impaired"
+    ENHANCED = "enhanced"
+
+
+class CairnRestKind(StrEnum):
+    BREATHER = "breather"
+    FULL_REST = "full_rest"
+    WEEK_RECOVERY = "week_recovery"
+
+
+class EncounterEndReason(StrEnum):
+    VICTORY = "victory"
+    ENEMY_ROUT = "enemy_rout"
+    PLAYER_ESCAPED = "player_escaped"
+
+
+class RetreatOutcome(StrEnum):
+    CAUGHT = "caught"
+    DISENGAGED = "disengaged"
+    ESCAPED = "escaped"
+
+
+class CairnItemTag(StrEnum):
+    PETTY = "petty"
+    BULKY = "bulky"
+    WEAPON = "weapon"
+    RANGED = "ranged"
+    ARMOR = "armor"
+    SHIELD = "shield"
+    TOOL = "tool"
+    LIGHT = "light"
+    RELIC = "relic"
+    HOLY = "holy"
+    HEALING = "healing"
+    CONSUMABLE = "consumable"
+    SUPPLIES = "supplies"
+    MAGIC = "magic"
+    UTILITY = "utility"
+
+
 class Roll(StrictModel):
     sides: int = Field(ge=2)
     result: int = Field(ge=1)
@@ -82,10 +141,141 @@ class NPC(StrictModel):
     disposition: str = "unknown"
 
 
+class EnemyCombatant(StrictModel):
+    id: str = Field(default_factory=lambda: new_id("foe"))
+    name: str = Field(min_length=1)
+    description: str = ""
+    hp: int = Field(default=1, ge=0)
+    max_hp: int = Field(default=1, ge=0)
+    str_score: int = Field(default=10, ge=0)
+    dex_score: int = Field(default=10, ge=0)
+    wil_score: int = Field(default=10, ge=0)
+    armor: int = Field(default=0, ge=0, le=3)
+    weapon_name: str = "Weapon"
+    weapon_damage_die: int = Field(default=6, ge=4, le=12)
+    leader: bool = False
+    critically_wounded: bool = False
+    defeated: bool = False
+    fled: bool = False
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def normalize_current_values(self) -> EnemyCombatant:
+        object.__setattr__(self, "hp", min(self.hp, self.max_hp))
+        return self
+
+
+class EncounterState(StrictModel):
+    active: bool = False
+    round_number: int = Field(default=0, ge=0)
+    first_round_dex_gate_pending: bool = False
+    casualty_morale_checked: bool = False
+    half_force_morale_checked: bool = False
+    player_disengaged: bool = False
+    pursuit_active: bool = False
+    end_reason: EncounterEndReason | None = None
+    combatants: list[EnemyCombatant] = Field(default_factory=list)
+    notes: str = ""
+
+
+class CairnItemState(StrictModel):
+    source: CairnMechanicsSource = CairnMechanicsSource.UNSET
+    backfill_version: int = Field(default=0, ge=0)
+    tags: list[CairnItemTag] = Field(default_factory=list)
+    slots: int = Field(default=1, ge=0, le=10)
+    weapon_damage_die: int | None = Field(default=None, ge=4, le=12)
+    armor_bonus: int = Field(default=0, ge=0, le=3)
+    uses: int | None = Field(default=None, ge=1)
+    equipped: bool = False
+
+
 class InventoryItem(StrictModel):
     id: str = Field(default_factory=lambda: new_id("item"))
     name: str = Field(min_length=1)
     details: str = ""
+    cairn: CairnItemState = Field(default_factory=CairnItemState)
+
+
+class CairnCharacterState(StrictModel):
+    source: CairnMechanicsSource = CairnMechanicsSource.UNSET
+    backfill_version: int = Field(default=0, ge=0)
+    skills: list[str] = Field(default_factory=list)
+    abilities: list[str] = Field(default_factory=list)
+    str_score: int = Field(default=10, ge=0)
+    dex_score: int = Field(default=10, ge=0)
+    wil_score: int = Field(default=10, ge=0)
+    max_str_score: int = Field(default=10, ge=0)
+    max_dex_score: int = Field(default=10, ge=0)
+    max_wil_score: int = Field(default=10, ge=0)
+    hp: int = Field(default=1, ge=0)
+    max_hp: int = Field(default=1, ge=0)
+    armor: int = Field(default=0, ge=0, le=3)
+    fatigue: int = Field(default=0, ge=0)
+    deprived: bool = False
+    critically_wounded: bool = False
+    doomed: bool = False
+    paralyzed: bool = False
+    delirious: bool = False
+    dead: bool = False
+    slots_total: int = Field(default=10, ge=1)
+    backpack_slots: int = Field(default=6, ge=0)
+    comfortable_slots: int = Field(default=5, ge=0)
+    slots_used: int = Field(default=0, ge=0)
+    overloaded: bool = False
+    primary_weapon_item_id: str | None = None
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def normalize_current_values(self) -> CairnCharacterState:
+        object.__setattr__(self, "str_score", min(self.str_score, self.max_str_score))
+        object.__setattr__(self, "dex_score", min(self.dex_score, self.max_dex_score))
+        object.__setattr__(self, "wil_score", min(self.wil_score, self.max_wil_score))
+        object.__setattr__(self, "hp", min(self.hp, self.max_hp))
+        return self
+
+
+class CairnResolution(StrictModel):
+    ability: CairnAbility | None = None
+    target: int | None = Field(default=None, ge=1, le=20)
+    success: bool | None = None
+    rest_kind: CairnRestKind | None = None
+    combat_round: int | None = Field(default=None, ge=0)
+    combat_started: bool | None = None
+    combat_active: bool | None = None
+    player_acted: bool | None = None
+    initiative_target: int | None = Field(default=None, ge=1, le=20)
+    attack_stance: AttackStance | None = None
+    weapon_item_id: str | None = None
+    weapon_name: str | None = None
+    target_combatant_id: str | None = None
+    target_name: str | None = None
+    target_armor: int | None = Field(default=None, ge=0, le=3)
+    base_damage: int | None = Field(default=None, ge=0)
+    damage_after_armor: int | None = Field(default=None, ge=0)
+    hp_before: int | None = Field(default=None, ge=0)
+    hp_after: int | None = Field(default=None, ge=0)
+    str_before: int | None = Field(default=None, ge=0)
+    str_after: int | None = Field(default=None, ge=0)
+    fatigue_before: int | None = Field(default=None, ge=0)
+    fatigue_after: int | None = Field(default=None, ge=0)
+    target_hp_before: int | None = Field(default=None, ge=0)
+    target_hp_after: int | None = Field(default=None, ge=0)
+    target_str_before: int | None = Field(default=None, ge=0)
+    target_str_after: int | None = Field(default=None, ge=0)
+    target_defeated: bool | None = None
+    target_fled: bool | None = None
+    enemy_damage: int | None = Field(default=None, ge=0)
+    enemy_damage_source: str | None = None
+    morale_target: int | None = Field(default=None, ge=1, le=20)
+    morale_success: bool | None = None
+    defeated_combatant_ids: list[str] = Field(default_factory=list)
+    fled_combatant_ids: list[str] = Field(default_factory=list)
+    retreat_outcome: RetreatOutcome | None = None
+    player_disengaged: bool | None = None
+    pursuit_active: bool | None = None
+    encounter_end_reason: EncounterEndReason | None = None
+    scar_result: str | None = None
+    overloaded: bool | None = None
 
 
 class CharacterSheet(StrictModel):
@@ -97,6 +287,7 @@ class CharacterSheet(StrictModel):
     flaw: str = ""
     condition: str = "Uninjured, for now."
     inventory: list[InventoryItem] = Field(default_factory=list)
+    cairn: CairnCharacterState = Field(default_factory=CairnCharacterState)
 
 
 class CharacterQuizOption(StrictModel):
@@ -162,6 +353,7 @@ class OracleOutcome(StrictModel):
     referenced_thread_id: str | None = None
     referenced_npc_id: str | None = None
     scene_status: SceneStatus | None = None
+    cairn: CairnResolution | None = None
 
 
 class GameEvent(StrictModel):
@@ -170,6 +362,7 @@ class GameEvent(StrictModel):
     event_type: EventType
     title: str
     content: str
+    thinking: str = ""
     oracle_outcome_id: str | None = None
 
 
@@ -187,6 +380,7 @@ class GameState(StrictModel):
     player_notes: str = Field(min_length=1)
     threads: list[GameThread] = Field(default_factory=list)
     npcs: list[NPC] = Field(default_factory=list)
+    encounter: EncounterState = Field(default_factory=EncounterState)
     oracle_tables: OracleTables
     oracle_history: list[OracleOutcome] = Field(default_factory=list)
     action_log: list[GameEvent] = Field(default_factory=list)

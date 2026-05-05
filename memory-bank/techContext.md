@@ -2,13 +2,13 @@
 
 ## Current Repository State
 
-The workspace now contains a Python FastAPI backend, a Svelte 5 + Vite + TypeScript frontend, and the Memory Bank.
+The workspace now contains a Python FastAPI backend, a Svelte 5 + Vite + TypeScript frontend, the Memory Bank, and an initialized git repository.
 
 The workspace path is:
 
 `/Users/ArmanTarkhanian1/Desktop/dungeon-master`
 
-The environment reports that this directory is not currently a git repository.
+The repository was initialized locally on `main` and currently has an initial commit.
 
 ## Stack
 
@@ -21,6 +21,7 @@ Backend (Python):
 - LiteLLM for provider-agnostic LLM calls (default OpenRouter Kimi K2.6).
 - `python-dotenv` for local config.
 - Local `data/game_state.json`, `data/events.jsonl`, and `data/checkpoints/` for canonical state.
+- Local `data/memory.json` for derived compacted GM-note memory used to bound planner/narrator prompt context.
 
 Frontend (Svelte 5 + Vite + TypeScript, plain — no SvelteKit):
 
@@ -33,15 +34,16 @@ Implemented components:
 
 Backend:
 
-- `src/dungeon_master/api.py`: FastAPI app + routes for state, oracle, action, reset.
+- `src/dungeon_master/api.py`: FastAPI app + routes for state, oracle, action, reset, setup, and SSE streaming.
 - `src/dungeon_master/cli.py`: `dungeon-master` console script that runs uvicorn.
 - `src/dungeon_master/campaign.py`: model-driven campaign bootstrap and oracle table generation.
 - `src/dungeon_master/models.py`: Pydantic state and event schemas, including `CampaignStatus`, `CharacterSheet`, and `InventoryItem`.
 - `src/dungeon_master/oracle.py`: deterministic oracle engine.
+- `src/dungeon_master/cairn.py`: Cairn 2e-inspired rules engine. Deterministic math stays here (saves, attacks, harm/critical damage/scars, recovery, equipment toggles, derived armor/burden recomputation), while one-time character backfill is now LLM-backed and returns a structured mechanics record plus a practical starting bundle.
 - `src/dungeon_master/state_store.py`: JSON state, JSONL event log, timestamped checkpoints, and named pre-narration turn checkpoints for regeneration.
-- `src/dungeon_master/narrative.py`: LiteLLM narrative client with retries, Kimi/OpenRouter defaults, and fallback narration.
-- `src/dungeon_master/service.py`: application service coordinating oracle, state, narration, and campaign generation.
-- `src/dungeon_master/turn_router.py`: conservative natural-language router for `/api/turn` (yes/no questions, scene transitions, random-event prompts, otherwise narrative-only).
+- `src/dungeon_master/narrative.py`: LiteLLM narrative client with retries, Kimi/OpenRouter defaults, fallback narration, and streaming helpers that emit `CompletionDelta` chunks carrying both prose and reasoning.
+- `src/dungeon_master/service.py`: application service coordinating oracle, state, narration, and campaign generation. It now also exposes result-bearing and streaming setup methods so setup and active play share one backend transport pattern.
+- `src/dungeon_master/turn_router.py`: LiteLLM-backed natural-language classifier for `/api/turn`. It returns structured route decisions (`player_action`, `yes_no`, `random_event`, `scene_check`, `save`) and falls back to `player_action` if the model is unavailable rather than using regex inference.
 - `src/dungeon_master/settings.py`: environment-backed state path configuration.
 
 Frontend:
@@ -51,10 +53,12 @@ Frontend:
 - `web/src/lib/store.svelte.ts`: single runes-based `GameStore` owning `state`, `isLoading`, `error`, `rollPhase`, `pendingOracle`, `cancelLabel`, ephemeral `notes`, and `inspectorOpen`. Exposes setup actions, `submit(rawText)`, `regenerateMessage(eventId)`, and `cancelCurrentRequest()`.
 - `web/src/lib/slash.ts` + `slash.test.ts`: pure slash-command parser (`/ask`, `/event`, `/scene`, `/chaos`, `/reset`, `/help`) with Vitest coverage.
 - `web/src/lib/character.ts` + `character.test.ts`: pure setup helpers (`deriveSetupMode`, `blankCharacterDraft`) plus latest-message regeneration eligibility helper (`message-actions.ts`).
-- `web/src/lib/types.ts`: TS mirrors of `GameState`, `OracleOutcome`, etc.
-- `web/src/styles/app.css`: bespoke pigment palette (`--ink-*`, `--paper-*`, `--gold-*`, `--rust-*`), three-voice type system (Cormorant body / IM Fell display / Alagard pixel engine voice), parchment + iron surfaces, deckled-edge SVG mask, film-grain overlay, button/form/tag styling.
+- `web/src/lib/quiz.ts` + `quiz.test.ts`: assist-mode interview helpers (answer state, validation, payload builder).
+- `web/src/lib/cairn.ts` + `cairn.test.ts`: pure Cairn formatting helpers (defaults mirroring `models.py`, render gating, burden tier, priority-ordered status badges, ability/stance/rest-kind labels, item tag labels, and the exhaustive `cairnHeadline` switch over `save | attack | harm | recovery`).
+- `web/src/lib/types.ts`: TS mirrors of `GameState`, `OracleOutcome`, plus the new Cairn enums and nested mechanics state (`CairnAbility`, `AttackStance`, `CairnRestKind`, `CairnItemTag`, `CairnMechanicsSource`, `CairnItemState`, `CairnCharacterState`, `CairnResolution`). The `OracleKind` union now includes `save | attack | harm | recovery` so the receipt switch is exhaustive at compile time.
+- `web/src/styles/app.css`: bespoke pigment palette (`--ink-*`, `--paper-*`, `--gold-*`, `--rust-*`), three-voice type system (Cormorant body / IM Fell display / Alagard pixel engine voice), parchment + iron surfaces, deckled-edge SVG mask, film-grain overlay, button/form/tag styling. Adds a `.tag--cairn` flavor (verdigris-green tinted) for receipt strips of Cairn-flavored outcomes.
 - `web/public/fonts/alagard.ttf`: CC-BY pixel font by Hewett Tsoi, used for the engine voice. VT323 is the Google-Fonts fallback.
-- `web/src/components/`: `StatusStrip`, `CharacterSetup`, `CharacterTemplateCard`, `CharacterEditor`, `CharacterFolio`, `ChatFeed`, `ChatMessage`, `MessageActions`, `MechanicalReceipt`, `Composer`, `Inspector`, `ChaosDial`, `Drawer`, `ThreadsPanel`, `NPCsPanel`, `NotesEditor`. Removed in the chat-first pivot: `SceneCard`, `OracleConsole`, `PlayerCommand`, `ActionLog`, `DiceTumbler` (the dice now live inline in `MechanicalReceipt`).
+- `web/src/components/`: `StatusStrip`, `CharacterSetup`, `CharacterTemplateCard`, `CharacterEditor`, `LoadingPanel`, `CharacterFolio`, `CairnReadout`, `ChatFeed`, `ChatMessage`, `MessageActions`, `MechanicalReceipt`, `Composer`, `Inspector`, `ChaosDial`, `Drawer`, `ThreadsPanel`, `NPCsPanel`, `NotesEditor`. `CairnReadout.svelte` is the new shared read-only mechanics surface used by `CharacterFolio` (active play) and `CharacterEditor` (post-backfill draft preview). Removed in the chat-first pivot: `SceneCard`, `OracleConsole`, `PlayerCommand`, `ActionLog`, `DiceTumbler` (the dice now live inline in `MechanicalReceipt`).
 
 ## Package Management
 
@@ -103,11 +107,12 @@ Current verification commands:
 
 - `uv run ruff check .`
 - `uv run mypy src tests`
-- `uv run pytest` (currently 36 passing)
+- `uv run pytest` (currently 53 passing)
 - `cd web && npm run check`
-- `cd web && npm test`  (Vitest — currently covers `lib/slash.ts`, `lib/character.ts`, and `lib/message-actions.ts`)
+- `cd web && npm test`  (Vitest — currently covers `lib/slash.ts`, `lib/character.ts`, `lib/message-actions.ts`, `lib/quiz.ts`, and `lib/cairn.ts`; 43 passing)
 - `cd web && npm run build`
 - `uv run dungeon-master` (backend) + `cd web && npm run dev` (frontend) for browser smoke tests via Pinchtab. Note: Pinchtab's `browser_fill` and `browser_type` set the DOM `value` attribute but do not always dispatch the `input` event Svelte 5's `bind:value` listens for; for end-to-end UI verification use a real keyboard, or rely on the slash-parser unit tests + the API integration tests to lock in the routing contract.
+- Backend-only Cairn smoke: `POST /api/cairn/save`, `/api/cairn/attack`, `/api/cairn/harm`, `/api/cairn/recover`, and `/api/cairn/equip` now exist and return the full `GameState`.
 
 ## Operational Requirements
 
@@ -117,9 +122,11 @@ The source and user preferences imply the following reliability requirements:
 - Add retries around LLM and external API calls.
 - Implement checkpoints so failed turns can be recovered.
 - Keep canonical state outside the LLM context window.
+- Keep compacted continuity memory outside canonical state, in a rebuildable sidecar, so prompt-bounding does not pollute the source-of-truth save format.
 - Prefer deterministic tools and typed outputs over unconstrained prose.
 - Make the oracle engine roll internally and emit strict typed results.
 - Prevent the narrative engine from changing state or rolling dice.
+- Use the model for structured interpretation tasks (turn classification, one-time mechanics backfill) instead of keyword/regex inference.
 
 ## Known Technical Risks
 
@@ -127,4 +134,5 @@ The source and user preferences imply the following reliability requirements:
 - LangGraph or any formal graph framework remains optional. The current `GameService` is enough for the deterministic loop.
 - Copying proprietary Mythic GME 2e tables verbatim may create licensing issues; prefer original tables, user-supplied licensed material, or open alternatives.
 - Raw local files are simple but need careful locking or transaction semantics if concurrent actions are ever added (single-user assumption keeps this fine for now).
-- The dice-tumble animation assumes the API returns within a few seconds; very slow models will leave the dice spinning. The store doesn't currently expose progress beyond the `rollPhase` flag.
+- The dice-tumble animation assumes the API returns within a few seconds; very slow models will leave the dice spinning. The backend exposes streamed progress / reasoning for both setup and play over NDJSON, and the frontend store / chat / inspector all consume that surface; the dice now tumble between `meta` and the first `content_delta` rather than blocking on a full response.
+- Kimi K2.6 Thinking effectively spends ~2-3k tokens on reasoning regardless of the requested `effort` setting, so character/campaign generation endpoints need large token budgets (`max_tokens=12000`) or they silently truncate JSON.

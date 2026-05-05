@@ -9,10 +9,21 @@ stay visible (chaos), and offers a single button into the inspector.
 Anything more would compete with the conversation below.
 -->
 <script lang="ts">
+  import { combatFromState, encounterHeadline } from "../lib/combat";
   import { game } from "../lib/store.svelte";
+  import type { GameState } from "../lib/types";
 
-  type Props = { chaos: number; sceneNumber: number };
-  const { chaos, sceneNumber }: Props = $props();
+  type Props = { chaos: number; sceneNumber: number; state: GameState };
+  const { chaos, sceneNumber, state: gs }: Props = $props();
+
+  // The combat badge appears only when an encounter is active. Clicking
+  // it opens the inspector — the tracker lives there. Keeping the
+  // badge inline (not a separate region) means the strip only grows in
+  // height when combat is happening, so the chat doesn't jump under
+  // the player on every encounter start.
+  const encounter = $derived(combatFromState(gs));
+  const combatHeadline = $derived(encounterHeadline(encounter));
+  const showCombat = $derived(encounter !== null && encounter.active);
 </script>
 
 <header class="strip iron">
@@ -22,6 +33,17 @@ Anything more would compete with the conversation below.
   </div>
 
   <div class="meta">
+    {#if showCombat}
+      <button
+        class="badge badge--combat"
+        type="button"
+        onclick={() => game.openInspector()}
+        title="Open combat tracker"
+      >
+        <span class="kicker">Combat</span>
+        <span class="pixel value combat-value">{combatHeadline ?? "Active"}</span>
+      </button>
+    {/if}
     <button class="badge" type="button" onclick={() => game.openInspector()} title="Open inspector">
       <span class="kicker">Chaos</span>
       <span class="pixel value">{chaos}</span>
@@ -101,5 +123,31 @@ Anything more would compete with the conversation below.
     align-self: stretch;
     padding: 0.4rem 0.9rem;
     font-size: 0.85rem;
+  }
+
+  /* The combat badge uses rust-iron rather than gold so the player's
+   * eye distinguishes "live encounter" from the always-visible chaos
+   * number at a glance. The animated underline keeps it from reading
+   * as a static decoration when combat starts. */
+  .badge--combat {
+    border-color: var(--rust-iron);
+    background: color-mix(in oklab, var(--rust-blood) 18%, transparent);
+  }
+  .badge--combat:hover {
+    border-color: var(--rust-iron);
+    background: color-mix(in oklab, var(--rust-blood) 32%, transparent);
+  }
+  .badge--combat .kicker {
+    color: var(--rust-iron);
+  }
+  .badge--combat .combat-value {
+    /* Smaller because the headline can be long ("Round 1 · DEX save
+     * to act") and this badge sits in a horizontal strip with limited
+     * room before the chaos / scene badges shift right. */
+    color: var(--paper-warm);
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0 0.15rem;
   }
 </style>

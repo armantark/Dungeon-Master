@@ -10,7 +10,10 @@ __pycache__/
 # Persisted game state — regenerated on every campaign reset
 data/game_state.json
 data/events.jsonl
+data/memory.json
 data/checkpoints/
+data/turn-checkpoints/
+data/backups/
 
 # Frontend
 web/node_modules/

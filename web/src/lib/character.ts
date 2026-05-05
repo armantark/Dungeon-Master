@@ -1,3 +1,4 @@
+import { defaultCairnCharacterState, defaultCairnItemState } from "./cairn";
 import type { CampaignStatus, CharacterSheet } from "./types";
 
 // "quiz" and "review" only appear inside the assist flow; once the
@@ -9,6 +10,10 @@ export function deriveSetupMode(status: CampaignStatus): SetupMode {
   return status === "ready_to_start" || status === "active" ? "edit" : "choose";
 }
 
+// Blank drafts seed inventory + cairn at their `unset` defaults. The
+// real Cairn mechanics are derived later by the backend's one-time
+// LLM-backed backfill on `finalize` / `start_campaign`; until then the
+// frontend gates the Cairn block off the `source === "unset"` flag.
 export function blankCharacterDraft(): CharacterSheet {
   return {
     name: "Unnamed wanderer",
@@ -19,8 +24,19 @@ export function blankCharacterDraft(): CharacterSheet {
     flaw: "Undefined.",
     condition: "Unrecorded.",
     inventory: [
-      { id: `item_${crypto.randomUUID().slice(0, 8)}`, name: "Poor bundle", details: "" },
-      { id: `item_${crypto.randomUUID().slice(0, 8)}`, name: "Walking staff", details: "" },
+      {
+        id: `item_${crypto.randomUUID().slice(0, 8)}`,
+        name: "Poor bundle",
+        details: "",
+        cairn: defaultCairnItemState(),
+      },
+      {
+        id: `item_${crypto.randomUUID().slice(0, 8)}`,
+        name: "Walking staff",
+        details: "",
+        cairn: defaultCairnItemState(),
+      },
     ],
+    cairn: defaultCairnCharacterState(),
   };
 }

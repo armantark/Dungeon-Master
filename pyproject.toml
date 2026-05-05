@@ -55,6 +55,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/dungeon_master/cairn.py" = ["C901", "E501", "PLR0911", "PLR0912", "PLR0915", "PLR2004"]
 "tests/**/*.py" = ["PLR2004", "S101"]
 
 [tool.mypy]

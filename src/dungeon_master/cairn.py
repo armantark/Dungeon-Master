@@ -1,0 +1,1424 @@
+from __future__ import annotations
+
+import json
+import random
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from pydantic import Field, ValidationError
+
+from dungeon_master.cancel import CancellationToken
+from dungeon_master.models import (
+    AttackStance,
+    CairnAbility,
+    CairnCharacterState,
+    CairnItemState,
+    CairnItemTag,
+    CairnMechanicsSource,
+    CairnResolution,
+    CairnRestKind,
+    CharacterSheet,
+    EncounterEndReason,
+    EncounterState,
+    EnemyCombatant,
+    GameState,
+    InventoryItem,
+    OracleKind,
+    OracleOutcome,
+    RetreatOutcome,
+    Roll,
+    StrictModel,
+)
+from dungeon_master.narrative import (
+    LITELLM_RETRYABLE_ERRORS,
+    CompletionFunction,
+    CompletionRequest,
+    NarrativeConfig,
+    _completion,
+    complete_text,
+    extract_json_object,
+)
+
+D20_SIDES = 20
+D6_SIDES = 6
+D4_SIDES = 4
+D8_SIDES = 8
+D10_SIDES = 10
+D12_SIDES = 12
+MAX_ARMOR = 3
+FULL_INVENTORY_SLOTS = 10
+BACKPACK_SLOTS = 6
+COMFORTABLE_SLOTS = 5
+CURRENT_BACKFILL_VERSION = 3
+STR_BRANCH_MAX = 2
+DEX_BRANCH_MAX = 4
+
+LASTING_SCAR_LOCATIONS: tuple[str, ...] = (
+    "Neck",
+    "Hands",
+    "Eye",
+    "Chest",
+    "Legs",
+    "Ear",
+)
+BROKEN_LIMB_PARTS: tuple[str, ...] = (
+    "Leg",
+    "Leg",
+    "Arm",
+    "Arm",
+    "Rib",
+    "Skull",
+)
+
+CAIRN_BACKFILL_SYSTEM_PROMPT = """You convert a fiction-first dark-fantasy character into a
+Cairn 2e-inspired backend mechanics record.
+
+Return only valid JSON.
+
+Rules philosophy:
+- This project uses Cairn-style structured play: STR, DEX, WIL, HP, armor,
+  burden/slots, practical inventory, and deterministic item semantics.
+- `skills` and `abilities` should be short textual specialties or permissions,
+  not bonuses.
+- Biography and body-horror details should primarily affect stats, condition,
+  skills, abilities, and notes.
+- Inventory should be a practical starting bundle appropriate to the
+  character's profile. Prefer a weapon, practical clothing/armor, light,
+  supplies, tools, and at most one or two signature biography-derived items.
+- Keep the inventory lean and believable. Most items should be useful in play,
+  not symbolic transcripts of the backstory.
+- Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
+  uses, equipped state.
+
+Mechanical constraints:
+- `str_score`, `dex_score`, `wil_score` are each 3-18.
+- `max_hp` is 1-6.
+- `armor` is derived later in code; set armor bonuses on items instead.
+- `slots_total` is always 10, `backpack_slots` is 6, `comfortable_slots` is 5.
+- `fatigue` normally starts at 0 unless the condition clearly implies it.
+- `deprived`, `critically_wounded`, `doomed`, `paralyzed`, `delirious`, and
+  `dead` should default false unless the condition clearly requires otherwise.
+- Favor at least one equipped primary weapon if the character plausibly has one.
+"""
+
+CAIRN_BACKFILL_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
+{
+  "skills": ["short skill phrase"],
+  "abilities": ["short ability phrase"],
+  "str_score": 10,
+  "dex_score": 10,
+  "wil_score": 10,
+  "max_hp": 3,
+  "fatigue": 0,
+  "deprived": false,
+  "critically_wounded": false,
+  "doomed": false,
+  "paralyzed": false,
+  "delirious": false,
+  "dead": false,
+  "notes": "1-2 sentences explaining the build and loadout choices",
+  "inventory": [
+    {
+      "name": "practical item name",
+      "details": "how it helps in play and why this character carries it",
+      "tags": ["petty", "weapon", "holy"],
+      "slots": 1,
+      "weapon_damage_die": 6,
+      "armor_bonus": 0,
+      "uses": null,
+      "equipped": true
+    }
+  ]
+}
+
+Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
+
+The authored character is:
+<<CHARACTER_JSON>>
+
+The generated opening state around that character is:
+Current scene: <<CURRENT_SCENE>>
+Setting notes: <<SETTING_NOTES>>
+Threads: <<THREAD_TITLES>>
+NPCs: <<NPC_NAMES>>
+
+Important instruction:
+- You may replace the existing authored inventory with a better Cairn-style
+  practical starting bundle if the authored items are too symbolic or too
+  on-the-nose.
+- Preserve at most one or two iconic biography-derived items.
+- Put most biography influence into stats, skills, abilities, condition,
+  and notes rather than inventory objects.
+"""
+
+CAIRN_ENCOUNTER_SYSTEM_PROMPT = """You convert a dark-fantasy scene into a concrete
+Cairn 2e combat encounter.
+
+Return only valid JSON.
+
+Rules:
+- Only create hostile combatants already present in, or directly implied by,
+  the supplied scene + player action.
+- Prefer 1-4 foes.
+- Use Cairn-scale stats: HP, STR, DEX, WIL, armor, and a weapon damage die.
+- Keep ordinary human enemies around HP 1-6 unless the fiction clearly
+  supports a stronger elite or monster.
+- Armor must be 0-3.
+- Weapon damage dice must be 4, 6, 8, 10, or 12.
+- If multiple combatants appear, mark at most one as `leader`.
+- Keep the encounter grounded and playable; do not invent a boss fight out
+  of a minor scuffle.
+"""
+
+CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
+{
+  "notes": "1-2 sentences explaining why these foes are present",
+  "combatants": [
+    {
+      "name": "foe name",
+      "description": "brief physical/immediate-fiction read",
+      "hp": 5,
+      "str_score": 12,
+      "dex_score": 10,
+      "wil_score": 8,
+      "armor": 1,
+      "weapon_name": "hatchet",
+      "weapon_damage_die": 6,
+      "leader": false,
+      "notes": "optional short note"
+    }
+  ]
+}
+
+Current scene:
+<<CURRENT_SCENE>>
+
+Setting notes:
+<<SETTING_NOTES>>
+
+Known NPCs:
+<<NPC_NAMES>>
+
+Character JSON:
+<<CHARACTER_JSON>>
+
+Player turn that is escalating into combat:
+<<PLAYER_INPUT>>
+
+Named target, if any:
+<<TARGET_NAME>>
+"""
+
+
+class GeneratedCairnItemProfile(StrictModel):
+    name: str = Field(min_length=1)
+    details: str = Field(min_length=1)
+    tags: list[CairnItemTag] = Field(default_factory=list)
+    slots: int = Field(ge=0, le=10)
+    weapon_damage_die: int | None = Field(default=None, ge=4, le=12)
+    armor_bonus: int = Field(default=0, ge=0, le=3)
+    uses: int | None = Field(default=None, ge=1)
+    equipped: bool = False
+
+
+class GeneratedCairnBackfill(StrictModel):
+    skills: list[str] = Field(default_factory=list)
+    abilities: list[str] = Field(default_factory=list)
+    str_score: int = Field(ge=3, le=18)
+    dex_score: int = Field(ge=3, le=18)
+    wil_score: int = Field(ge=3, le=18)
+    max_hp: int = Field(ge=1, le=6)
+    fatigue: int = Field(default=0, ge=0)
+    deprived: bool = False
+    critically_wounded: bool = False
+    doomed: bool = False
+    paralyzed: bool = False
+    delirious: bool = False
+    dead: bool = False
+    notes: str = Field(default="")
+    inventory: list[GeneratedCairnItemProfile] = Field(min_length=2, max_length=8)
+
+
+class GeneratedEncounterCombatant(StrictModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    hp: int = Field(ge=1, le=12)
+    str_score: int = Field(ge=3, le=18)
+    dex_score: int = Field(ge=3, le=18)
+    wil_score: int = Field(ge=3, le=18)
+    armor: int = Field(default=0, ge=0, le=3)
+    weapon_name: str = Field(min_length=1)
+    weapon_damage_die: int = Field(ge=4, le=12)
+    leader: bool = False
+    notes: str = ""
+
+
+class GeneratedEncounterSeed(StrictModel):
+    notes: str = ""
+    combatants: list[GeneratedEncounterCombatant] = Field(min_length=1, max_length=4)
+
+
+BackfillFunction = Callable[[GameState], CharacterSheet]
+
+
+class EmptyBackfillContentError(ValueError):
+    pass
+
+
+def _raise_empty_backfill_content_error() -> None:
+    message = "Cairn backfill returned empty content."
+    raise EmptyBackfillContentError(message)
+
+
+@dataclass(frozen=True)
+class HarmApplication:
+    source: str
+    summary: str
+    rolls: list[Roll]
+    armor_value: int
+    damage_after_armor: int
+    hp_before: int
+    hp_after: int
+    str_before: int
+    str_after: int
+    scar_result: str | None
+
+
+class CairnEngine:
+    def __init__(
+        self,
+        seed: int | None = None,
+        config: NarrativeConfig | None = None,
+        completion_function: CompletionFunction = _completion,
+        backfill_function: BackfillFunction | None = None,
+    ) -> None:
+        self._rng = random.Random(seed)
+        self._config = config or NarrativeConfig.from_env()
+        self._completion = completion_function
+        self._backfill_function = backfill_function
+
+    def ensure_character_state(
+        self,
+        state: GameState,
+        *,
+        allow_backfill: bool,
+        cancel_token: CancellationToken | None = None,
+    ) -> bool:
+        character = state.character
+        if character.cairn.source == CairnMechanicsSource.UNSET:
+            if not allow_backfill:
+                return False
+            self._backfill_character(state, cancel_token=cancel_token)
+            return True
+
+        if (
+            character.cairn.source == CairnMechanicsSource.NARRATIVE_BACKFILL
+            and character.cairn.backfill_version < CURRENT_BACKFILL_VERSION
+            and allow_backfill
+        ):
+            self._backfill_character(state, cancel_token=cancel_token)
+            return True
+
+        self._recompute_derived(character)
+        return False
+
+    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+        self._require_ready(state)
+        score = self._ability_score(state.character.cairn, ability)
+        roll = self._roll(D20_SIDES, "save")
+        success = roll.result == 1 or (roll.result != D20_SIDES and roll.result <= score)
+        verdict = "passed" if success else "failed"
+        return OracleOutcome(
+            kind=OracleKind.SAVE,
+            summary=f"{ability.value} save {verdict}: {reason}",
+            rolls=[roll],
+            question=reason,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(ability=ability, target=score, success=success),
+        )
+
+    def resolve_attack(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        weapon_item_id: str | None,
+        stance: AttackStance,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        encounter = self._ensure_encounter(
+            state,
+            player_input=f"Attack {target_name}",
+            target_name=target_name,
+            fallback_target_armor=target_armor,
+            cancel_token=cancel_token,
+        )
+        target = self._require_target(encounter, target_name)
+        weapon = self._resolve_weapon(state.character, weapon_item_id)
+        base_die = self._attack_die(weapon, stance)
+        round_before = encounter.round_number
+        weapon_name = weapon.name if weapon is not None else "Unarmed strike"
+        rolls: list[Roll] = []
+        combat_started = encounter.round_number == 1 and encounter.first_round_dex_gate_pending
+        player_acted = True
+        initiative_target: int | None = None
+
+        if encounter.first_round_dex_gate_pending:
+            initiative_target = state.character.cairn.dex_score
+            initiative_roll = self._roll(D20_SIDES, "initiative")
+            rolls.append(initiative_roll)
+            player_acted = self._save_succeeds(initiative_roll.result, initiative_target)
+            encounter.first_round_dex_gate_pending = False
+        encounter.player_disengaged = False
+        encounter.pursuit_active = False
+        encounter.end_reason = None
+
+        damage_roll = self._roll(base_die, "damage")
+        target_hp_before = target.hp
+        target_str_before = target.str_score
+        target_defeated_before = target.defeated
+        _morale_roll: Roll | None = None
+        morale_target: int | None = None
+        morale_success: bool | None = None
+        defeated_ids: list[str] = []
+        fled_ids: list[str] = []
+
+        if player_acted:
+            rolls.append(damage_roll)
+            damage_after_armor = max(0, damage_roll.result - target.armor)
+            (
+                damage_summary,
+                attack_rolls,
+                target_defeated,
+                lone_zero_triggered,
+            ) = self._apply_harm_to_combatant(target, damage_after_armor)
+            if attack_rolls:
+                rolls.extend(attack_rolls)
+            if target_defeated and not target_defeated_before:
+                defeated_ids.append(target.id)
+            (
+                _morale_roll,
+                morale_target,
+                morale_success,
+                morale_fled_ids,
+            ) = self._maybe_resolve_enemy_morale(
+                encounter,
+                lone_zero_triggered=lone_zero_triggered,
+            )
+            fled_ids.extend(morale_fled_ids)
+            if target.id in morale_fled_ids:
+                target.defeated = False
+            attack_summary = (
+                f"Attack against {target.name}: {weapon_name}. {damage_summary}"
+            )
+        else:
+            damage_after_armor = 0
+            attack_summary = (
+                f"Lost the first round and failed to act before {target.name} could close."
+            )
+
+        enemy_harm = self._resolve_enemy_turn(state, encounter)
+        rolls.extend(enemy_harm.rolls)
+        encounter.active = self._has_active_enemies(encounter)
+        if encounter.active:
+            encounter.round_number += 1
+            encounter.end_reason = None
+        elif fled_ids:
+            encounter.end_reason = EncounterEndReason.ENEMY_ROUT
+            encounter.notes = "The remaining enemies broke and fled."
+        else:
+            encounter.end_reason = EncounterEndReason.VICTORY
+            encounter.notes = "No active foes remain."
+
+        return OracleOutcome(
+            kind=OracleKind.ATTACK,
+            summary=self._attack_summary(
+                attack_summary=attack_summary,
+                enemy_summary=enemy_harm.summary,
+                encounter=encounter,
+            ),
+            rolls=rolls,
+            question=f"Attack {target.name}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=round_before,
+                combat_started=combat_started,
+                combat_active=encounter.active,
+                player_acted=player_acted,
+                initiative_target=initiative_target,
+                weapon_item_id=weapon.id if weapon is not None else None,
+                weapon_name=weapon_name,
+                target_combatant_id=target.id,
+                target_name=target.name,
+                target_armor=target.armor,
+                attack_stance=stance,
+                base_damage=damage_roll.result if player_acted else None,
+                damage_after_armor=damage_after_armor,
+                target_hp_before=target_hp_before,
+                target_hp_after=target.hp,
+                target_str_before=target_str_before,
+                target_str_after=target.str_score,
+                target_defeated=target.defeated,
+                target_fled=target.fled,
+                hp_before=enemy_harm.hp_before,
+                hp_after=enemy_harm.hp_after,
+                str_before=enemy_harm.str_before,
+                str_after=enemy_harm.str_after,
+                enemy_damage=enemy_harm.damage_after_armor,
+                enemy_damage_source=enemy_harm.source if enemy_harm.damage_after_armor else None,
+                morale_target=morale_target,
+                morale_success=morale_success,
+                defeated_combatant_ids=defeated_ids,
+                fled_combatant_ids=fled_ids,
+                scar_result=enemy_harm.scar_result,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
+        self._require_ready(state)
+        encounter = state.encounter
+        if not encounter.active or not self._has_active_enemies(encounter):
+            message = "No active encounter to retreat from."
+            raise ValueError(message)
+
+        round_before = encounter.round_number
+        retreat_target = state.character.cairn.dex_score
+        retreat_roll = self._roll(D20_SIDES, "retreat")
+        rolls: list[Roll] = [retreat_roll]
+        enemy_harm = self._empty_harm_application(state, source="No enemy harm")
+        retreat_success = self._save_succeeds(retreat_roll.result, retreat_target)
+        pursuit_target = self._highest_enemy_pursuit_target(encounter)
+        retreat_outcome: RetreatOutcome
+        encounter_end_reason: EncounterEndReason | None = None
+
+        if not retreat_success:
+            encounter.player_disengaged = False
+            encounter.pursuit_active = False
+            encounter.end_reason = None
+            enemy_harm = self._resolve_enemy_turn(state, encounter)
+            rolls.extend(enemy_harm.rolls)
+            encounter.active = self._has_active_enemies(encounter)
+            if encounter.active:
+                encounter.round_number += 1
+            encounter.notes = "Retreat failed; the enemy kept you pinned in the fight."
+            retreat_outcome = RetreatOutcome.CAUGHT
+            summary = (
+                f"Retreat failed: {reason}. {enemy_harm.summary}"
+            )
+        else:
+            pursuit_roll = self._roll(D20_SIDES, "pursuit")
+            rolls.append(pursuit_roll)
+            pursuers_close = self._save_succeeds(pursuit_roll.result, pursuit_target)
+            if pursuers_close:
+                encounter.player_disengaged = True
+                encounter.pursuit_active = True
+                encounter.active = True
+                encounter.end_reason = None
+                encounter.first_round_dex_gate_pending = False
+                encounter.round_number += 1
+                encounter.notes = "You broke contact, but the enemy remains in pursuit."
+                retreat_outcome = RetreatOutcome.DISENGAGED
+                summary = (
+                    f"Retreat resolved: {reason}. You broke contact, but the enemy is still in pursuit."
+                )
+            else:
+                encounter.player_disengaged = False
+                encounter.pursuit_active = False
+                encounter.active = False
+                encounter.first_round_dex_gate_pending = False
+                encounter.end_reason = EncounterEndReason.PLAYER_ESCAPED
+                encounter.notes = "You escaped the encounter."
+                retreat_outcome = RetreatOutcome.ESCAPED
+                encounter_end_reason = EncounterEndReason.PLAYER_ESCAPED
+                summary = f"Retreat resolved: {reason}. You escaped the encounter."
+
+        return OracleOutcome(
+            kind=OracleKind.RETREAT,
+            summary=summary,
+            rolls=rolls,
+            question=reason,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                ability=CairnAbility.DEX,
+                target=retreat_target,
+                success=retreat_success,
+                combat_round=round_before,
+                combat_active=encounter.active,
+                hp_before=enemy_harm.hp_before,
+                hp_after=enemy_harm.hp_after,
+                str_before=enemy_harm.str_before,
+                str_after=enemy_harm.str_after,
+                enemy_damage=enemy_harm.damage_after_armor,
+                enemy_damage_source=enemy_harm.source if enemy_harm.damage_after_armor else None,
+                retreat_outcome=retreat_outcome,
+                player_disengaged=encounter.player_disengaged,
+                pursuit_active=encounter.pursuit_active,
+                encounter_end_reason=encounter_end_reason,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def suffer_harm(
+        self,
+        state: GameState,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        applied = self._apply_harm_to_character(
+            state.character.cairn,
+            amount=amount,
+            source=source,
+            in_combat=in_combat,
+            armor_applies=armor_applies,
+        )
+        self._recompute_derived(state.character)
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=applied.summary,
+            rolls=applied.rolls,
+            question=source,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=source,
+                target_armor=applied.armor_value,
+                base_damage=amount,
+                damage_after_armor=applied.damage_after_armor,
+                hp_before=applied.hp_before,
+                hp_after=state.character.cairn.hp,
+                str_before=applied.str_before,
+                str_after=state.character.cairn.str_score,
+                scar_result=applied.scar_result,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+        self._require_ready(state)
+        cairn = state.character.cairn
+        hp_before = cairn.hp
+        fatigue_before = cairn.fatigue
+        str_before = cairn.str_score
+
+        if cairn.dead:
+            message = "Dead characters cannot recover through ordinary rest."
+            raise ValueError(message)
+
+        if kind == CairnRestKind.BREATHER:
+            if not cairn.deprived:
+                cairn.hp = cairn.max_hp
+        elif kind == CairnRestKind.FULL_REST:
+            if not cairn.deprived:
+                cairn.hp = cairn.max_hp
+                cairn.fatigue = 0
+                cairn.critically_wounded = False
+        elif not cairn.deprived:
+                cairn.hp = cairn.max_hp
+                cairn.fatigue = 0
+                cairn.str_score = cairn.max_str_score
+                cairn.dex_score = cairn.max_dex_score
+                cairn.wil_score = cairn.max_wil_score
+                cairn.critically_wounded = False
+                cairn.paralyzed = False
+                cairn.delirious = False
+
+        self._recompute_derived(state.character)
+        return OracleOutcome(
+            kind=OracleKind.RECOVERY,
+            summary=f"Recovery resolved: {kind.value}.",
+            rolls=[],
+            question=kind.value,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                rest_kind=kind,
+                hp_before=hp_before,
+                hp_after=cairn.hp,
+                str_before=str_before,
+                str_after=cairn.str_score,
+                fatigue_before=fatigue_before,
+                fatigue_after=cairn.fatigue,
+                overloaded=cairn.overloaded,
+            ),
+        )
+
+    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+        self._require_ready(state)
+        target = self._find_item(state.character, item_id)
+        if target is None:
+            message = f"Unknown inventory item: {item_id}"
+            raise ValueError(message)
+
+        if CairnItemTag.WEAPON in target.cairn.tags and equipped:
+            for item in state.character.inventory:
+                if item.id != item_id and CairnItemTag.WEAPON in item.cairn.tags:
+                    item.cairn.equipped = False
+        target.cairn.equipped = equipped
+        self._recompute_derived(state.character)
+
+    def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
+        self._require_ready(state)
+        target = self._find_item(state.character, item_id)
+        if target is None:
+            message = f"Unknown inventory item: {item_id}"
+            raise ValueError(message)
+
+        if CairnItemTag.LIGHT in target.cairn.tags:
+            target.cairn.equipped = True
+
+        if target.cairn.uses is None:
+            self._recompute_derived(state.character)
+            return f"Used {target.name}: {intent}. No limited uses were consumed."
+
+        remaining = target.cairn.uses - 1
+        if remaining <= 0:
+            state.character.inventory = [
+                item for item in state.character.inventory if item.id != item_id
+            ]
+            self._recompute_derived(state.character)
+            return f"Used {target.name}: final use spent, item exhausted and removed."
+
+        target.cairn.uses = remaining
+        self._recompute_derived(state.character)
+        return f"Used {target.name}: {remaining} use{'s' if remaining != 1 else ''} remain."
+
+    def drop_item(self, state: GameState, *, item_id: str) -> str:
+        self._require_ready(state)
+        target = self._find_item(state.character, item_id)
+        if target is None:
+            message = f"Unknown inventory item: {item_id}"
+            raise ValueError(message)
+
+        state.character.inventory = [
+            item for item in state.character.inventory if item.id != item_id
+        ]
+        self._recompute_derived(state.character)
+        return f"Dropped {target.name}."
+
+    def _backfill_character(
+        self,
+        state: GameState,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> None:
+        if self._backfill_function is not None:
+            state.character = self._backfill_function(state)
+            self._recompute_derived(state.character)
+            return
+
+        if not self._config.is_usable():
+            message = "Cairn backfill requires a configured model."
+            raise ValueError(message)
+
+        prompt = self._build_backfill_prompt(state)
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": CAIRN_BACKFILL_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=max(self._config.max_tokens, 4500),
+            timeout=self._config.timeout_seconds,
+            stream=False,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort="low",
+            reasoning={"effort": "low", "exclude": self._config.exclude_reasoning},
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+        )
+        payload = self._complete_json(request)
+        generated = GeneratedCairnBackfill.model_validate_json(extract_json_object(payload))
+        state.character = self._apply_generated_backfill(state.character, generated)
+        self._recompute_derived(state.character)
+
+    def _apply_generated_backfill(
+        self,
+        authored: CharacterSheet,
+        generated: GeneratedCairnBackfill,
+    ) -> CharacterSheet:
+        inventory = [
+            InventoryItem(
+                name=item.name,
+                details=item.details,
+                cairn=CairnItemState(
+            source=CairnMechanicsSource.NARRATIVE_BACKFILL,
+                    backfill_version=CURRENT_BACKFILL_VERSION,
+                    tags=item.tags,
+                    slots=item.slots,
+                    weapon_damage_die=item.weapon_damage_die,
+                    armor_bonus=item.armor_bonus,
+                    uses=item.uses,
+                    equipped=item.equipped,
+                ),
+            )
+            for item in generated.inventory
+        ]
+        return authored.model_copy(
+            update={
+                "inventory": inventory,
+                "cairn": CairnCharacterState(
+                    source=CairnMechanicsSource.NARRATIVE_BACKFILL,
+                    backfill_version=CURRENT_BACKFILL_VERSION,
+                    skills=generated.skills,
+                    abilities=generated.abilities,
+                    str_score=generated.str_score,
+                    dex_score=generated.dex_score,
+                    wil_score=generated.wil_score,
+                    max_str_score=generated.str_score,
+                    max_dex_score=generated.dex_score,
+                    max_wil_score=generated.wil_score,
+                    hp=generated.max_hp,
+                    max_hp=generated.max_hp,
+                    armor=0,
+                    fatigue=generated.fatigue,
+                    deprived=generated.deprived,
+                    critically_wounded=generated.critically_wounded,
+                    doomed=generated.doomed,
+                    paralyzed=generated.paralyzed,
+                    delirious=generated.delirious,
+                    dead=generated.dead,
+                    slots_total=FULL_INVENTORY_SLOTS,
+            backpack_slots=BACKPACK_SLOTS,
+            comfortable_slots=COMFORTABLE_SLOTS,
+                    notes=generated.notes,
+                ),
+            },
+            deep=True,
+        )
+
+    def _build_backfill_prompt(self, state: GameState) -> str:
+        return (
+            CAIRN_BACKFILL_USER_PROMPT_TEMPLATE.replace(
+                "<<CHARACTER_JSON>>",
+                state.character.model_dump_json(indent=2),
+            )
+            .replace("<<CURRENT_SCENE>>", state.current_scene)
+            .replace("<<SETTING_NOTES>>", state.setting_notes)
+            .replace("<<THREAD_TITLES>>", ", ".join(thread.title for thread in state.threads) or "(none)")
+            .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
+        )
+
+    def _complete_json(self, request: CompletionRequest) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                completed = complete_text(request, self._completion)
+                content_json = completed.content
+                if not content_json:
+                    _raise_empty_backfill_content_error()
+            except (
+                *LITELLM_RETRYABLE_ERRORS,
+                ValidationError,
+                json.JSONDecodeError,
+                EmptyBackfillContentError,
+                ValueError,
+            ) as exc:
+                last_error = exc
+                if attempt < self._config.max_retries:
+                    time.sleep(0.4 * (attempt + 1))
+            else:
+                return content_json
+        message = str(last_error) if last_error else "Cairn backfill failed."
+        raise ValueError(message)
+
+    def _openrouter_headers(self) -> dict[str, str] | None:
+        if not self._config.model.startswith("openrouter/"):
+            return None
+        headers: dict[str, str] = {}
+        if self._config.site_url is not None:
+            headers["HTTP-Referer"] = self._config.site_url
+        if self._config.app_name is not None:
+            headers["X-Title"] = self._config.app_name
+        return headers or None
+
+    def _ensure_encounter(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        target_name: str,
+        fallback_target_armor: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> EncounterState:
+        encounter = state.encounter
+        if encounter.active and self._has_active_enemies(encounter):
+            return encounter
+
+        state.encounter = self._seed_encounter(
+            state,
+            player_input=player_input,
+            target_name=target_name,
+            fallback_target_armor=fallback_target_armor,
+            cancel_token=cancel_token,
+        )
+        return state.encounter
+
+    def _seed_encounter(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        target_name: str,
+        fallback_target_armor: int,
+        cancel_token: CancellationToken | None = None,
+    ) -> EncounterState:
+        generated: GeneratedEncounterSeed | None = None
+        if self._config.is_usable():
+            prompt = self._build_encounter_prompt(state, player_input=player_input, target_name=target_name)
+            request = CompletionRequest(
+                model=self._config.model,
+                messages=[
+                    {"role": "system", "content": CAIRN_ENCOUNTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=max(self._config.max_tokens, 2500),
+                timeout=self._config.timeout_seconds,
+                stream=True,
+                api_key=self._config.api_key,
+                base_url=self._config.base_url,
+                reasoning_effort="low",
+                # Cap reasoning to keep encounter seeding under ~30s wallclock.
+                # The fallback seed (`_fallback_encounter_seed`) is a perfectly
+                # serviceable single-foe encounter, so we'd rather time out
+                # the LLM than make the player wait minutes for richer stats.
+                # OpenRouter forbids combining `effort` and `max_tokens`, so
+                # we keep `max_tokens` (more deterministic budget control).
+                reasoning={
+                    "max_tokens": 1200,
+                    "exclude": self._config.exclude_reasoning,
+                },
+                extra_headers=self._openrouter_headers(),
+                response_format=None,
+                cancel_token=cancel_token,
+            )
+            try:
+                payload = self._complete_json(request)
+                generated = GeneratedEncounterSeed.model_validate_json(extract_json_object(payload))
+            except ValueError:
+                generated = None
+
+        if generated is None:
+            generated = self._fallback_encounter_seed(
+                target_name=target_name,
+                target_armor=fallback_target_armor,
+            )
+
+        return EncounterState(
+            active=True,
+            round_number=1,
+            first_round_dex_gate_pending=True,
+            combatants=[
+                EnemyCombatant(
+                    name=combatant.name,
+                    description=combatant.description,
+                    hp=combatant.hp,
+                    max_hp=combatant.hp,
+                    str_score=combatant.str_score,
+                    dex_score=combatant.dex_score,
+                    wil_score=combatant.wil_score,
+                    armor=combatant.armor,
+                    weapon_name=combatant.weapon_name,
+                    weapon_damage_die=combatant.weapon_damage_die,
+                    leader=combatant.leader,
+                    notes=combatant.notes,
+                )
+                for combatant in generated.combatants
+            ],
+            notes=generated.notes,
+        )
+
+    def _build_encounter_prompt(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        target_name: str,
+    ) -> str:
+        return (
+            CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
+            .replace("<<SETTING_NOTES>>", state.setting_notes)
+            .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
+            .replace("<<CHARACTER_JSON>>", state.character.model_dump_json(indent=2))
+            .replace("<<PLAYER_INPUT>>", player_input)
+            .replace("<<TARGET_NAME>>", target_name)
+        )
+
+    def _fallback_encounter_seed(
+        self,
+        *,
+        target_name: str,
+        target_armor: int,
+    ) -> GeneratedEncounterSeed:
+        return GeneratedEncounterSeed(
+            notes="Fallback encounter seed created because no combat seed model response was available.",
+            combatants=[
+                GeneratedEncounterCombatant(
+                    name=target_name.strip() or "Hostile foe",
+                    description="A hostile figure drawn into the fight by the current scene.",
+                    hp=6,
+                    str_score=12,
+                    dex_score=10,
+                    wil_score=8,
+                    armor=target_armor,
+                    weapon_name="Weathered weapon",
+                    weapon_damage_die=6,
+                    leader=True,
+                    notes="Fallback combatant.",
+                ),
+            ],
+        )
+
+    def _require_target(self, encounter: EncounterState, target_name: str) -> EnemyCombatant:
+        target = self._find_combatant(encounter, target_name)
+        if target is None:
+            message = f"No active foe matches '{target_name}'."
+            raise ValueError(message)
+        return target
+
+    def _find_combatant(self, encounter: EncounterState, target_name: str) -> EnemyCombatant | None:
+        cleaned = target_name.strip().lower()
+        active = [combatant for combatant in encounter.combatants if not combatant.defeated and not combatant.fled]
+        for combatant in active:
+            name = combatant.name.lower()
+            if cleaned == name or cleaned in name or name in cleaned:
+                return combatant
+        return None
+
+    def _has_active_enemies(self, encounter: EncounterState) -> bool:
+        return any(not combatant.defeated and not combatant.fled for combatant in encounter.combatants)
+
+    def _save_succeeds(self, result: int, target: int) -> bool:
+        return result == 1 or (result != D20_SIDES and result <= target)
+
+    def _apply_harm_to_character(
+        self,
+        cairn: CairnCharacterState,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> HarmApplication:
+        armor_value = cairn.armor if armor_applies and in_combat else 0
+        damage_after_armor = max(0, amount - armor_value)
+        hp_before = cairn.hp
+        str_before = cairn.str_score
+        rolls: list[Roll] = []
+        scar_result: str | None = None
+
+        if damage_after_armor == 0:
+            summary = f"No harm taken from {source}; armor absorbed the blow."
+        elif in_combat:
+            hp_after = hp_before - damage_after_armor
+            if hp_after > 0:
+                cairn.hp = hp_after
+                summary = f"Took {damage_after_armor} damage from {source}."
+            elif hp_after == 0:
+                cairn.hp = 0
+                scar_result, scar_rolls = self._apply_scar(cairn, damage_after_armor)
+                rolls.extend(scar_rolls)
+                summary = f"Reduced to 0 HP by {source}; scar rolled: {scar_result}"
+            else:
+                cairn.hp = 0
+                overflow = abs(hp_after)
+                cairn.str_score = max(0, cairn.str_score - overflow)
+                save_roll = self._roll(D20_SIDES, "critical_damage")
+                rolls.append(save_roll)
+                success = self._save_succeeds(save_roll.result, cairn.str_score)
+                if not success:
+                    cairn.critically_wounded = True
+                if cairn.str_score == 0:
+                    cairn.dead = True
+                summary = (
+                    f"Critical damage from {source}: {overflow} STR lost and "
+                    f"critical save {'passed' if success else 'failed'}."
+                )
+        else:
+            cairn.str_score = max(0, cairn.str_score - damage_after_armor)
+            if cairn.str_score == 0:
+                cairn.dead = True
+            summary = f"Suffered {damage_after_armor} STR damage from {source}."
+
+        return HarmApplication(
+            source=source,
+            summary=summary,
+            rolls=rolls,
+            armor_value=armor_value,
+            damage_after_armor=damage_after_armor,
+            hp_before=hp_before,
+            hp_after=cairn.hp,
+            str_before=str_before,
+            str_after=cairn.str_score,
+            scar_result=scar_result,
+        )
+
+    def _apply_harm_to_combatant(
+        self,
+        combatant: EnemyCombatant,
+        damage_after_armor: int,
+    ) -> tuple[str, list[Roll], bool, bool]:
+        rolls: list[Roll] = []
+        lone_zero_triggered = False
+        if damage_after_armor == 0:
+            return ("Armor or poor positioning turned the blow aside.", rolls, False, False)
+
+        hp_after = combatant.hp - damage_after_armor
+        if hp_after > 0:
+            combatant.hp = hp_after
+            return (f"{combatant.name} loses {damage_after_armor} HP.", rolls, False, False)
+
+        if hp_after == 0:
+            combatant.hp = 0
+            lone_zero_triggered = True
+            return (f"{combatant.name} is driven to 0 HP and wavers.", rolls, False, lone_zero_triggered)
+
+        combatant.hp = 0
+        overflow = abs(hp_after)
+        combatant.str_score = max(0, combatant.str_score - overflow)
+        save_roll = self._roll(D20_SIDES, "enemy_critical_damage")
+        rolls.append(save_roll)
+        success = self._save_succeeds(save_roll.result, combatant.str_score)
+        if not success or combatant.str_score == 0:
+            combatant.critically_wounded = True
+            combatant.defeated = True
+            return (
+                f"{combatant.name} suffers critical damage, loses {overflow} STR, and collapses.",
+                rolls,
+                True,
+                False,
+            )
+        combatant.critically_wounded = True
+        return (
+            f"{combatant.name} suffers critical damage but remains in the fight.",
+            rolls,
+            False,
+            False,
+        )
+
+    def _resolve_enemy_turn(self, state: GameState, encounter: EncounterState) -> HarmApplication:
+        active = [
+            combatant
+            for combatant in encounter.combatants
+            if not combatant.defeated and not combatant.fled
+        ]
+        if not active:
+            return HarmApplication(
+                source="No active foes",
+                summary="No enemy retaliation; no active foes remain.",
+                rolls=[],
+                armor_value=state.character.cairn.armor,
+                damage_after_armor=0,
+                hp_before=state.character.cairn.hp,
+                hp_after=state.character.cairn.hp,
+                str_before=state.character.cairn.str_score,
+                str_after=state.character.cairn.str_score,
+                scar_result=None,
+            )
+
+        enemy_rolls: list[tuple[EnemyCombatant, Roll]] = [
+            (combatant, self._roll(combatant.weapon_damage_die, f"enemy_damage_{combatant.id}"))
+            for combatant in active
+        ]
+        highest_combatant, highest_roll = max(enemy_rolls, key=lambda pair: pair[1].result)
+        applied = self._apply_harm_to_character(
+            state.character.cairn,
+            amount=highest_roll.result,
+            source=highest_combatant.name,
+            in_combat=True,
+            armor_applies=True,
+        )
+        return HarmApplication(
+            source=highest_combatant.name,
+            summary=applied.summary,
+            rolls=[roll for _, roll in enemy_rolls] + applied.rolls,
+            armor_value=applied.armor_value,
+            damage_after_armor=applied.damage_after_armor,
+            hp_before=applied.hp_before,
+            hp_after=applied.hp_after,
+            str_before=applied.str_before,
+            str_after=applied.str_after,
+            scar_result=applied.scar_result,
+        )
+
+    def _empty_harm_application(self, state: GameState, *, source: str) -> HarmApplication:
+        return HarmApplication(
+            source=source,
+            summary="No enemy retaliation landed.",
+            rolls=[],
+            armor_value=state.character.cairn.armor,
+            damage_after_armor=0,
+            hp_before=state.character.cairn.hp,
+            hp_after=state.character.cairn.hp,
+            str_before=state.character.cairn.str_score,
+            str_after=state.character.cairn.str_score,
+            scar_result=None,
+        )
+
+    def _highest_enemy_pursuit_target(self, encounter: EncounterState) -> int:
+        active = [
+            combatant
+            for combatant in encounter.combatants
+            if not combatant.defeated and not combatant.fled
+        ]
+        if not active:
+            return 1
+        return max(combatant.dex_score for combatant in active)
+
+    def _maybe_resolve_enemy_morale(
+        self,
+        encounter: EncounterState,
+        *,
+        lone_zero_triggered: bool,
+    ) -> tuple[Roll | None, int | None, bool | None, list[str]]:
+        active = [
+            combatant
+            for combatant in encounter.combatants
+            if not combatant.defeated and not combatant.fled
+        ]
+        total = len(encounter.combatants)
+        defeated_or_fled = [
+            combatant for combatant in encounter.combatants if combatant.defeated or combatant.fled
+        ]
+        if not active:
+            encounter.active = False
+            encounter.end_reason = EncounterEndReason.VICTORY
+            return (None, None, None, [])
+
+        check_needed = False
+        if lone_zero_triggered and len(active) == 1 and active[0].hp == 0:
+            check_needed = True
+        elif not encounter.casualty_morale_checked and defeated_or_fled:
+            check_needed = True
+            encounter.casualty_morale_checked = True
+            if len(defeated_or_fled) * 2 >= total:
+                encounter.half_force_morale_checked = True
+        elif not encounter.half_force_morale_checked and len(defeated_or_fled) * 2 >= total:
+            check_needed = True
+            encounter.half_force_morale_checked = True
+
+        if not check_needed:
+            return (None, None, None, [])
+
+        leader = next((combatant for combatant in active if combatant.leader), active[0])
+        target = leader.wil_score
+        roll = self._roll(D20_SIDES, "morale")
+        success = self._save_succeeds(roll.result, target)
+        if success:
+            return (roll, target, True, [])
+
+        fled_ids: list[str] = []
+        for combatant in active:
+            combatant.fled = True
+            fled_ids.append(combatant.id)
+        encounter.active = False
+        encounter.end_reason = EncounterEndReason.ENEMY_ROUT
+        encounter.notes = "The remaining enemies broke and fled."
+        return (roll, target, False, fled_ids)
+
+    def _attack_summary(
+        self,
+        *,
+        attack_summary: str,
+        enemy_summary: str,
+        encounter: EncounterState,
+    ) -> str:
+        if encounter.active:
+            return f"{attack_summary} {enemy_summary} Combat presses into round {encounter.round_number}."
+        return f"{attack_summary} {enemy_summary} The immediate fight is no longer active."
+
+    def _require_ready(self, state: GameState) -> None:
+        if state.character.cairn.source == CairnMechanicsSource.UNSET:
+            message = "Cairn mechanics are not available for this character yet."
+            raise ValueError(message)
+
+    def _recompute_derived(self, character: CharacterSheet) -> None:
+        cairn = character.cairn
+        first_weapon_id: str | None = None
+        any_weapon_equipped = False
+        armor_value = 0
+        slots_used = cairn.fatigue
+
+        for item in character.inventory:
+            slots_used += item.cairn.slots
+            if CairnItemTag.WEAPON in item.cairn.tags and first_weapon_id is None:
+                first_weapon_id = item.id
+            if CairnItemTag.WEAPON in item.cairn.tags and item.cairn.equipped:
+                any_weapon_equipped = True
+                cairn.primary_weapon_item_id = item.id
+            if item.cairn.equipped and (
+                CairnItemTag.ARMOR in item.cairn.tags or CairnItemTag.SHIELD in item.cairn.tags
+            ):
+                armor_value += item.cairn.armor_bonus
+
+        if not any_weapon_equipped and first_weapon_id is not None:
+            for item in character.inventory:
+                if CairnItemTag.WEAPON in item.cairn.tags:
+                    item.cairn.equipped = item.id == first_weapon_id
+                if item.id == first_weapon_id:
+                    cairn.primary_weapon_item_id = item.id
+
+        cairn.armor = min(MAX_ARMOR, armor_value)
+        cairn.slots_used = slots_used
+        cairn.overloaded = slots_used >= cairn.slots_total
+        if cairn.overloaded:
+            cairn.hp = 0
+        cairn.paralyzed = cairn.dex_score == 0
+        cairn.delirious = cairn.wil_score == 0
+        cairn.dead = cairn.dead or cairn.str_score == 0
+
+    def _apply_scar(self, cairn: CairnCharacterState, hp_lost: int) -> tuple[str, list[Roll]]:
+        rolls: list[Roll] = []
+        entry = max(1, min(12, hp_lost))
+        if entry == 1:
+            location_roll = self._roll(D6_SIDES, "scar_location")
+            hp_roll = self._roll(D6_SIDES, "scar_hp")
+            rolls.extend((location_roll, hp_roll))
+            cairn.max_hp = max(cairn.max_hp, hp_roll.result)
+            return (
+                f"Lasting Scar ({LASTING_SCAR_LOCATIONS[location_roll.result - 1]})",
+                rolls,
+            )
+        if entry == 2:
+            hp_roll = self._roll(D6_SIDES, "scar_hp")
+            rolls.append(hp_roll)
+            cairn.max_hp = max(cairn.max_hp, hp_roll.result)
+            return ("Rattling Blow", rolls)
+        if entry == 3:
+            hp_roll = self._roll(D6_SIDES, "scar_hp")
+            rolls.append(hp_roll)
+            cairn.max_hp += hp_roll.result
+            cairn.deprived = True
+            return ("Walloped", rolls)
+        if entry == 4:
+            part_roll = self._roll(D6_SIDES, "scar_part")
+            hp_roll = self._roll(D8_SIDES, "scar_hp")
+            rolls.extend((part_roll, hp_roll))
+            cairn.max_hp = max(cairn.max_hp, hp_roll.result)
+            cairn.critically_wounded = True
+            return (f"Broken Limb ({BROKEN_LIMB_PARTS[part_roll.result - 1]})", rolls)
+        if entry == 5:
+            hp_roll = self._roll(D8_SIDES, "scar_hp")
+            rolls.append(hp_roll)
+            cairn.max_hp = max(cairn.max_hp, hp_roll.result)
+            return ("Diseased", rolls)
+        if entry == 6:
+            ability_roll = self._roll(D6_SIDES, "scar_ability")
+            stat_roll = self._roll_nd6(3, "scar_attribute")
+            rolls.extend((ability_roll, stat_roll))
+            value = stat_roll.result
+            if ability_roll.result <= STR_BRANCH_MAX:
+                cairn.max_str_score = max(cairn.max_str_score, value)
+                cairn.str_score = min(value, cairn.max_str_score)
+                ability = CairnAbility.STR
+            elif ability_roll.result <= DEX_BRANCH_MAX:
+                cairn.max_dex_score = max(cairn.max_dex_score, value)
+                cairn.dex_score = min(value, cairn.max_dex_score)
+                ability = CairnAbility.DEX
+            else:
+                cairn.max_wil_score = max(cairn.max_wil_score, value)
+                cairn.wil_score = min(value, cairn.max_wil_score)
+                ability = CairnAbility.WIL
+            return (f"Reorienting Head Wound ({ability.value})", rolls)
+        if entry == 7:
+            dex_roll = self._roll_nd6(3, "scar_dex")
+            rolls.append(dex_roll)
+            value = dex_roll.result
+            cairn.max_dex_score = max(cairn.max_dex_score, value)
+            return ("Hamstrung", rolls)
+        if entry == 8:
+            save_roll = self._roll(D20_SIDES, "scar_wil_save")
+            bonus_roll = self._roll(D4_SIDES, "scar_wil_bonus")
+            rolls.extend((save_roll, bonus_roll))
+            success = save_roll.result == 1 or (
+                save_roll.result != D20_SIDES and save_roll.result <= cairn.wil_score
+            )
+            if success:
+                cairn.max_wil_score += bonus_roll.result
+            return ("Deafened", rolls)
+        if entry == 9:
+            wil_roll = self._roll_nd6(3, "scar_wil")
+            rolls.append(wil_roll)
+            value = wil_roll.result
+            cairn.max_wil_score = max(cairn.max_wil_score, value)
+            return ("Re-brained", rolls)
+        if entry == 10:
+            save_roll = self._roll(D20_SIDES, "scar_wil_save")
+            bonus_roll = self._roll(D6_SIDES, "scar_wil_bonus")
+            rolls.extend((save_roll, bonus_roll))
+            success = save_roll.result == 1 or (
+                save_roll.result != D20_SIDES and save_roll.result <= cairn.wil_score
+            )
+            if success:
+                cairn.max_wil_score += bonus_roll.result
+            cairn.critically_wounded = True
+            return ("Sundered", rolls)
+        if entry == 11:
+            hp_roll = self._roll(D8_SIDES, "scar_hp")
+            rolls.append(hp_roll)
+            cairn.max_hp = hp_roll.result
+            cairn.deprived = True
+            cairn.critically_wounded = True
+            return ("Mortal Wound", rolls)
+
+        hp_roll = self._roll_nd6(3, "scar_hp")
+        rolls.append(hp_roll)
+        cairn.max_hp = max(cairn.max_hp, hp_roll.result)
+        cairn.doomed = True
+        return ("Doomed", rolls)
+
+    def _resolve_weapon(
+        self,
+        character: CharacterSheet,
+        weapon_item_id: str | None,
+    ) -> InventoryItem | None:
+        if weapon_item_id is not None:
+            explicit = self._find_item(character, weapon_item_id)
+            if explicit is not None and CairnItemTag.WEAPON in explicit.cairn.tags:
+                return explicit
+        if character.cairn.primary_weapon_item_id is not None:
+            primary = self._find_item(character, character.cairn.primary_weapon_item_id)
+            if primary is not None:
+                return primary
+        return next(
+            (item for item in character.inventory if CairnItemTag.WEAPON in item.cairn.tags),
+            None,
+        )
+
+    def _attack_die(self, weapon: InventoryItem | None, stance: AttackStance) -> int:
+        if stance == AttackStance.IMPAIRED:
+            return D4_SIDES
+        if stance == AttackStance.ENHANCED:
+            return D12_SIDES
+        if weapon is None or weapon.cairn.weapon_damage_die is None:
+            return D4_SIDES
+        return weapon.cairn.weapon_damage_die
+
+    def _find_item(self, character: CharacterSheet, item_id: str) -> InventoryItem | None:
+        return next((item for item in character.inventory if item.id == item_id), None)
+
+    def _ability_score(self, cairn: CairnCharacterState, ability: CairnAbility) -> int:
+        if ability == CairnAbility.STR:
+            return cairn.str_score
+        if ability == CairnAbility.DEX:
+            return cairn.dex_score
+        return cairn.wil_score
+
+    def _roll(self, sides: int, label: str) -> Roll:
+        return Roll(sides=sides, result=self._rng.randint(1, sides), label=label)
+
+    def _roll_nd6(self, count: int, label: str) -> Roll:
+        return Roll(
+            sides=D6_SIDES * count,
+            result=sum(self._rng.randint(1, D6_SIDES) for _ in range(count)),
+            label=label,
+        )

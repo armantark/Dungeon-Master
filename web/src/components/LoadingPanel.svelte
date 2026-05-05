@@ -10,36 +10,86 @@ while they wait, plus a same-place cancel control instead of a
 floating one.
 -->
 <script lang="ts">
+  import CollapsedThinking from "./CollapsedThinking.svelte";
+  import { game } from "../lib/store.svelte";
+
   type Props = {
     title: string;
     subtitle?: string;
     cancelLabel?: string | null;
     onCancel?: () => void;
+    // When true, the panel pulls live streaming state from the game
+    // store and renders a thinking strip + a provisional content
+    // preview underneath. Setup flows (quiz, draft, campaign start)
+    // pass true so the player sees the model working in real time
+    // instead of staring at a static lamp.
+    showStream?: boolean;
   };
-  const { title, subtitle, cancelLabel, onCancel }: Props = $props();
+  const {
+    title,
+    subtitle,
+    cancelLabel,
+    onCancel,
+    showStream = false,
+  }: Props = $props();
+
+  // Truncate the streamed content preview because setup flows produce
+  // long structured outputs (a full character sheet's narrative text)
+  // that would otherwise blow out the panel's height. The thinking
+  // block is the more useful signal during these flows; the content
+  // preview is just confirmation that prose is arriving.
+  const PREVIEW_CHARS = 360;
+  const preview = $derived.by(() => {
+    if (!showStream) return "";
+    const c = game.streaming.content;
+    if (c.length <= PREVIEW_CHARS) return c;
+    return `…${c.slice(-PREVIEW_CHARS)}`;
+  });
+  const hasStreamSignal = $derived(
+    showStream && game.streaming.active
+      && (game.streaming.thinking !== "" || game.streaming.content !== ""),
+  );
 </script>
 
 <div class="panel iron" role="status" aria-live="polite">
-  <div class="lamp" aria-hidden="true">
-    <span class="dot"></span>
-    <span class="dot"></span>
-    <span class="dot"></span>
-  </div>
-  <div class="text">
-    <span class="kicker">Working</span>
-    <strong>{title}</strong>
-    {#if subtitle}
-      <p>{subtitle}</p>
+  <div class="head">
+    <div class="lamp" aria-hidden="true">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </div>
+    <div class="text">
+      <span class="kicker">Working</span>
+      <strong>{title}</strong>
+      {#if subtitle}
+        <p>{subtitle}</p>
+      {/if}
+    </div>
+    {#if cancelLabel && onCancel}
+      <button class="ghost" onclick={onCancel}>{cancelLabel}</button>
     {/if}
   </div>
-  {#if cancelLabel && onCancel}
-    <button class="ghost" onclick={onCancel}>{cancelLabel}</button>
+
+  {#if showStream && game.streaming.active}
+    <CollapsedThinking
+      text={game.streaming.thinking}
+      streaming={true}
+      hideWhenEmpty={false}
+    />
+  {/if}
+
+  {#if hasStreamSignal && preview !== ""}
+    <pre class="preview">{preview}<span class="caret" aria-hidden="true">▌</span></pre>
   {/if}
 </div>
 
 <style>
   .panel {
     padding: 1rem 1.1rem;
+    display: grid;
+    gap: 0.7rem;
+  }
+  .head {
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: 0.9rem;
@@ -48,6 +98,35 @@ floating one.
   .text {
     display: grid;
     gap: 0.2rem;
+  }
+  .preview {
+    /* Tail-end preview of the streaming narrative — Cormorant so it
+     * reads as fiction in motion, but constrained to a few lines so
+     * the panel doesn't grow out of frame on long generations. */
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+    background: color-mix(in oklab, var(--ink-black) 55%, transparent);
+    border-left: 2px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: color-mix(in oklab, var(--paper-bone) 88%, transparent);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 8.5rem;
+    overflow-y: auto;
+  }
+  .caret {
+    display: inline-block;
+    margin-left: 0.15rem;
+    color: var(--gold-bright);
+    animation: caret-blink 0.95s steps(2, jump-none) infinite;
+  }
+  @keyframes caret-blink {
+    50% { opacity: 0.15; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; opacity: 0.6; }
   }
   .text strong {
     font-family: var(--font-display);

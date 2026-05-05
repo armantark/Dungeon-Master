@@ -7,9 +7,21 @@ Default collapsed because we want the chat to feel like a conversation.
 Expanded shows the dice number(s), the oracle's structured summary, and
 the chaos factor at the time. This is the "trust signal" surface: any
 time the player suspects the model invented a roll, they can verify.
+
+The receipt is exhaustive over OracleKind by design. Every kind that
+the backend can emit must have a stable headline branch and a body
+section that exposes its mechanical fields. Cairn-flavored outcomes
+(`save`, `attack`, `harm`, `recovery`) reuse the existing dice readout
+and add a Cairn-specific dl block with the resolution snapshot.
 -->
 <script lang="ts">
   import { untrack } from "svelte";
+  import {
+    cairnHeadline,
+    formatAbility,
+    formatRestKind,
+    formatStance,
+  } from "../lib/cairn";
   import type { OracleOutcome } from "../lib/types";
 
   type Props = { outcome: OracleOutcome; defaultOpen?: boolean };
@@ -17,9 +29,9 @@ time the player suspects the model invented a roll, they can verify.
 
   let open: boolean = $state(untrack(() => defaultOpen));
 
-  // Build a single human-readable line that captures the mechanic; this
-  // is what shows on the collapsed strip. The kind switch is exhaustive.
-  const headline = $derived.by(() => {
+  // The kind switch is exhaustive on OracleKind. Adding a new kind to
+  // types.ts will surface here as a TS error, which is the whole point.
+  const headline = $derived.by((): string => {
     switch (outcome.kind) {
       case "yes_no":
         return outcome.answer
@@ -31,13 +43,52 @@ time the player suspects the model invented a roll, they can verify.
         return `Scene · ${outcome.scene_status ?? "?"}`;
       case "player_action":
         return "No roll";
+      case "save":
+      case "attack":
+      case "harm":
+      case "recovery":
+      case "retreat":
+        return cairnHeadline(outcome) ?? "Cairn resolution";
     }
   });
+
+  // Cairn outcomes get a distinct tag color so the player's eye separates
+  // engine-determinist (oracle) from Cairn-determinist (mechanical) at a
+  // glance. We keep the existing oracle/system distinction for the rest.
+  const tagFlavor = $derived.by((): "oracle" | "system" | "cairn" => {
+    switch (outcome.kind) {
+      case "save":
+      case "attack":
+      case "harm":
+      case "recovery":
+      case "retreat":
+        return "cairn";
+      case "player_action":
+        return "system";
+      case "yes_no":
+      case "random_event":
+      case "scene_check":
+        return "oracle";
+    }
+  });
+
+  // Cairn body content is grouped through these getters so the Svelte
+  // markup stays focused. Each getter surfaces the fields the backend's
+  // CairnResolution actually populates for that kind. Fields that aren't
+  // populated (null) are skipped — the receipt renders only what's real.
+  const cairn = $derived(outcome.cairn);
+  const isCairnKind = $derived(
+    outcome.kind === "save"
+      || outcome.kind === "attack"
+      || outcome.kind === "harm"
+      || outcome.kind === "recovery"
+      || outcome.kind === "retreat",
+  );
 </script>
 
 <div class="receipt" class:open>
   <button class="strip" type="button" onclick={() => (open = !open)}>
-    <span class="tag tag--{outcome.kind === 'player_action' ? 'system' : 'oracle'}">
+    <span class="tag tag--{tagFlavor}">
       {outcome.kind.replace("_", " ")}
     </span>
     <span class="line pixel">{headline}</span>
@@ -83,6 +134,79 @@ time the player suspects the model invented a roll, they can verify.
         <dt>Summary</dt>
         <dd class="muted">{outcome.summary}</dd>
       </dl>
+
+      {#if isCairnKind && cairn !== null}
+        <dl class="cairn">
+          {#if cairn.ability !== null}
+            <dt>Ability</dt>
+            <dd class="pixel">{formatAbility(cairn.ability)}</dd>
+          {/if}
+          {#if cairn.target !== null}
+            <dt>Target</dt>
+            <dd class="pixel">≤ {cairn.target}</dd>
+          {/if}
+          {#if cairn.success !== null}
+            <dt>Result</dt>
+            <dd class="pixel">{cairn.success ? "Passed" : "Failed"}</dd>
+          {/if}
+          {#if cairn.attack_stance !== null}
+            <dt>Stance</dt>
+            <dd class="pixel">{formatStance(cairn.attack_stance)}</dd>
+          {/if}
+          {#if cairn.weapon_name !== null}
+            <dt>Weapon</dt>
+            <dd>{cairn.weapon_name}</dd>
+          {/if}
+          {#if cairn.target_name !== null}
+            <dt>Target</dt>
+            <dd>{cairn.target_name}</dd>
+          {/if}
+          {#if cairn.target_armor !== null}
+            <dt>Armor (target)</dt>
+            <dd class="pixel">{cairn.target_armor}</dd>
+          {/if}
+          {#if cairn.base_damage !== null}
+            <dt>Base damage</dt>
+            <dd class="pixel">{cairn.base_damage}</dd>
+          {/if}
+          {#if cairn.damage_after_armor !== null}
+            <dt>Damage</dt>
+            <dd class="pixel">{cairn.damage_after_armor}</dd>
+          {/if}
+          {#if cairn.hp_before !== null && cairn.hp_after !== null}
+            <dt>HP</dt>
+            <dd class="pixel">{cairn.hp_before} → {cairn.hp_after}</dd>
+          {/if}
+          {#if cairn.str_before !== null && cairn.str_after !== null && cairn.str_before !== cairn.str_after}
+            <dt>STR</dt>
+            <dd class="pixel">{cairn.str_before} → {cairn.str_after}</dd>
+          {/if}
+          {#if cairn.fatigue_before !== null && cairn.fatigue_after !== null && cairn.fatigue_before !== cairn.fatigue_after}
+            <dt>Fatigue</dt>
+            <dd class="pixel">{cairn.fatigue_before} → {cairn.fatigue_after}</dd>
+          {/if}
+          {#if cairn.scar_result !== null}
+            <dt>Scar</dt>
+            <dd>{cairn.scar_result}</dd>
+          {/if}
+          {#if cairn.rest_kind !== null}
+            <dt>Rest</dt>
+            <dd>{formatRestKind(cairn.rest_kind)}</dd>
+          {/if}
+          {#if cairn.retreat_outcome != null}
+            <dt>Retreat</dt>
+            <dd class="pixel">{cairn.retreat_outcome}</dd>
+          {/if}
+          {#if cairn.pursuit_active != null}
+            <dt>Pursuit</dt>
+            <dd class="pixel">{cairn.pursuit_active ? "Active" : "Broken"}</dd>
+          {/if}
+          {#if cairn.overloaded !== null}
+            <dt>Burden</dt>
+            <dd class="pixel">{cairn.overloaded ? "Overloaded" : "Within limits"}</dd>
+          {/if}
+        </dl>
+      {/if}
     </div>
   {/if}
 </div>
@@ -127,11 +251,13 @@ time the player suspects the model invented a roll, they can verify.
   .body {
     padding: 0.7rem 0.85rem 0.85rem;
     background: rgba(0, 0, 0, 0.32);
+    display: grid;
+    gap: 0.6rem;
   }
   .rolls {
     list-style: none;
     padding: 0;
-    margin: 0 0 0.7rem;
+    margin: 0;
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
@@ -160,6 +286,10 @@ time the player suspects the model invented a roll, they can verify.
     column-gap: 0.85rem;
     row-gap: 0.25rem;
     font-size: 0.85rem;
+  }
+  dl.cairn {
+    border-top: 1px dashed color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+    padding-top: 0.5rem;
   }
   dt {
     font-family: var(--font-pixel);

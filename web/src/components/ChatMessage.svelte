@@ -11,6 +11,7 @@ DM messages produced by an oracle outcome carry a collapsible
 MechanicalReceipt so the player can verify the dice on demand.
 -->
 <script lang="ts">
+  import CollapsedThinking from "./CollapsedThinking.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import MessageActions from "./MessageActions.svelte";
   import type { OracleOutcome } from "../lib/types";
@@ -22,6 +23,15 @@ MechanicalReceipt so the player can verify the dice on demand.
     timestamp?: string | null;
     outcome?: OracleOutcome | null;
     canRegenerate?: boolean;
+    // Persisted reasoning trace for this message. Optional because
+    // player/system messages never have one, and DM messages only have
+    // one once the backend persists thinking on `GameEvent`. Until
+    // then, this is null and the block doesn't render.
+    thinking?: string | null;
+    // True only while the message is being streamed in. The chat feed
+    // uses this for the synthetic provisional DM bubble; persisted
+    // messages always render with `streaming = false`.
+    streaming?: boolean;
   };
   const {
     eventId,
@@ -30,6 +40,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     timestamp = null,
     outcome = null,
     canRegenerate = false,
+    thinking = null,
+    streaming = false,
   }: Props = $props();
 
   function relative(iso: string | null): string | null {
@@ -42,27 +54,41 @@ MechanicalReceipt so the player can verify the dice on demand.
   }
 </script>
 
-<article class="msg msg--{speaker}">
+<article class="msg msg--{speaker}" class:streaming>
   <div class="meta pixel">
     <span class="speaker">
       {#if speaker === "dm"}DM
       {:else if speaker === "player"}You
       {:else}Engine{/if}
     </span>
-    {#if timestamp}
+    {#if streaming}
+      <span class="streaming-tag">streaming…</span>
+    {:else if timestamp}
       <span class="time">{relative(timestamp)}</span>
     {/if}
   </div>
 
+  {#if speaker === "dm"}
+    <CollapsedThinking
+      text={thinking ?? ""}
+      streaming={streaming && (thinking ?? "") !== ""}
+      hideWhenEmpty={!streaming}
+    />
+  {/if}
+
   <div class="body">
-    <p>{text}</p>
+    {#if text === "" && streaming}
+      <p class="muted pixel awaiting">Awaiting first token…</p>
+    {:else}
+      <p>{text}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}</p>
+    {/if}
   </div>
 
   {#if outcome}
-    <MechanicalReceipt {outcome} />
+    <MechanicalReceipt {outcome} defaultOpen={streaming} />
   {/if}
 
-  <MessageActions eventId={eventId} visible={speaker === "dm" && canRegenerate} />
+  <MessageActions eventId={eventId} visible={!streaming && speaker === "dm" && canRegenerate} />
 </article>
 
 <style>
@@ -87,6 +113,43 @@ MechanicalReceipt so the player can verify the dice on demand.
   .meta .time {
     color: var(--paper-shadow);
     font-size: 0.65rem;
+  }
+  .meta .streaming-tag {
+    color: var(--gold-candle);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .awaiting {
+    /* Holding line that fills the bubble until the first content token
+     * arrives. Without it, the provisional bubble would render as an
+     * empty <p> and look like a layout glitch on slow connections. */
+    color: var(--paper-shadow);
+    font-style: italic;
+  }
+  .caret {
+    /* The blinking caret is the universal "still typing" cue. We use
+     * the lower-half block so it lines up with the cap height of
+     * Cormorant; a vertical bar would float above the baseline. */
+    display: inline-block;
+    margin-left: 0.15rem;
+    color: var(--gold-bright);
+    animation: caret-blink 0.95s steps(2, jump-none) infinite;
+  }
+  @keyframes caret-blink {
+    50% { opacity: 0.15; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; opacity: 0.6; }
+  }
+  .msg.streaming {
+    /* Subtle outer glow so the streaming bubble stands out from the
+     * persisted ones without feeling like a different surface. */
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--gold-tarnished) 8%, transparent),
+      transparent 40%
+    );
   }
   .body p {
     margin: 0;

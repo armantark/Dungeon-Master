@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTurn } from "./slash";
+import { parseTurn, suggestSlashCommands, SLASH_COMMANDS, SLASH_HELP } from "./slash";
 
 describe("parseTurn", () => {
   it("treats free text as a player action", () => {
@@ -89,6 +89,67 @@ describe("parseTurn", () => {
     expect(result.kind).toBe("error");
     if (result.kind === "error") {
       expect(result.message).toContain("Unknown");
+    }
+  });
+
+  it("parses /retreat with no arguments as a no-reason retreat", () => {
+    expect(parseTurn("/retreat")).toEqual({ kind: "retreat", reason: "" });
+  });
+
+  it("parses /retreat with a reason and trims whitespace", () => {
+    expect(parseTurn("/retreat   down the chapel stair  ")).toEqual({
+      kind: "retreat",
+      reason: "down the chapel stair",
+    });
+  });
+
+  it("treats /flee and /disengage as retreat aliases", () => {
+    expect(parseTurn("/flee")).toEqual({ kind: "retreat", reason: "" });
+    expect(parseTurn("/disengage through the cloister")).toEqual({
+      kind: "retreat",
+      reason: "through the cloister",
+    });
+  });
+});
+
+describe("suggestSlashCommands", () => {
+  it("returns no suggestions for free-text input", () => {
+    expect(suggestSlashCommands("I sneak forward")).toEqual([]);
+  });
+
+  it("returns the full command list for a bare slash", () => {
+    expect(suggestSlashCommands("/")).toEqual(SLASH_COMMANDS);
+  });
+
+  it("filters commands by canonical-name prefix", () => {
+    const matches = suggestSlashCommands("/re");
+    const names = matches.map((c) => c.name);
+    expect(names).toContain("retreat");
+    expect(names).toContain("reset");
+    expect(names).not.toContain("ask");
+    expect(names).not.toContain("event");
+  });
+
+  it("matches aliases too", () => {
+    const matches = suggestSlashCommands("/fl");
+    expect(matches.map((c) => c.name)).toEqual(["retreat"]);
+  });
+
+  it("suppresses suggestions once an argument is being typed", () => {
+    expect(suggestSlashCommands("/ask Is the gate")).toEqual([]);
+    expect(suggestSlashCommands("/retreat down the stair")).toEqual([]);
+  });
+
+  it("ignores leading whitespace before the slash", () => {
+    expect(suggestSlashCommands("   /he").map((c) => c.name)).toEqual(["help"]);
+  });
+});
+
+describe("SLASH_HELP", () => {
+  it("documents every command in the descriptor list", () => {
+    for (const cmd of SLASH_COMMANDS) {
+      expect(SLASH_HELP).toContain(cmd.usage);
+      expect(SLASH_HELP).toContain(cmd.summary);
     }
   });
 });

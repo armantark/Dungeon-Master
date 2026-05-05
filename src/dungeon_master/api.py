@@ -9,30 +9,39 @@ The Python side stays the single source of truth; the LLM never edits state.
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, status
 from fastapi import Path as ApiPath
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from dungeon_master.campaign import CharacterDraftMode
+from dungeon_master.cancel import CancellationRegistry, RequestCancelledError
 from dungeon_master.models import (
+    AttackStance,
+    CairnAbility,
+    CairnRestKind,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterSheet,
     GameState,
     Likelihood,
 )
+from dungeon_master.narrative import CompletionDelta
 from dungeon_master.service import GameService
 from dungeon_master.settings import state_path_from_env
 from dungeon_master.state_store import StateStore
+from dungeon_master.turn_router import TurnPlanningError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +72,38 @@ class PlayerTurnRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
+class CairnSaveRequest(BaseModel):
+    ability: CairnAbility
+    reason: str = Field(min_length=1)
+
+
+class CairnAttackRequest(BaseModel):
+    target_name: str = Field(min_length=1)
+    target_armor: int = Field(default=0, ge=0, le=3)
+    weapon_item_id: str | None = None
+    stance: AttackStance = AttackStance.NORMAL
+
+
+class CairnHarmRequest(BaseModel):
+    amount: int = Field(ge=0)
+    source: str = Field(min_length=1)
+    in_combat: bool = True
+    armor_applies: bool = True
+
+
+class CairnRecoveryRequest(BaseModel):
+    kind: CairnRestKind
+
+
+class CairnRetreatRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class CairnEquipRequest(BaseModel):
+    item_id: str = Field(min_length=1)
+    equipped: bool = True
+
+
 class CharacterDraftRequest(BaseModel):
     mode: CharacterDraftMode
     prompt: str | None = None
@@ -75,10 +116,12 @@ class CharacterFinalizeRequest(BaseModel):
 
 class CharacterTemplatesResponse(BaseModel):
     templates: list[CharacterSheet]
+    thinking: str = ""
 
 
 class CharacterDraftResponse(BaseModel):
     draft: CharacterSheet
+    thinking: str = ""
 
 
 class CharacterQuizRequest(BaseModel):
@@ -87,6 +130,7 @@ class CharacterQuizRequest(BaseModel):
 
 class CharacterQuizResponse(BaseModel):
     quiz: CharacterQuiz
+    thinking: str = ""
 
 
 class CharacterQuizzedDraftRequest(BaseModel):
@@ -97,6 +141,10 @@ class CharacterQuizzedDraftRequest(BaseModel):
 
 class ServiceUnavailableError(RuntimeError):
     """Raised when a request lands before the lifespan has wired up the service."""
+
+
+class CancelRequestResponse(BaseModel):
+    cancelled: bool
 
 
 def build_service(state_path: Path | None = None) -> GameService:
@@ -122,14 +170,219 @@ def get_service(request: Request) -> GameService:
     return service
 
 
+def get_cancellation_registry(request: Request) -> CancellationRegistry:
+    registry = getattr(request.app.state, "cancellation_registry", None)
+    if not isinstance(registry, CancellationRegistry):
+        raise ServiceUnavailableError
+    return registry
+
+
 ServiceDep = Annotated[GameService, Depends(get_service)]
+RegistryDep = Annotated[CancellationRegistry, Depends(get_cancellation_registry)]
 
 router = APIRouter(prefix="/api")
+
+
+# --- NDJSON streaming helpers ----------------------------------------------
+#
+# The wire contract is the frontend's discriminated union (see
+# `web/src/lib/streaming-types.ts`): one JSON object per `\n`, every event
+# carries a `type` discriminator. Why NDJSON over SSE:
+#   - The frontend parses NDJSON via fetch+ReadableStream so it can keep
+#     using POST bodies (every streamed endpoint takes JSON input).
+#   - We avoid SSE's `event:`/`data:` framing entirely; the client never
+#     wants resume hints or comments and has to ignore them anyway.
+#   - One stream shape across setup and play means the frontend store
+#     owns one transport and one error model — see #runStreaming.
+#
+# `_ndjson` returns a single line; callers compose lines into a
+# Generator[str, ...]. `final_state` is for endpoints that mutate
+# canonical state; `final_payload` is for setup artifacts (templates /
+# quiz / draft). `meta` always fires first; `error` may fire instead of
+# (or after) deltas to signal a backend-authored failure.
+
+# Lifecycle order (per the streaming-types contract):
+#   meta -> thinking_delta* -> content_delta* -> (final_state|final_payload|error)
+
+
+def _ndjson(event: object) -> str:
+    return json.dumps(event, separators=(",", ":")) + "\n"
+
+
+def _new_request_id() -> str:
+    return f"req_{uuid.uuid4().hex[:12]}"
+
+
+def _meta_event(route: str, request_id: str) -> str:
+    return _ndjson(
+        {
+            "type": "meta",
+            "request_id": request_id,
+            "route": route,
+        },
+    )
+
+
+def _error_event(
+    message: str,
+    *,
+    code: str | None,
+    state: GameState | None = None,
+) -> str:
+    return _ndjson(
+        {
+            "type": "error",
+            "message": message,
+            "code": code,
+            "state": state.model_dump(mode="json") if state is not None else None,
+        },
+    )
+
+
+def _stream_game_state(  # noqa: C901
+    service_generator: Generator[CompletionDelta, None, GameState],
+    *,
+    route: str,
+    request_id: str,
+    cancellation_registry: CancellationRegistry,
+) -> StreamingResponse:
+    """Wrap a `Generator[CompletionDelta, None, GameState]` as NDJSON.
+
+    The service generator yields `CompletionDelta`s as model output
+    streams in and returns the final committed `GameState`. We translate
+    each delta into a `thinking_delta`/`content_delta` line, then write a
+    `final_state` line after StopIteration. Errors are captured as
+    `error` lines so the frontend can branch on `result.kind === "error"`
+    instead of having to reason about partial-state HTTP failures.
+
+    Final-event `thinking` is pulled off the last narrative event when
+    one exists. The frontend persists thinking on the `GameEvent` itself,
+    so this duplicate field is purely a convenience for clients that
+    want the full trace immediately rather than re-reading state.
+    """
+
+    def event_stream() -> Generator[str, None, None]:
+        yield _meta_event(route, request_id)
+        last_thinking = ""
+        try:
+            generator = service_generator
+            while True:
+                delta = next(generator)
+                if delta.thinking:
+                    last_thinking += delta.thinking
+                    yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
+                if delta.content:
+                    yield _ndjson({"type": "content_delta", "text": delta.content})
+        except StopIteration as stop:
+            final_state = stop.value
+            if final_state is not None:
+                # Prefer the persisted thinking on the latest narrative
+                # event when present; that's the canonical record. Fall
+                # back to the locally aggregated buffer if the service
+                # didn't attach thinking to an event (e.g. campaign
+                # start uses a system event, action uses a narrative).
+                persisted = _latest_event_thinking(final_state)
+                yield _ndjson(
+                    {
+                        "type": "final_state",
+                        "state": final_state.model_dump(mode="json"),
+                        "thinking": persisted or last_thinking or None,
+                    },
+                )
+        except RequestCancelledError:
+            return
+        except TurnPlanningError as exc:
+            yield _error_event(str(exc), code="planning_failed")
+        except ValueError as exc:
+            yield _error_event(str(exc), code="conflict")
+        except Exception as exc:  # pragma: no cover - defensive envelope
+            logger.exception("Streaming endpoint failed.")
+            yield _error_event(str(exc), code="internal_error")
+        finally:
+            cancellation_registry.unregister(request_id)
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
+def _latest_event_thinking(state: GameState) -> str:
+    """Return the thinking trace on the latest narrative or system event.
+
+    The frontend reads `event.thinking` off the persisted event, but we
+    also surface it on `final_state` so a UI can show the trace before
+    re-reading from `state.action_log[-1]`. Returns the empty string when
+    no event carries a trace, keeping the JSON field conservative.
+    """
+    for event in reversed(state.action_log):
+        if event.thinking:
+            return event.thinking
+    return ""
+
+
+def _stream_setup_payload(  # noqa: PLR0913
+    service_generator: Generator[CompletionDelta, None, object],
+    *,
+    route: Literal["character_quiz", "character_draft", "character_templates"],
+    payload_kind: Literal["character_quiz", "character_draft"],
+    serialize: object,
+    request_id: str,
+    cancellation_registry: CancellationRegistry,
+) -> StreamingResponse:
+    """Wrap a setup generator (quiz/draft) as NDJSON with `final_payload`.
+
+    `serialize` is a callable `(result) -> dict` that turns the
+    generator's terminal value (a `*Result` dataclass) into the
+    endpoint-specific payload shape. The shape is the same one the unary
+    endpoint returns, minus the `thinking` field — `thinking` is hoisted
+    onto the envelope because the frontend stores it once for the whole
+    final event, not on every nested key.
+    """
+    serializer: object = serialize  # narrow alias for the inner closure
+
+    def event_stream() -> Generator[str, None, None]:
+        yield _meta_event(route, request_id)
+        try:
+            while True:
+                delta = next(service_generator)
+                if delta.thinking:
+                    yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
+                if delta.content:
+                    yield _ndjson({"type": "content_delta", "text": delta.content})
+        except StopIteration as stop:
+            result = stop.value
+            payload = serializer(result)  # type: ignore[operator]
+            thinking = getattr(result, "thinking", "") or ""
+            yield _ndjson(
+                {
+                    "type": "final_payload",
+                    "kind": payload_kind,
+                    "payload": payload,
+                    "thinking": thinking or None,
+                },
+            )
+        except RequestCancelledError:
+            return
+        except ValueError as exc:
+            yield _error_event(str(exc), code="conflict")
+        except Exception as exc:  # pragma: no cover - defensive envelope
+            logger.exception("Streaming endpoint failed.")
+            yield _error_event(str(exc), code="internal_error")
+        finally:
+            cancellation_registry.unregister(request_id)
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.post("/requests/{request_id}/cancel", response_model=CancelRequestResponse)
+def cancel_request(
+    request_id: Annotated[str, ApiPath(min_length=1)],
+    registry: RegistryDep,
+) -> CancelRequestResponse:
+    return CancelRequestResponse(cancelled=registry.cancel(request_id))
 
 
 @router.get("/state", response_model=GameState)
@@ -200,6 +453,22 @@ def submit_action(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.post("/action/stream")
+def submit_action_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[PlayerActionRequest, Body()],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_game_state(
+        svc.stream_submit_player_action(payload.action, cancel_token=token),
+        route="player_action",
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
+
+
 @router.post("/turn", response_model=GameState)
 def submit_turn(
     svc: ServiceDep,
@@ -207,13 +476,135 @@ def submit_turn(
 ) -> GameState:
     try:
         return svc.submit_player_turn(payload.text)
+    except TurnPlanningError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/turn/stream")
+def submit_turn_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[PlayerTurnRequest, Body()],
+) -> StreamingResponse:
+    # We label the route as `player_action` here because the backend's
+    # turn router decides the *real* route inside the service. The
+    # frontend uses the `meta` route only to label the provisional
+    # bubble, and `player_action` is the conservative default that
+    # matches every prose-producing branch.
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_game_state(
+        svc.stream_submit_player_turn(payload.text, cancel_token=token),
+        route="player_action",
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
+
+
+@router.post("/cairn/save", response_model=GameState)
+def cairn_save(
+    svc: ServiceDep,
+    payload: Annotated[CairnSaveRequest, Body()],
+) -> GameState:
+    try:
+        return svc.resolve_cairn_save(payload.ability, payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/attack", response_model=GameState)
+def cairn_attack(
+    svc: ServiceDep,
+    payload: Annotated[CairnAttackRequest, Body()],
+) -> GameState:
+    try:
+        return svc.attack_target(
+            target_name=payload.target_name,
+            target_armor=payload.target_armor,
+            weapon_item_id=payload.weapon_item_id,
+            stance=payload.stance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/harm", response_model=GameState)
+def cairn_harm(
+    svc: ServiceDep,
+    payload: Annotated[CairnHarmRequest, Body()],
+) -> GameState:
+    try:
+        return svc.suffer_harm(
+            amount=payload.amount,
+            source=payload.source,
+            in_combat=payload.in_combat,
+            armor_applies=payload.armor_applies,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/recover", response_model=GameState)
+def cairn_recover(
+    svc: ServiceDep,
+    payload: Annotated[CairnRecoveryRequest, Body()],
+) -> GameState:
+    try:
+        return svc.recover_character(payload.kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/retreat", response_model=GameState)
+def cairn_retreat(
+    svc: ServiceDep,
+    payload: Annotated[CairnRetreatRequest, Body()],
+) -> GameState:
+    try:
+        return svc.retreat_from_encounter(payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/equip", response_model=GameState)
+def cairn_equip(
+    svc: ServiceDep,
+    payload: Annotated[CairnEquipRequest, Body()],
+) -> GameState:
+    try:
+        return svc.set_item_equipped(item_id=payload.item_id, equipped=payload.equipped)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("/character/templates", response_model=CharacterTemplatesResponse)
 def character_templates(svc: ServiceDep) -> CharacterTemplatesResponse:
-    return CharacterTemplatesResponse(templates=svc.list_character_templates())
+    result = svc.list_character_templates_result()
+    return CharacterTemplatesResponse(templates=result.templates, thinking=result.thinking)
+
+
+@router.get("/character/templates/stream")
+def character_templates_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_setup_payload(
+        svc.stream_character_templates(cancel_token=token),
+        route="character_templates",
+        payload_kind="character_draft",
+        serialize=lambda result: {
+            "templates": [t.model_dump(mode="json") for t in result.templates],
+        },
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
 
 
 @router.post("/character/draft", response_model=CharacterDraftResponse)
@@ -221,12 +612,35 @@ def character_draft(
     svc: ServiceDep,
     payload: Annotated[CharacterDraftRequest, Body()],
 ) -> CharacterDraftResponse:
-    draft = svc.generate_character_draft(
+    result = svc.generate_character_draft_result(
         mode=payload.mode,
         prompt=payload.prompt,
         template=payload.template,
     )
-    return CharacterDraftResponse(draft=draft)
+    return CharacterDraftResponse(draft=result.draft, thinking=result.thinking)
+
+
+@router.post("/character/draft/stream")
+def character_draft_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[CharacterDraftRequest, Body()],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_setup_payload(
+        svc.stream_character_draft(
+            mode=payload.mode,
+            prompt=payload.prompt,
+            template=payload.template,
+            cancel_token=token,
+        ),
+        route="character_draft",
+        payload_kind="character_draft",
+        serialize=lambda result: {"draft": result.draft.model_dump(mode="json")},
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
 
 
 @router.post("/character/quiz", response_model=CharacterQuizResponse)
@@ -234,7 +648,26 @@ def character_quiz(
     svc: ServiceDep,
     payload: Annotated[CharacterQuizRequest, Body()],
 ) -> CharacterQuizResponse:
-    return CharacterQuizResponse(quiz=svc.generate_character_quiz(payload.concept))
+    result = svc.generate_character_quiz_result(payload.concept)
+    return CharacterQuizResponse(quiz=result.quiz, thinking=result.thinking)
+
+
+@router.post("/character/quiz/stream")
+def character_quiz_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[CharacterQuizRequest, Body()],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_setup_payload(
+        svc.stream_character_quiz(payload.concept, cancel_token=token),
+        route="character_quiz",
+        payload_kind="character_quiz",
+        serialize=lambda result: {"quiz": result.quiz.model_dump(mode="json")},
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
 
 
 @router.post("/character/draft/quizzed", response_model=CharacterDraftResponse)
@@ -242,12 +675,35 @@ def character_quizzed_draft(
     svc: ServiceDep,
     payload: Annotated[CharacterQuizzedDraftRequest, Body()],
 ) -> CharacterDraftResponse:
-    draft = svc.generate_quizzed_character_draft(
+    result = svc.generate_quizzed_character_draft_result(
         concept=payload.concept,
         answers=payload.answers,
         final_note=payload.final_note,
     )
-    return CharacterDraftResponse(draft=draft)
+    return CharacterDraftResponse(draft=result.draft, thinking=result.thinking)
+
+
+@router.post("/character/draft/quizzed/stream")
+def character_quizzed_draft_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[CharacterQuizzedDraftRequest, Body()],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_setup_payload(
+        svc.stream_quizzed_character_draft(
+            concept=payload.concept,
+            answers=payload.answers,
+            final_note=payload.final_note,
+            cancel_token=token,
+        ),
+        route="character_draft",
+        payload_kind="character_draft",
+        serialize=lambda result: {"draft": result.draft.model_dump(mode="json")},
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
 
 
 @router.post("/character/finalize", response_model=GameState)
@@ -266,6 +722,33 @@ def start_campaign(svc: ServiceDep) -> GameState:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.post("/campaign/start/stream")
+def start_campaign_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+) -> StreamingResponse:
+    # Adapt `Generator[..., CampaignWorldResult]` to the
+    # `Generator[..., GameState]` shape that `_stream_game_state` expects
+    # by unwrapping `.state` on completion. The wrapper below mirrors
+    # the unary `start_campaign` path: a `ValueError` from the underlying
+    # generator (e.g. campaign already active) is allowed to bubble so
+    # the streaming envelope can convert it into an `error` event.
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    inner = svc.stream_start_campaign(cancel_token=token)
+
+    def adapter() -> Generator[CompletionDelta, None, GameState]:
+        result = yield from inner
+        return result.state
+
+    return _stream_game_state(
+        adapter(),
+        route="campaign_start",
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
+
+
 @router.post("/messages/{event_id}/regenerate", response_model=GameState)
 def regenerate_message(
     svc: ServiceDep,
@@ -275,6 +758,22 @@ def regenerate_message(
         return svc.regenerate_response(event_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/messages/{event_id}/regenerate/stream")
+def regenerate_message_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    event_id: Annotated[str, ApiPath(min_length=1)],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_game_state(
+        svc.stream_regenerate_response(event_id, cancel_token=token),
+        route="regenerate",
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
 
 
 def create_app(service: GameService | None = None) -> FastAPI:
@@ -287,6 +786,7 @@ def create_app(service: GameService | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.service = service or build_service()
+        app.state.cancellation_registry = CancellationRegistry()
         try:
             yield
         finally:
@@ -294,6 +794,7 @@ def create_app(service: GameService | None = None) -> FastAPI:
             # is no flush phase. We keep the hook so future async resources
             # (db pools, websockets) have a single place to wind down.
             app.state.service = None
+            app.state.cancellation_registry = None
 
     app = FastAPI(
         title="Dungeon Master",

@@ -37,7 +37,11 @@ Everything else remains peekable reference in the Inspector.
 
 <div class="app">
   {#if game.state && game.state.campaign_status === "active"}
-    <StatusStrip chaos={game.state.chaos_factor} sceneNumber={game.state.scene_number} />
+    <StatusStrip
+      chaos={game.state.chaos_factor}
+      sceneNumber={game.state.scene_number}
+      state={game.state}
+    />
   {:else}
     <div class="strip-skel iron">
       <span class="kicker">Oracle's Ledger</span>

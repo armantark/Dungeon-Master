@@ -20,6 +20,21 @@ Walk through this from a clean state (delete `data/game_state.json` if you want 
 14. In the inspector, change the chaos factor to 8 with `+` and `Commit`. Close the drawer. Confirm the badge in the top strip reads `8`.
 15. Send `/help`. Confirm the engine voice prints the explicit slash-command list as a system message in the chat. Slash commands remain the manual override path when you want exact control over routing.
 16. Refresh the browser. Confirm the current campaign/setup state persists exactly as it was.
+17. If you are testing a pre-Cairn character/save, start or reload the campaign once and confirm the backend has backfilled `state.character.cairn` on the next `/api/state` response. This is the one-time migration path that preserves the authored sheet instead of asking the player to recreate it.
+
+## Streaming Smoke Test (combat-streaming branch)
+
+These checks exercise the NDJSON streaming transport, the provisional DM bubble, the persisted thinking pane, and the combat tracker. They assume the backend has shipped its half of the contract (`/api/turn/stream`, `/api/action/stream`, `/api/messages/{id}/regenerate/stream`, `/api/campaign/start/stream`, `/api/character/quiz/stream`, `/api/character/draft/stream`, `/api/character/draft/quizzed/stream`). If the backend hasn't shipped any given endpoint, the frontend transparently falls back to the unary version — confirm the fallback path also still works.
+
+1. From an active campaign, send a freeform action like `I check the threshold for old wax.`. Confirm a provisional DM bubble appears immediately (no full-response wait), prose tokens stream into it letter by letter, the blinking caret tracks the latest token, and the bubble is replaced by the canonical event when the stream completes (no double-bubble flicker).
+2. While the stream is in flight, click `Stop response`. Confirm the bubble freezes wherever it was and the loading state clears. Sending another turn afterwards should work normally.
+3. Ask a yes/no question (`Will the door give? [unlikely]`). Confirm the receipt strip (`yes_no` tag, d100 roll) pins under the bubble when the canonical state lands. (Note: the backend currently emits `mechanics_ready` only as the trailing `final_state` rather than mid-stream; an early-pin event is a future enhancement, not a regression.)
+4. Open the `Reasoning trace` strip on the latest persisted DM message. Confirm the trace is collapsed by default, expands to show the model's thinking, is rendered in the engine (Alagard pixel) voice, and persists across a page refresh (the backend writes it onto the `GameEvent`).
+5. In the assist setup flow, type a concept and click `Begin interview`. Confirm the LoadingPanel surface shows a live `Thinking…` strip plus a tail-end preview of the model's prose as it streams. Cancel mid-stream with `Stop interview` and confirm the panel clears cleanly.
+6. Click `Generate draft` from the review screen. Confirm the same streaming surface appears — Thinking strip + prose preview — and the final draft lands in the editor when streaming completes.
+7. Trigger combat in narrative (`I attack the marauder.`). Confirm the top StatusStrip grows a `Combat · Round 1 · DEX save to act` badge, the inspector auto-shows a default-open `Combat` drawer with the foe's HP/Armor/STR/DEX/WIL, the foe's HP bar tier shifts colors as they take damage, and the headline drops the `DEX save to act` suffix once the player is marked ready.
+8. When all foes drop to 0 HP, confirm the encounter clears: the StatusStrip combat badge disappears, and the inspector either hides the drawer entirely or shows the cleared summary.
+9. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
 
 ## Live Model Smoke Test
 
@@ -30,6 +45,107 @@ After putting an `OPENROUTER_API_KEY` in `.env`:
 3. Confirm the response is real prose from Kimi K2.6 — not the "No model is configured, so this is deterministic placeholder narration." fallback, and not an `[Narrative API unavailable: …]` bracket.
 
 If the fallback is hitting, open `data/events.jsonl` and look for the bracketed error in the most recent narrative event. That tells you whether the failure is auth, parameter rejection, or timeout, and points at the right knob in `.env`.
+
+## Cairn Backend Smoke
+
+These checks exercise the backend rules layer before the frontend exposes dedicated controls for it.
+
+1. Start from an active campaign.
+1. Run:
+
+```shell
+curl -s -X POST http://127.0.0.1:8000/api/cairn/save \
+  -H "Content-Type: application/json" \
+  -d '{"ability":"DEX","reason":"Balance across the abbey beam."}' | python3 -m json.tool
+```
+
+Confirm the latest `oracle_history` entry has `kind: "save"` and a nested `cairn.ability: "DEX"`.
+
+1. Fetch state and copy the current primary weapon id:
+
+```shell
+curl -s http://127.0.0.1:8000/api/state | python3 -m json.tool
+```
+
+1. Run:
+
+```shell
+curl -s -X POST http://127.0.0.1:8000/api/cairn/attack \
+  -H "Content-Type: application/json" \
+  -d '{"target_name":"Abbey ghoul","target_armor":1}' | python3 -m json.tool
+```
+
+Confirm the latest `oracle_history` entry has `kind: "attack"` and a nested `cairn.damage_after_armor`.
+
+1. Run:
+
+```shell
+curl -s -X POST http://127.0.0.1:8000/api/cairn/harm \
+  -H "Content-Type: application/json" \
+  -d '{"amount":2,"source":"Falling masonry","in_combat":true,"armor_applies":false}' | python3 -m json.tool
+```
+
+Confirm HP (or STR on overflow) changes in `state.character.cairn`.
+
+1. Run:
+
+```shell
+curl -s -X POST http://127.0.0.1:8000/api/cairn/recover \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"breather"}' | python3 -m json.tool
+```
+
+Confirm the latest `oracle_history` entry has `kind: "recovery"` and HP is restored if the character is not deprived.
+
+## Memory Sidecar Smoke
+
+These checks verify the compacted GM-note memory layer (`data/memory.json`) without mutating your real campaign.
+
+1. Start an isolated backend with a temporary state path and fallback narration so the turn commits quickly:
+
+```shell
+OPENROUTER_API_KEY="" \
+DUNGEON_MASTER_STATE_PATH="/tmp/dm-memory-fallback/game_state.json" \
+uv run dungeon-master --port 8002
+```
+
+2. In a second terminal, seed a temporary active save:
+
+```shell
+uv run python - <<'PY'
+from pathlib import Path
+from dungeon_master.models import CairnMechanicsSource
+from dungeon_master.state_store import StateStore
+from tests.factories import sample_state
+
+state = sample_state()
+state.character.cairn.source = CairnMechanicsSource.EXPLICIT
+for item in state.character.inventory:
+    item.cairn.source = CairnMechanicsSource.EXPLICIT
+
+StateStore(Path("/tmp/dm-memory-fallback/game_state.json")).save(
+    state,
+    create_checkpoint=True,
+)
+PY
+```
+
+3. Commit a deterministic oracle turn:
+
+```shell
+curl -s -X POST http://127.0.0.1:8002/api/oracle/yes-no \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Is the abbey gate watched?","likelihood":"Likely"}' \
+  | python3 -m json.tool
+```
+
+4. Confirm `/tmp/dm-memory-fallback/memory.json` now exists and contains:
+   - `turn_count: 1`
+   - a `recent_turn_summaries` entry for the new oracle turn
+   - a non-empty `current_scene_summary`
+   - populated `thread_memory` / `npc_memory` / `location_memory` / `open_loops`
+
+5. In the live browser app, submit a turn and then click `Stop response` while the stream is active. Confirm the UI returns to idle cleanly. Then verify that cancelling did **not** contaminate the next committed memory state (cancelled turns should not appear in `data/memory.json`).
 
 ## Developer Knobs (`.env`)
 

@@ -7,13 +7,15 @@ A personal solo TTRPG harness where Python owns deterministic mechanics and a Li
 - Tracks canonical state in `data/game_state.json` and writes append-only events to `data/events.jsonl`.
 - Snapshots a checkpoint into `data/checkpoints/` after every meaningful turn.
 - Uses a deterministic oracle for yes/no questions, random events, and scene checks.
+- Adds a Cairn 2e-inspired backend rules layer: `STR` / `DEX` / `WIL`, HP, armor, burden, item tags, saves, auto-hit damage, critical damage, scars, and recovery.
+- Performs a one-time mechanics backfill for the current authored character when that character first becomes mechanically active, so existing setup work is preserved.
 - Generates the opening scene, threads, NPCs, and oracle word banks on first launch (or after a reset) using the configured LLM.
 - Keeps the LLM out of dice rolls, chaos factor, threads, NPCs, and any state mutation.
 - Falls back to deterministic placeholder narration when no model is configured.
 
 ## Architecture
 
-```
+```text
 +------------------+        HTTP / JSON          +-----------------------+
 |  Svelte 5 + TS   |  <----------------------->  |       FastAPI         |
 |  (web/, Vite)    |        /api/*               |  (dungeon_master.api) |
@@ -23,6 +25,7 @@ A personal solo TTRPG harness where Python owns deterministic mechanics and a Li
                                           +-----------------------------------+
                                           |        GameService                |
                                           |  - OracleEngine (Python, dice)    |
+                                          |  - CairnEngine  (Python, rules)   |
                                           |  - StateStore   (json + events)   |
                                           |  - CampaignGenerator (LLM bootstrap) |
                                           |  - NarrativeEngine   (LLM via LiteLLM) |
@@ -46,7 +49,7 @@ npm install
 npm run dev                      # serves http://127.0.0.1:5173
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api` to the FastAPI server.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` to the FastAPI server.
 
 To run the backend with autoreload during development:
 
@@ -57,6 +60,8 @@ uv run dungeon-master --reload
 ## Configure The Narrative Model
 
 Default provider is OpenRouter with Kimi K2.6 Thinking. Reasoning defaults to `auto`: medium effort for ordinary narration / yes-no, high effort for scene checks and random events.
+
+Character interview, character drafting, and campaign bootstrap internally raise their own token budgets above the base `.env` default because Kimi K2.6 Thinking spends a large chunk of the budget on reasoning before it writes visible output.
 
 Copy `.env.example` to `.env` and fill in your key:
 
@@ -81,9 +86,23 @@ uv run ruff check .
 uv run mypy src tests
 uv run pytest
 cd web && npm run check
+cd web && npm test
+cd web && npm run build
 ```
 
 Manual browser checks are documented in `docs/manual-testing.md`.
+
+## Backend Mechanics API
+
+The backend now exposes explicit Cairn-inspired mechanics routes in addition to `/api/turn`:
+
+- `POST /api/cairn/save` — roll a `STR` / `DEX` / `WIL` save
+- `POST /api/cairn/attack` — resolve outgoing player damage against target armor
+- `POST /api/cairn/harm` — apply incoming damage to the player, including scars / critical damage when relevant
+- `POST /api/cairn/recover` — breather, full rest, or week-scale recovery
+- `POST /api/cairn/equip` — toggle item equipped state so armor / weapon semantics stay canonical
+
+All of these return the full `GameState`, just like the rest of the API.
 
 ## Design Note
 

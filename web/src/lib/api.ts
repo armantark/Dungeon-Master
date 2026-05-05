@@ -5,6 +5,13 @@
 // Keeping this in one file means there's exactly one place to edit when
 // auth/headers/logging requirements change.
 
+import {
+  consumeStream,
+  StreamTransportError,
+  type StreamHandlers,
+  type StreamResult,
+} from "./streaming";
+import type { StreamEvent } from "./streaming-types";
 import type {
   CharacterDraftResponse,
   CharacterQuizAnswer,
@@ -157,6 +164,114 @@ export const api = {
 
   regenerateMessage: (eventId: string, signal?: AbortSignal): Promise<GameState> =>
     request(`/messages/${eventId}/regenerate`, { method: "POST", signal }),
+
+  // Best-effort server-side cancellation for an in-flight streamed request.
+  //
+  // Why fire-and-forget at the call site rather than awaited:
+  //   The frontend invokes this from `cancelCurrentRequest`, which also
+  //   aborts the local fetch. The abort already collapses the UI; the
+  //   only thing the backend POST adds is "stop the LLM from spending
+  //   more tokens on a turn we'll discard." We don't want a transient
+  //   network blip on the cancel POST to leave the user staring at a
+  //   spinning Stop button. Returning the boolean lets callers log /
+  //   surface telemetry if they want, but the store deliberately
+  //   ignores the resolution.
+  //
+  // The backend's contract is that an unknown request_id (race: the
+  // request finished before the cancel landed) returns
+  // `{cancelled: false}` rather than 404, so we don't have to
+  // distinguish "already done" from "actually cancelled" at the call
+  // site.
+  cancelRequest: (
+    requestId: string,
+    signal?: AbortSignal,
+  ): Promise<{ cancelled: boolean }> =>
+    request(`/requests/${encodeURIComponent(requestId)}/cancel`, {
+      method: "POST",
+      signal,
+    }),
+
+  // --- Streaming variants ------------------------------------------------
+  //
+  // These call the *streaming* version of the same endpoints. The
+  // backend pass adds NDJSON streaming for every model-authored route;
+  // until that lands, these methods will receive a transport error and
+  // the store falls back to the non-streaming path. The fallback is in
+  // store.svelte.ts, not here, because the API layer should only
+  // describe the contract, not branch on its availability.
+  //
+  // Why mirror every endpoint instead of one generic streamer:
+  //   - The path/body shape varies per endpoint. Generic streamers
+  //     hide that and force callers to remember which fields go in.
+  //   - tsc enforces the body type per endpoint so a typo in
+  //     `concept` (quiz) vs `text` (turn) surfaces here, not at runtime.
+  //   - The streaming `final_*` payload type is endpoint-specific;
+  //     consuming it generically would erase the type at the call site.
+
+  streamSubmitTurn: (
+    text: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/turn/stream`, handlers, { signal, json: { text } }),
+
+  streamSubmitAction: (
+    action: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/action/stream`, handlers, { signal, json: { action } }),
+
+  streamRegenerateMessage: (
+    eventId: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(
+      `${BASE}/messages/${eventId}/regenerate/stream`,
+      handlers,
+      { signal },
+    ),
+
+  streamStartCampaign: (
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/campaign/start/stream`, handlers, { signal }),
+
+  streamCharacterQuiz: (
+    concept: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/character/quiz/stream`, handlers, {
+      signal,
+      json: { concept },
+    }),
+
+  streamCharacterDraft: (
+    mode: "scratch" | "template",
+    handlers: StreamHandlers,
+    prompt: string | undefined,
+    template: CharacterSheet | undefined,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/character/draft/stream`, handlers, {
+      signal,
+      json: { mode, prompt, template },
+    }),
+
+  streamQuizzedCharacterDraft: (
+    concept: string,
+    answers: CharacterQuizAnswer[],
+    finalNote: string | null,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/character/draft/quizzed/stream`, handlers, {
+      signal,
+      json: { concept, answers, final_note: finalNote },
+    }),
 };
 
-export { ApiError };
+export { ApiError, StreamTransportError };

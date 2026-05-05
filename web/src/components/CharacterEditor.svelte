@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { defaultCairnItemState, hasCairnMechanics } from "../lib/cairn";
   import type { CharacterSheet } from "../lib/types";
+  import CairnReadout from "./CairnReadout.svelte";
 
   type Props = {
     character: CharacterSheet;
@@ -7,6 +9,14 @@
   };
 
   const { character, onChange }: Props = $props();
+
+  // The Cairn block stays read-only here. A draft only carries derived
+  // mechanics after the backend's one-time backfill runs (on finalize /
+  // start_campaign). Surfacing the resolved stats above the editable
+  // fields means the player isn't surprised by stats appearing post-
+  // finalize. While `source === "unset"` we suppress the block entirely
+  // — there's nothing real to show yet.
+  const showCairn = $derived(hasCairnMechanics(character.cairn.source));
 
   function update<K extends keyof CharacterSheet>(key: K, value: CharacterSheet[K]): void {
     onChange({ ...character, [key]: value });
@@ -30,6 +40,7 @@
         id: `item_${crypto.randomUUID().slice(0, 8)}`,
         name: "Unnamed item",
         details: "",
+        cairn: defaultCairnItemState(),
       },
     ]);
   }
@@ -41,6 +52,16 @@
     );
   }
 </script>
+
+{#if showCairn}
+  <!-- Cairn block sits above the parchment editor as a separate iron-
+       voiced surface so the engine voice never bleeds onto narrative
+       paper. The block is read-only here on purpose: this pass does not
+       expose Cairn mutation controls. -->
+  <div class="cairn-preview">
+    <CairnReadout cairn={character.cairn} />
+  </div>
+{/if}
 
 <div class="editor parchment deckle">
   <div class="grid">
@@ -161,6 +182,9 @@
     padding: 0.55rem;
     background: rgba(0, 0, 0, 0.06);
     border-left: 2px solid color-mix(in oklab, var(--rust-blood) 50%, transparent);
+  }
+  .cairn-preview {
+    margin-bottom: 0.7rem;
   }
   @media (max-width: 860px) {
     .grid {
