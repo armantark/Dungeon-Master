@@ -176,7 +176,7 @@ class NarrativeConfig:
             base_url=os.getenv("OPENROUTER_API_BASE", DEFAULT_OPENROUTER_BASE_URL).rstrip("/"),
             reasoning_policy=_reasoning_policy_from_env(),
             exclude_reasoning=_env_bool("LITELLM_EXCLUDE_REASONING", default=False),
-            temperature=_env_float("LITELLM_TEMPERATURE", default=0.85),
+            temperature=_env_float("LITELLM_TEMPERATURE", default=1.2),
             max_tokens=_env_int("LITELLM_MAX_TOKENS", default=4500),
             timeout_seconds=_env_float("LITELLM_TIMEOUT_SECONDS", default=180.0),
             max_retries=_env_int("LITELLM_MAX_RETRIES", default=2),

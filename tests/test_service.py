@@ -11,6 +11,7 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
+from dungeon_master.continuity_classifier import ContinuityUpdateScope
 from dungeon_master.models import (
     NPC,
     AttackStance,
@@ -323,6 +324,25 @@ class FakeNpcUpdater:
     ) -> LegacyNPCRosterRepairResult:
         del state, memory_context, cancel_token, use_model
         return self._repair or LegacyNPCRosterRepairResult()
+
+
+class FakeContinuityClassifier:
+    def __init__(self, scope: ContinuityUpdateScope) -> None:
+        self._scope = scope
+        self.calls: list[tuple[str, str]] = []
+
+    def classify_update_scope(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ContinuityUpdateScope:
+        del state, execution_context, cancel_token
+        self.calls.append((player_input, outcome.summary))
+        return self._scope
 
 
 class CountingNarrative:
@@ -1478,6 +1498,111 @@ def test_service_thread_updater_creates_thread_and_persists_memory(tmp_path: Pat
         loop.text.startswith("The hierophant's unfinished demand")
         for loop in memory.open_loops
     )
+
+
+def test_service_continuity_classifier_can_skip_both_updaters(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater()
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.NONE)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=classifier,
+    )
+
+    updated = service.submit_player_action("I keep moving and say nothing.")
+
+    assert classifier.calls == [
+        ("I keep moving and say nothing.", updated.oracle_history[-1].summary),
+    ]
+    assert thread_updater.calls == []
+    assert npc_updater.calls == []
+    assert updated.oracle_history[-1].referenced_thread_ids == []
+    assert updated.oracle_history[-1].referenced_npc_ids == []
+
+
+def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = GameThread(
+            title="The ferryman's warning grows teeth",
+            stakes="If ignored, the crossing toll becomes a trap.",
+        )
+        state.threads.append(created)
+        return (created.id,)
+
+    thread_updater = FakeThreadUpdater(mutate=mutate)
+    npc_updater = FakeNpcUpdater()
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.THREADS),
+    )
+
+    updated = service.submit_player_action("I accept the ferryman's warning.")
+
+    created = next(
+        thread for thread in updated.threads if thread.title == "The ferryman's warning grows teeth"
+    )
+    assert thread_updater.calls == [
+        ("I accept the ferryman's warning.", updated.oracle_history[-1].summary),
+    ]
+    assert npc_updater.calls == []
+    assert updated.oracle_history[-1].referenced_thread_ids == [created.id]
+    assert updated.oracle_history[-1].referenced_npc_ids == []
+
+
+def test_service_continuity_classifier_can_run_only_npc_updater(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = NPC(
+            name="Brother Vahagn",
+            role="Bell-ringer hiding a blood debt",
+            disposition="guarded",
+        )
+        state.npcs.append(created)
+        return (created.id,)
+
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater(mutate=mutate)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.NPCS),
+    )
+
+    updated = service.submit_player_action("I press the bell-ringer for the truth.")
+
+    created = next(npc for npc in updated.npcs if npc.name == "Brother Vahagn")
+    assert thread_updater.calls == []
+    assert npc_updater.calls == [
+        ("I press the bell-ringer for the truth.", updated.oracle_history[-1].summary),
+    ]
+    assert updated.oracle_history[-1].referenced_thread_ids == []
+    assert updated.oracle_history[-1].referenced_npc_ids == [created.id]
 
 
 def test_service_npc_updater_creates_npc_and_persists_memory(tmp_path: Path) -> None:

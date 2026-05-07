@@ -16,6 +16,7 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
 from dungeon_master.memory import (
     CURRENT_MEMORY_SCHEMA_VERSION,
@@ -333,6 +334,19 @@ class NPCUpdaterPort(Protocol):
         raise NotImplementedError
 
 
+class ContinuityClassifierPort(Protocol):
+    def classify_update_scope(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ContinuityUpdateScope:
+        raise NotImplementedError
+
+
 class GameService:
     def __init__(  # noqa: PLR0913
         self,
@@ -347,6 +361,7 @@ class GameService:
         memory_manager: MemoryManager | None = None,
         thread_updater: ThreadUpdaterPort | None = None,
         npc_updater: NPCUpdaterPort | None = None,
+        continuity_classifier: ContinuityClassifierPort | None = None,
     ) -> None:
         self._store = store
         self._oracle = oracle or OracleEngine()
@@ -372,6 +387,13 @@ class GameService:
             ),
         )
         self._npc_updater = npc_updater or NPCUpdater(
+            config=(
+                default_narrative_config
+                if isinstance(default_narrative_config, NarrativeConfig)
+                else None
+            ),
+        )
+        self._continuity_classifier = continuity_classifier or ContinuityClassifier(
             config=(
                 default_narrative_config
                 if isinstance(default_narrative_config, NarrativeConfig)
@@ -1464,13 +1486,7 @@ class GameService:
         execution_context: str | None = None,
     ) -> None:
         state.oracle_history.append(outcome)
-        self._update_threads_for_turn(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-        )
-        self._update_npcs_for_turn(
+        self._apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
             outcome=outcome,
@@ -1546,14 +1562,7 @@ class GameService:
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
         state.oracle_history.append(outcome)
-        self._update_threads_for_turn(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            cancel_token=cancel_token,
-        )
-        self._update_npcs_for_turn(
+        self._apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
             outcome=outcome,
@@ -1963,7 +1972,7 @@ class GameService:
         ).render()
         return context or None
 
-    def _update_threads_for_turn(
+    def _apply_continuity_updates_for_turn(
         self,
         state: GameState,
         *,
@@ -1972,6 +1981,44 @@ class GameService:
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> None:
+        scope = self._continuity_classifier.classify_update_scope(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            cancel_token=cancel_token,
+        )
+        touched_thread_ids: tuple[str, ...] = ()
+        if scope.updates_threads():
+            touched_thread_ids = self._run_thread_updates_for_turn(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                cancel_token=cancel_token,
+            )
+        self._apply_thread_references(outcome, touched_thread_ids)
+
+        touched_npc_ids: tuple[str, ...] = ()
+        if scope.updates_npcs():
+            touched_npc_ids = self._run_npc_updates_for_turn(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                cancel_token=cancel_token,
+            )
+        self._apply_npc_references(state, outcome, touched_npc_ids)
+
+    def _run_thread_updates_for_turn(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> tuple[str, ...]:
         thread_result = self._thread_updater.update_threads(
             state,
             player_input=player_input,
@@ -1984,11 +2031,18 @@ class GameService:
             ),
             cancel_token=cancel_token,
         )
-        merged = self._merged_thread_ids(outcome, thread_result.touched_thread_ids)
+        return thread_result.touched_thread_ids
+
+    def _apply_thread_references(
+        self,
+        outcome: OracleOutcome,
+        touched_thread_ids: tuple[str, ...],
+    ) -> None:
+        merged = self._merged_thread_ids(outcome, touched_thread_ids)
         outcome.referenced_thread_ids = merged
         outcome.referenced_thread_id = merged[0] if merged else None
 
-    def _update_npcs_for_turn(
+    def _run_npc_updates_for_turn(
         self,
         state: GameState,
         *,
@@ -1996,7 +2050,7 @@ class GameService:
         outcome: OracleOutcome,
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
-    ) -> None:
+    ) -> tuple[str, ...]:
         npc_result = self._npc_updater.update_npcs(
             state,
             player_input=player_input,
@@ -2009,9 +2063,17 @@ class GameService:
             ),
             cancel_token=cancel_token,
         )
+        return npc_result.touched_npc_ids
+
+    def _apply_npc_references(
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        touched_npc_ids: tuple[str, ...],
+    ) -> None:
         merged = self._visible_npc_ids(
             state,
-            self._merged_npc_ids(outcome, npc_result.touched_npc_ids),
+            self._merged_npc_ids(outcome, touched_npc_ids),
         )
         outcome.referenced_npc_ids = merged
         outcome.referenced_npc_id = merged[0] if merged else None
