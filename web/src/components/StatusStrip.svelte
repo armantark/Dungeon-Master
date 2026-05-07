@@ -9,9 +9,10 @@ stay visible (chaos), and offers a single button into the inspector.
 Anything more would compete with the conversation below.
 -->
 <script lang="ts">
-  import { combatFromState, encounterHeadline } from "../lib/combat";
+  import { combatFromState, enemyInitiated, encounterHeadline } from "../lib/combat";
   import { game } from "../lib/store.svelte";
   import type { GameState } from "../lib/types";
+  import SystemMenu from "./SystemMenu.svelte";
 
   type Props = { chaos: number; sceneNumber: number; state: GameState };
   const { chaos, sceneNumber, state: gs }: Props = $props();
@@ -24,6 +25,15 @@ Anything more would compete with the conversation below.
   const encounter = $derived(combatFromState(gs));
   const combatHeadline = $derived(encounterHeadline(encounter));
   const showCombat = $derived(encounter !== null && encounter.active);
+  // F-05: when the foe opened the fight, swap the kicker to "Ambush"
+  // so the player's at-a-glance read of the strip is the cause of the
+  // fight, not a generic "Combat" label. The button title gains the
+  // same hint so screen-readers / hover tooltips agree.
+  const ambushed = $derived(showCombat && enemyInitiated(encounter));
+  const combatKicker = $derived(ambushed ? "Ambush" : "Combat");
+  const combatTooltip = $derived(
+    ambushed ? "Open ambush tracker — a foe seized initiative." : "Open combat tracker",
+  );
 </script>
 
 <header class="strip iron">
@@ -36,11 +46,12 @@ Anything more would compete with the conversation below.
     {#if showCombat}
       <button
         class="badge badge--combat"
+        class:badge--ambush={ambushed}
         type="button"
         onclick={() => game.openInspector()}
-        title="Open combat tracker"
+        title={combatTooltip}
       >
-        <span class="kicker">Combat</span>
+        <span class="kicker">{combatKicker}</span>
         <span class="pixel value combat-value">{combatHeadline ?? "Active"}</span>
       </button>
     {/if}
@@ -55,6 +66,13 @@ Anything more would compete with the conversation below.
     <button class="ghost inspect" onclick={() => game.toggleInspector()}>
       {game.inspectorOpen ? "Close" : "Inspect"}
     </button>
+    <!--
+      F-12 system menu lives at the far-right of the strip so that "leave
+      this campaign" actions are spatially separated from "look at this
+      campaign" actions (Inspect, Chaos). Same reason settings menus
+      typically live opposite the navigation in OS shells.
+    -->
+    <SystemMenu />
   </div>
 </header>
 
@@ -139,6 +157,24 @@ Anything more would compete with the conversation below.
   }
   .badge--combat .kicker {
     color: var(--rust-iron);
+  }
+  /*
+   * Ambush variant: deeper blood tint + brighter kicker so the player
+   * sees a stronger "you got jumped" cue at a glance. The headline
+   * already carries "Ambush · Round N", so the badge color is the
+   * second redundant cue and the kicker swap is the third — three
+   * layered cues match how the threads / NPCs panels do recency.
+   */
+  .badge--ambush {
+    border-color: var(--rust-blood);
+    background: color-mix(in oklab, var(--rust-blood) 30%, transparent);
+  }
+  .badge--ambush:hover {
+    border-color: var(--rust-blood);
+    background: color-mix(in oklab, var(--rust-blood) 45%, transparent);
+  }
+  .badge--ambush .kicker {
+    color: var(--rust-blood);
   }
   .badge--combat .combat-value {
     /* Smaller because the headline can be long ("Round 1 · DEX save

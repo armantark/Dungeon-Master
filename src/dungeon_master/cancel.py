@@ -51,3 +51,7 @@ class CancellationRegistry:
     def unregister(self, request_id: str) -> None:
         with self._lock:
             self._tokens.pop(request_id, None)
+
+    def has_active_requests(self) -> bool:
+        with self._lock:
+            return bool(self._tokens)

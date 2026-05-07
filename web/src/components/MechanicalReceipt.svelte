@@ -19,8 +19,10 @@ and add a Cairn-specific dl block with the resolution snapshot.
   import {
     cairnHeadline,
     formatAbility,
+    formatCombatInitiator,
     formatRestKind,
     formatStance,
+    isAmbushOpener,
   } from "../lib/cairn";
   import type { OracleOutcome } from "../lib/types";
 
@@ -84,12 +86,31 @@ and add a Cairn-specific dl block with the resolution snapshot.
       || outcome.kind === "recovery"
       || outcome.kind === "retreat",
   );
+
+  // F-05 surfacing.
+  // - `ambush` lights up the strip (collapsed receipt) so the player
+  //   sees the cause of a harm row at a glance — relevant when
+  //   scrolling oracle history later in the campaign.
+  // - `initiatorLabel` populates an Initiative row in the dl when the
+  //   resolution belongs to a tracked encounter (player attack OR
+  //   enemy opener); null for harm outside combat, so the row
+  //   disappears for trap damage etc.
+  const ambush = $derived(isAmbushOpener(outcome));
+  const initiatorLabel = $derived(
+    cairn === null ? null : formatCombatInitiator(cairn.combat_initiator),
+  );
 </script>
 
-<div class="receipt" class:open>
+<div class="receipt" class:open class:ambush>
   <button class="strip" type="button" onclick={() => (open = !open)}>
     <span class="tag tag--{tagFlavor}">
-      {outcome.kind.replace("_", " ")}
+      <!--
+        F-05: when an enemy opener triggered this harm, swap the tag
+        text from "harm" to "ambush" so the collapsed strip reads
+        true to what just happened. The underlying outcome.kind stays
+        "harm" — this is presentational only.
+      -->
+      {ambush ? "ambush" : outcome.kind.replace("_", " ")}
     </span>
     <span class="line pixel">{headline}</span>
     <span class="chev pixel">{open ? "▾" : "▸"}</span>
@@ -137,6 +158,19 @@ and add a Cairn-specific dl block with the resolution snapshot.
 
       {#if isCairnKind && cairn !== null}
         <dl class="cairn">
+          {#if initiatorLabel !== null}
+            <!--
+              F-05: surface who opened the fight inside the receipt so
+              the row is searchable / scrubbable later. We render this
+              first so it frames the rest of the resolution
+              (damage, HP, scar) — "Foe seized initiative · 2 dmg ·
+              HP 4" reads as cause then effect. Only present when the
+              backend has actually decided an initiator (i.e. the
+              resolution belongs to a tracked encounter).
+            -->
+            <dt>Initiative</dt>
+            <dd>{initiatorLabel}</dd>
+          {/if}
           {#if cairn.ability !== null}
             <dt>Ability</dt>
             <dd class="pixel">{formatAbility(cairn.ability)}</dd>
@@ -215,6 +249,19 @@ and add a Cairn-specific dl block with the resolution snapshot.
   .receipt {
     border-left: 2px solid color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
     margin-top: 0.3rem;
+  }
+  /*
+   * F-05: ambush rows get a blood-rust accent on the left bar so the
+   * player can scan the oracle history and locate the moment a fight
+   * went bad. We don't recolor the whole strip — that would shout
+   * over the regular receipt rhythm — just the bar and a faint tint
+   * on the strip background.
+   */
+  .receipt.ambush {
+    border-left-color: var(--rust-blood);
+  }
+  .receipt.ambush .strip {
+    background: color-mix(in oklab, var(--rust-blood) 10%, rgba(0, 0, 0, 0.32) 90%);
   }
   .strip {
     width: 100%;

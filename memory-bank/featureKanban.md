@@ -23,161 +23,343 @@
   - The CombatTracker stays a read-only trust surface — no retreat button — but it surfaces a single italicized `/retreat` hint so the affordance is discoverable in context without dragging the player into `/help`.
 
 ### F-02 Inventory Progression
-- Status: `ready`
+- Status: `done`
 - Priority: `high`
 - Goal: Let the game canonically add loot / found items / purchases / transfers during active play.
 - Why:
-  Existing inventory can be used, dropped, and equipped, but active-play acquisition is still a hole.
-- Constraints:
-  The LLM should ideally be able to drive this through structured interpretation; explicit commands can exist as backup/discoverability.
-- Likely touch points:
-  - `src/dungeon_master/turn_router.py`
-  - `src/dungeon_master/service.py`
-  - `src/dungeon_master/cairn.py`
-  - `src/dungeon_master/models.py`
-  - `src/dungeon_master/api.py`
-  - `web/src/components/CharacterFolio.svelte`
-  - `web/src/lib/slash.ts`
+  Existing inventory could be used, dropped, and equipped, but active-play acquisition was a hole.
+- Final state:
+  - Backend: planner can emit an `acquire_item` op; `CairnEngine.acquire_items` runs a focused structured-generation prompt that produces validated `InventoryItem`s with full Cairn semantics (tags, slots, weapon die, armor bonus, uses, equipped) and recomputes burden / primary-weapon state in Python. `GameService` executes the op inside the normal narrate-and-checkpoint pipeline and exposes `POST /api/cairn/acquire` as a deterministic-only fallback. Tests across `test_turn_router.py`, `test_cairn.py`, `test_service.py`, and `test_api.py`.
+  - Frontend: four acquisition slash commands surface the affordance — `/acquire <description>` (with `/gain`), `/loot <description>`, `/take <description>`, and `/buy <description>` (with `/purchase`). Each translates to a first-person free-text turn (`I {verb} {body}.`) so the planner classifies it as `ACQUIRE_ITEM` and we get unified narration / memory / receipts. The existing slash suggestion menu surfaces all four canonical verbs as separate descriptors (their fictional flavor differs — looting, taking, buying, generic acquiring — and the narrator picks that flavor up from the verb). Empty-body errors name the verb the player typed. The composer's placeholder rotation now also includes `/loot` and `/buy` examples for organic discovery. Tests cover parser routing for every verb + alias, suggestion filtering, and store dispatch (verb preservation, terminator handling, error path).
+- Decisions:
+  - Slash commands funnel through `submit_turn` rather than the explicit `/api/cairn/acquire` endpoint, mirroring `/retreat`. The deterministic endpoint exists for completeness and future deterministic-only callers, but the chat-first invariant says every player turn produces narration + memory updates.
+  - The four acquisition verbs each get their own descriptor instead of being aliased onto one canonical command. Looting a corpse, taking a found object, buying at a market, and a generic acquire all read differently in narration, and we preserve that fictional intent end-to-end rather than collapsing it.
+  - No separate currency ledger landed in this ticket. Coin, if it appears, is represented as ordinary inventory canon. We can revisit that later if currency becomes mechanically interesting in its own right.
 
 ### F-03 Dynamic Thread Updates
-- Status: `ready`
+- Status: `done`
 - Priority: `high`
 - Goal: Threads should be canonically created/updated/resolved by the game loop, not remain read-only references.
 - Why:
   Long-running solo play needs thread state to evolve continuously.
 - Constraint:
   User-facing manual editing is **not** the preferred solution.
-- Likely touch points:
-  - `src/dungeon_master/models.py`
-  - `src/dungeon_master/service.py`
-  - `src/dungeon_master/narrative.py`
-  - `src/dungeon_master/memory.py`
-  - `web/src/components/ThreadsPanel.svelte`
-  - `web/src/components/Inspector.svelte`
+- Final state:
+  - Backend: a dedicated `ThreadUpdater` module runs after a turn's deterministic outcome exists but before checkpointing/narration, asks the model for a bounded structured op batch (`create | update | resolve`, max 2 ops), validates it, and mutates canonical `state.threads` in Python. Outcomes now persist plural `referenced_thread_ids` plus the legacy primary `referenced_thread_id`, and `MemoryManager` uses those plural links when rebuilding thread cards, open loops, callbacks, and the dedicated thread-updater memory context. The API still returns the whole `GameState`, so no new HTTP route was needed.
+  - Frontend: `web/src/lib/types.ts` mirrors `OracleOutcome.referenced_thread_ids: string[]`. New pure helpers in `web/src/lib/threads.ts` (`recentlyTouchedThreadIds`, `sortThreadsForDisplay`) derive the latest-turn touched set and a stable display order — active before resolved, recently-touched first within each status group, original order preserved within ties. `ThreadsPanel.svelte` consumes the touched set: just-touched cards float to the top of their status group, get a brighter gold rail, run a one-shot non-looping pulse animation (suppressed under `prefers-reduced-motion`), and show a small `advanced` / `just resolved` Alagard pip beside the existing status pip. `Inspector.svelte` is the single source for the touched set so the rest of the app stays prop-drilled-free.
+- Decisions:
+  - Read-only surface only. The kanban working rule says threads should evolve through the game system, not through user-edit forms; we deliberately did **not** add create/update/resolve buttons.
+  - The "advanced" cue is layered: sort + rail color + once-per-turn pulse + Alagard pip. Layered so the cue still reads under reduced-motion, in printed/screenshot mode, and without color (the pip's `advanced` text alone carries it).
+  - We did not extend `MechanicalReceipt` with a "threads touched" row. The receipt would need to map IDs → titles, which means threading state through the chat tree; the inspector's threads panel is already the canonical surface for thread evolution and the receipt's role is dice-trust, not narrative cross-referencing.
+  - Plural `referenced_thread_ids` is now the primary linkage on the frontend, but the helpers still honor a non-empty singular `referenced_thread_id` so older state blobs and the `/api/cairn/*` deterministic routes stay aligned.
 
 ### F-04 Dynamic NPC Updates
-- Status: `ready`
+- Status: `done`
 - Priority: `high`
 - Goal: NPCs should be canonically created/updated/promoted/retired by the game loop rather than staying static opener artifacts.
 - Why:
   Recurring cast continuity is central to long-running play.
 - Constraint:
   User-facing manual editing is **not** the preferred solution.
-- Likely touch points:
-  - `src/dungeon_master/models.py`
-  - `src/dungeon_master/service.py`
-  - `src/dungeon_master/narrative.py`
-  - `src/dungeon_master/memory.py`
-  - `web/src/components/NPCsPanel.svelte`
-  - `web/src/components/Inspector.svelte`
+- Final state:
+  - Backend: `src/dungeon_master/models.py` adds `NPCStatus` (`active | retired`) plus plural `OracleOutcome.referenced_npc_ids` alongside the legacy singular `referenced_npc_id`. A new `src/dungeon_master/npc_updater.py` mirrors the thread-updater pattern — after a deterministic outcome exists but before checkpointing/narration, the model can propose a bounded `create | update | retire` batch (max 2 ops), Python validates/applies it to `state.npcs`, and the touched ids are merged back onto the outcome. `MemoryManager` carries plural NPC linkage, status-aware `NPCMemory`, and a dedicated NPC-updater retrieval context so recurring-cast memory stays coherent across rebuilds and streamed/unary turns. `GameService` runs the NPC updater in both unary and streaming commit paths beside the thread updater, with the same discard-on-cancel semantics.
+  - Frontend: `web/src/lib/types.ts` mirrors `NPCStatus`, `NPC.status`, and `OracleOutcome.referenced_npc_ids`. New pure helpers in `web/src/lib/npcs.ts` (`recentlyTouchedNpcIds`, `sortNpcsForDisplay`) match the `threads.ts` shape — last-turn touched set + stable display sort (active before retired, recently-touched first within each status group, original order preserved within ties). `NPCsPanel.svelte` consumes the touched set: just-touched cards float to the top of their status group, get a brighter gold rail, run a one-shot non-looping pulse animation (suppressed under `prefers-reduced-motion`), and show an Alagard pip — `advanced` for active changes, `newly retired` for retirements. Retired NPCs sink with verdigris styling and reduced opacity instead of disappearing, matching the resolved-thread visual language. `Inspector.svelte` is the single source for the touched set.
+- Decisions:
+  - We keep retired NPCs in canonical `state.npcs` under an explicit `status` instead of deleting them. Deletion would erase recurring-cast continuity; a status flag keeps canon stable and lets the panel sink retired NPCs visually without losing them as memory anchors.
+  - `promote` is treated as an `update`, not a separate op kind. Promotion is just a role/disposition shift on an existing NPC, so the bounded op vocabulary stays `create | update | retire`.
+  - The updater may reactivate a duplicate-name NPC when the model emits an erroneous duplicate `create`; that collapse is safer than minting two canonically distinct records for the same person.
+  - Read-only surface only, mirroring F-03. The kanban working rule says NPCs should evolve through the game system, not user-edit forms; we deliberately did **not** add create/update/retire buttons.
+  - Retired-and-just-touched cards still sink below active NPCs but keep the gold rail + `newly retired` pip — same layered cue strategy as threads (sort + rail + pulse + pip). The pulse itself is suppressed on retired cards because a pulse on a muted card reads as noise rather than a signal; the pip + rail carry the recency.
 
 ### F-05 Enemy-First / Ambush Combat
-- Status: `ready`
+- Status: `done`
 - Priority: `high`
 - Goal: Support enemy-initiated combat as a fully tracked encounter, not just a harm resolution.
 - Why:
   Ambushes and foe-first turns should seed/advance encounter state just as cleanly as player-initiated attacks.
-- Likely touch points:
-  - `src/dungeon_master/cairn.py`
-  - `src/dungeon_master/turn_router.py`
-  - `src/dungeon_master/service.py`
-  - `src/dungeon_master/api.py`
-  - `web/src/components/CombatTracker.svelte`
+- Final state:
+  - Backend: `src/dungeon_master/models.py` adds minimal encounter-opener metadata (`EncounterInitiator` on `EncounterState`, mirrored onto `CairnResolution.combat_initiator`) so canonical combat can remember who seized the first blow without inventing a larger half-round state machine. `src/dungeon_master/cairn.py` now exposes `resolve_enemy_opener(...)`, a dedicated enemy-first path that seeds an encounter via the existing encounter-generation machinery, applies the opener's deterministic harm immediately, clears the first-round DEX gate, and leaves the encounter active in round 2 for the player's follow-up turn. Generic `suffer_harm()` remains generic and does **not** auto-seed encounters, so falling masonry / traps / curses still work outside combat. The encounter-seeding prompt was widened from player-led escalation to a general combat trigger with an explicit initiator field.
+  - Planner / service: `src/dungeon_master/turn_router.py` gains an internal-only `enemy_opener` op kind. The legacy route stays `harm`, so the public outcome surface remains conservative, but `GameService._execute_turn_plan(...)` now dispatches that internal op to `CairnEngine.resolve_enemy_opener(...)` instead of to plain `suffer_harm()`. This keeps the product chat-first and inference-first while letting prose like "the ghoul drops from the rafters and claws me before I can raise my cudgel" create a real tracked encounter through `/api/turn`.
+  - Frontend reference pass: `web/src/lib/types.ts` mirrors the backend's new `EncounterInitiator` union and adds the F-05 combat-context fields (`combat_initiator`, `combat_started`, `combat_active`, `combat_round`, `player_acted`, `enemy_damage`, `enemy_damage_source`) as optional members of `CairnResolution` so legacy outcomes still type-check. `web/src/lib/combat.ts` carries `initiator` through the `BackendEncounterState` → `CombatEncounterState` adapter, exposes a new `enemyInitiated(state)` predicate, and rewrites `encounterHeadline(...)` to prepend `"Ambush · "` only on active enemy-opened rounds (round-1 DEX-gate label is left alone to avoid clutter). `web/src/lib/cairn.ts` rewrites `formatHarmHeadline(...)` so a harm outcome with `combat_started=true && combat_initiator='enemy'` reads `"Ambush · 2 · HP 4"` instead of `"Harm · 2 · HP 4"`, and adds a presentational `formatCombatInitiator(...)` + `isAmbushOpener(...)` predicate. `CombatTracker.svelte` adds a rust-blood `Ambush` flag above the existing first-round / morale flags so cause-then-consequence reads naturally. `StatusStrip.svelte` swaps the combat-badge kicker to `Ambush` and shifts the badge tint deeper when the foe opened the fight. `MechanicalReceipt.svelte` swaps the strip tag from `harm` to `ambush` for opener rows, paints the receipt's left rail rust-blood, and adds an `Initiative` row inside the Cairn dl block whenever the resolution belongs to a tracked encounter (player or enemy).
+  - Tests: extended `web/src/lib/combat.test.ts` (encounter-headline ambush prefix + first-round suppression, `enemyInitiated` predicate, adapter mapping for both initiators, legacy-state default-to-null) and `web/src/lib/cairn.test.ts` (ambush-prefixed harm headline, `formatCombatInitiator`, `isAmbushOpener` truth table). All 131 vitest cases + svelte-check + production build pass. Manual Pinchtab smoke confirmed the dev frontend still renders cleanly on the existing campaign payload after the type/component edits; the live ambush surface is exercised the next time combat is enemy-opened in real play.
+- Decisions:
+  - No new public API route was added. The user has repeatedly said free-text interpretation is the intended mechanism, so F-05 stays centered on `/api/turn`; a deterministic-only `/api/cairn/...` ambush endpoint can wait unless a future caller genuinely needs it.
+  - No new frontend-visible outcome kind was added. The planner uses an internal `enemy_opener` op, but the public route/outcome remains `harm` so the existing receipt/store/UI contract stays stable; the frontend instead reads the new `cairn.combat_initiator` field as a presentational hint and rewrites strip text + tag flavor in place.
+  - Layered ambush cues (badge kicker swap + tint, tracker flag, receipt strip tag swap + rail color, headline prefix) follow the same multi-channel pattern as the F-03/F-04 "advanced" cues so the signal still reads under reduced motion, in screenshots, and without color (the literal text "Ambush" carries the cue alone).
+  - The ambush prefix on `encounterHeadline` is suppressed during the round-1 DEX-gate label so the strip never doubles up shouty markers; the StatusStrip kicker swap and the tracker flag still carry the cue on round 1.
+  - Enemy-opened encounters intentionally advance to round 2 immediately after the opening blow. That avoids inventing a fragile half-round state machine while preserving the existing player-attack/retreat loop and making the next turn unambiguously "your combat response."
+  - Manual browser smoke reached the live streaming state after a prose ambush turn earlier in the session and showed the normal `Stop response` control, but the real-model response did not complete within the polling window. Automated backend + frontend coverage is therefore the canonical proof of encounter seeding/commit semantics and ambush-surface rendering for this pass, with full live UX confirmation deferred to organic play.
 
 ## Backlog
 
 ### F-06 Campaign End / Death / Retirement Flow
-- Status: `backlog`
+- Status: `done`
 - Priority: `high`
 - Goal: Add terminal/late-campaign flow so runs can meaningfully end rather than only being reset.
 - Why:
   The user wants a long-running game, but one that eventually reaches endgame.
-- Likely touch points:
-  - `src/dungeon_master/models.py`
-  - `src/dungeon_master/service.py`
-  - `src/dungeon_master/api.py`
-  - `web/src/App.svelte`
-  - `web/src/components/Inspector.svelte`
+- Final state:
+  - Backend: `src/dungeon_master/models.py` adds `CampaignStatus.ENDED`, a new `CampaignEndReason` enum (`death | retirement | victory`), and terminal metadata on `GameState` (`campaign_end_reason`, `campaign_ended_at`, `campaign_end_summary`). `src/dungeon_master/service.py` carries a single `end_campaign(...)` path for explicit retirement/victory, auto-finalizes the campaign into `ended + death` when a committed turn leaves the character dead, blocks further mutating play/regenerate/update routes once ended, and syncs a legacy `active + dead` save into canonical `ended + death` on load. The final death turn is still narrated and checkpointed normally before the terminal system event is appended. `src/dungeon_master/api.py` exposes `POST /api/campaign/end`. All existing mutating endpoints naturally return `409` once ended because `GameService._ensure_active(...)` emits a reason-aware conflict message.
+  - Frontend: `web/src/lib/types.ts` mirrors the new `CampaignStatus` (`ended` added) and `CampaignEndReason` union, plus the three terminal metadata fields on `GameState`. `web/src/lib/api.ts` adds `endCampaign(reason, summary, signal?)` against `POST /campaign/end`; the store (`web/src/lib/store.svelte.ts`) wraps it as `endCampaign(reason, summary)` and routes the new `/retire` / `/victory` slash commands directly to it (bypassing the planner because terminal close is a lifecycle op, not an in-fiction action). Empty summaries are serialized as `null` so the backend's deterministic-default branch fires. `web/src/lib/slash.ts` adds the two terminal-close descriptors and a new `{ kind: "end", reason, summary }` parsed-turn variant. `web/src/lib/end-campaign.ts` hosts the pure presentation helpers (`endKicker`, `endHeadline`, `endSummary`, `formatEndedAt`, `isCampaignEnded`) so the per-reason copy and timestamp formatting are testable without DOM. `web/src/components/EndBanner.svelte` is the read-only sticky-bottom replacement for the Composer when the campaign is ended — it carries the kicker, headline, canonical or fallback summary, optional close timestamp, and a two-step "Begin a new campaign" CTA. `web/src/App.svelte` collapses its play-time conditional into an exhaustive `loading | setup | active | ended` switch and mounts EndBanner instead of Composer in the ended branch (chat feed and inspector remain mounted as a read-only archive). `web/src/components/Inspector.svelte` carries an `archived` flag that disables chaos commit, swaps the notes editor for static archive prose, and rephrases the reset button copy as "Replace archive" with a clarifying confirm prompt. The `app__main--ended` modifier slightly desaturates the play surface so the lifecycle shift reads even before the player notices the banner.
+  - Tests: new `web/src/lib/end-campaign.test.ts` covers `isCampaignEnded`, the per-reason kicker/headline distinctness, the canonical-vs-fallback summary branch, the empty/whitespace-summary fallback, the null-reason case, and the `formatEndedAt` valid/invalid input matrix. `web/src/lib/slash.test.ts` adds parser coverage for `/retire` and `/victory` with and without an explicit summary plus whitespace trimming, and asserts both descriptors surface as distinct entries in the suggestion menu. `web/src/lib/store.test.ts` adds two cases that confirm `/retire` and `/victory` reach `api.endCampaign` with the right reason and that empty summaries are forwarded as `null` (not `""`) so the backend's `min_length=1` validator never sees a blank string. Existing `threads.test.ts` / `npcs.test.ts` fixtures were widened with the three new nullable fields. All 152 vitest cases + svelte-check + production build pass.
+  - Manual verification deferred: the live LLM-backed end-of-campaign + auto-death paths were not browser-smoked because the backend wasn't running and (per F-05) the model's first-token latency is too high for a meaningful loop within a single session. Automated coverage (backend pytest + frontend vitest + typecheck + build) is the primary verification for this pass; live UX confirmation will land naturally the next time a real campaign reaches death/retirement/victory.
+- Decisions:
+  - The backend models terminal state **inside a single `GameState`**, not in a separate archive/save record. That keeps F-06 compatible with the likely future save-selection system: each eventual save slot can simply carry its own `active` vs `ended` lifecycle rather than forcing a migration away from a one-off archive format.
+  - The frontend End-Banner is its own component, not an inline ChatFeed message. Replacing the Composer wholesale (rather than disabling it) makes the lifecycle shift unmistakable — there's no input box anywhere on screen, so the "play has stopped" state is structurally obvious.
+  - `/retire` and `/victory` deliberately bypass the planner. Every other turn-shaped slash (retreat, acquire) funnels through `submit_turn` to get unified narration + memory updates, but a lifecycle close is a state transition, not an in-fiction action. Hitting `/api/campaign/end` directly keeps the close cheap, predictable, and free of model latency.
+  - Explicit retirement/victory are blocked while an encounter is still active; death is the only in-combat terminal path. The frontend doesn't try to enforce that locally — the backend's 409 surfaces through the normal error pipeline because the affordances ("Begin a new campaign", `/retire`, `/victory`) are rare enough that an extra round-trip is fine.
+  - The Inspector goes read-only by status, not by feature flag. A disabled chaos editor + archived notes prose mirror what the backend's `_ensure_active` already enforces; we surface the disabled state at the source instead of letting the player twiddle a control that would 409.
+  - Multi-save selection (F-12) remains a real follow-up. Under the current single-save architecture an ended campaign can only be browsed until the player chooses to start over; the End-Banner's CTA copy and the Inspector's "Replace archive" rephrase deliberately call out that risk so the player isn't surprised.
 
 ### F-07 Common Actions Tray
-- Status: `backlog`
+- Status: `done`
 - Priority: `medium`
 - Goal: Add clickable common actions in the UI for discoverability and speed.
 - Why:
   Chat-first remains primary, but a tray for common verbs would help usability.
-- Candidate actions:
-  - `Ask oracle`
-  - `Random event`
-  - `Scene check`
-  - `Attack`
-  - `Recover`
-  - `Retreat`
-  - `Check gear`
-- Likely touch points:
-  - `web/src/components/Composer.svelte`
-  - `web/src/lib/store.svelte.ts`
-  - `web/src/lib/api.ts`
+- Final state:
+  - Frontend-only ticket: no backend / API additions. The tray click never fires a request directly — it edits the Composer buffer and the player still hits Send. This was the user's explicit pick over auto-submit and over a hybrid; it preserves the chat-first invariant and keeps every action observable as a real player turn in the action log.
+  - `web/src/lib/common-actions.ts` is a new pure module with `deriveCommonActions(state, combat)` and `applyCommonAction(buffer, action)`. The visibility / ordering / replacement rules live there so they're testable without a DOM.
+  - Always-on actions (left → right): `Ask oracle` (`/ask `), `Random event` (`/event`), `Scene check` (`/scene `), `Check gear` (prose `I take stock of what I'm carrying.`). Combat-only actions (appended only when `state.encounter.active`): `Attack` (prose `I attack `), `Recover` (prose `I take a short breather to recover.`), `Retreat` (`/retreat `).
+  - `web/src/components/Composer.svelte` renders the tray as a horizontal strip of pixel pills between the textarea and the send-row. Click → `applyCommonAction` → set `value` → focus textarea + `setSelectionRange` to end-of-inserted-text inside a microtask (so the bound write has propagated). Empty / whitespace-only buffers are replaced wholesale; non-empty buffers preserve typed prose and append the prefill on a fresh line so the player sees what was added. Tray pills are `disabled` while `game.isLoading`, and the toolbar carries `aria-disabled` so screen readers pick up the lockout.
+  - Tray is structurally hidden on the setup and ended layouts because the Composer itself is unmounted there (the ended layout swaps in `EndBanner.svelte`). No archived-state special-casing was needed.
+  - Tests: new `web/src/lib/common-actions.test.ts` (12 cases) covers null-state empty list, baseline ordering, inactive-encounter equality with no-encounter, combat-active append order, the prefill-only intent invariant, slash-vs-prose routing for known parser entries, and the four buffer-replacement branches (empty, whitespace-only, append-with-prose, trailing-whitespace collapse). `npm run check`, the full vitest suite (164 cases), and `npm run build` all green.
+- Decisions:
+  - `Check gear` deliberately maps to a prose turn (`I take stock of what I'm carrying.`) rather than a button that opens the Inspector. The folio rail already shows the raw inventory at all times — the *useful* shape of "check gear" is the planner's `inspect_inventory` op narrating the carried items, not a duplicate readout. Routing it through the planner also keeps it consistent with how the rest of the chat-first surface produces narration + memory + receipts.
+  - `Recover` and `Attack` are intentionally prose, not slash commands. There is no `/attack` or `/recover` parser entry today — F-11 tracks that work — and F-07 must not invent vocabulary the parser doesn't know about. Using prose lets the planner pick the right Cairn route (`attack` / `recovery`) the same way it does for typed input.
+  - Pills hide outside combat rather than greying out. A button that grey-flickers per turn reads as state churn; structural hide-on-context matches the chaos pip + receipt-strip vocabulary already on screen.
+  - The tray *appends* to typed prose instead of clobbering it. Silent buffer replacement on a misclick would feel hostile in a single-save chat-first app where the player has been editing a paragraph; the visible append + caret-at-end gives an obvious undo path (backspace).
+  - Manual verification: live Pinchtab `browser_fill` / `browser_type` are documented in `techContext.md` as not reliably triggering Svelte 5's `bind:value`, so the verification contract for click-to-prefill stays unit-tested. Real-keyboard manual smoke is the user's domain; the kanban entry calls out the active / combat / ended layouts to walk through.
+- Manual smoke checklist (active campaign, browser):
+  - Outside combat: tray shows exactly `Ask oracle / Random event / Scene check / Check gear`. Click each — Composer prefills with the expected text and the caret lands at the end of the inserted string. Sending each runs the corresponding turn (oracle/event/scene/`inspect_inventory` narration).
+  - In combat: tray now also shows `Attack / Recover / Retreat` after the four baseline pills. `Retreat` resolves through the existing `/retreat` slash path; `Attack` and `Recover` route through the planner.
+  - Append behavior: type `Then I` in the Composer, click `Attack` — the buffer becomes `Then I\nI attack ` (visible second line, caret at end).
+  - Lockout: while a request is in flight (`game.isLoading`), every tray pill is disabled and the toolbar is announced as `aria-disabled="true"`.
+  - Ended campaign: `/retire` or `/victory`, then confirm the Composer (and the whole tray with it) is unmounted in favor of `EndBanner`.
 
 ### F-08 Slash Suggestion Menu
-- Status: `backlog`
+- Status: `done`
 - Priority: `medium`
 - Goal: When the player types `/`, show suggested commands inline.
 - Why:
   Slash commands are acceptable as optional affordances, but they need to be discoverable.
-- Likely touch points:
-  - `web/src/lib/slash.ts`
-  - `web/src/components/Composer.svelte`
-  - `web/src/styles/app.css`
+- Final state:
+  Landed alongside the F-01 frontend pass and now extended by F-02. `web/src/lib/slash.ts` exposes a single `SLASH_COMMANDS` descriptor list (canonical name + aliases + summary + usage) shared by `/help` and the menu, plus `suggestSlashCommands(input)` for prefix matching against canonical names *and* aliases. `web/src/components/Composer.svelte` renders the dropdown above the textarea with Up/Down navigation, Tab/Enter completion, Esc dismissal, and accessibility wiring (`role="listbox"`, `aria-controls`, `aria-selected`). The menu auto-suppresses once an argument is being typed so it doesn't fight the player. F-02 added the four acquisition verbs as separate descriptors so each surfaces with its own fictional flavor.
 
 ### F-09 History Browsing
-- Status: `backlog`
+- Status: `done`
 - Priority: `medium`
 - Goal: Add a more usable long-session history browser.
 - Why:
   The user wants this, but it is likely a larger feature and not the first thing to tackle.
-- Candidate scope:
-  - searchable transcript
-  - scene/turn jump
-  - better oracle-history browsing
-- Likely touch points:
-  - `web/src/components/ChatFeed.svelte`
-  - `web/src/components/Inspector.svelte`
-  - `src/dungeon_master/state_store.py`
-  - `src/dungeon_master/api.py`
+- Final state:
+  - Frontend-only ticket: no backend / API additions. The full transcript already lived in `GameState.action_log` + `GameState.oracle_history` and the API already returned the whole thing per turn, so this pass turned the existing payload into a navigable surface rather than introducing a paginated history endpoint. Save-slot–aware history (cross-campaign browsing) stays an F-12 follow-up.
+  - `web/src/lib/history.ts` is a new pure helper module. `deriveTranscriptRows(state, notes)` mirrors the ChatFeed dedup rules (oracle events fold into receipts; narrative+player+system render as their own rows; opening DM beat synthesized when there are no narrative events yet; client notes interleaved by timestamp). `searchTranscript(rows, query, options)` is token-AND substring search across row text *and* outcome summaries (so "three of them" matches a receipt even when the prose doesn't say it), with a chronological order and a `limit` cap (default 50). `findNarrativeEventForOracle(state, outcomeId)` returns the most recent narrative event tied to an outcome (null when nothing committed yet, e.g. regenerate-cancel). `filterOracleHistory(history, filters)` AND-combines a free-text query (over summary, event-flavor fields, answer, scene status, and the Cairn target/weapon/scar text) with an `OracleKind` whitelist. Snippet building centers on the first matched token and emits explicit highlight offsets so the renderer doesn't re-search.
+  - `web/src/lib/store.svelte.ts` adds `scrollRequest: { eventId, seq } | null`, plus `requestScrollTo(eventId)` and `consumeScrollRequest()`. The seq counter rotates on every call so back-to-back requests for the same eventId still re-trigger the feed's scroll/flash effect. The store stays the single arbiter for cross-component navigation; the inspector emits requests, the chat feed consumes them.
+  - `web/src/components/ChatFeed.svelte` wraps each rendered message in an `.anchor` div with `data-event-id` (matches the synthesized `opening_<state-id>` for the very first DM beat too). Auto-follow is opt-out: a 120 px bottom band drives `pinnedToBottom`, and the auto-scroll on token arrival is gated on it. A floating "Jump to latest" pill shows whenever `pinnedToBottom === false`. Auto-follow uses *instant* scroll instead of smooth so a smooth-scroll mid-animation can't trip the threshold and stall token follow; smooth scroll is reserved for explicit jumps. A `$effect` watches `game.scrollRequest` (guarded by a consumed-seq variable so cross-cutting reactivity doesn't replay a stale jump), scrolls the matching anchor into view, applies a 1700 ms gold flash class, and clears the request.
+  - `web/src/components/Inspector.svelte` adds a "Transcript" Drawer with a search input + Clear, rendered hits (speaker pill, timestamp, snippet with `<mark>` around the matched substring, "matched in receipt" tag when the hit was on the outcome summary). The pre-existing "Oracle history" Drawer gains an inline filter strip — text input + a row of OracleKind toggle pills (`Yes/No / Event / Scene / Action / Save / Attack / Harm / Recover / Retreat`) — and each row pairs the existing MechanicalReceipt with a "Show in chat" pixel button that only renders when `findNarrativeEventForOracle` resolves. Both jump paths close the inspector after dispatching the scroll request because the player's goal at that point is to read the prose, not keep scanning history. Filter / search state lives on the Inspector instance so closing/reopening preserves it within a session.
+  - Tests: new `web/src/lib/history.test.ts` (19 cases) covers transcript-row derivation (opening synthesis vs suppression, oracle dedup, chronological sort with notes interleaved), `findNarrativeEventForOracle` (happy path, missing-narrative null, regenerate picks the latest), `searchTranscript` (empty/whitespace queries, case-insensitive text and receipt-summary matching, token-AND, notes opt-in, limit cap, snippet centering with highlight offsets), and `filterOracleHistory` (no-op when no filters, kind whitelist, free-text against summary + event flavor + Cairn target/weapon/scar text, AND of kind + query). `web/src/lib/store.test.ts` adds two cases for the new scroll signal: seq rotation on repeat calls, and `consumeScrollRequest` clearing. `npm run check`, the full vitest suite (183 cases), and `npm run build` all green.
+- Decisions:
+  - History browsing lives in the Inspector, not as a top-bar control on the chat. The chat surface stays pure forward-narration; "peek if curious" remains the inspector's job. Adding a permanent search bar above the chat would steal vertical space and conflict with the Composer for visual weight.
+  - Auto-follow resumes when the player scrolls back into the bottom band — same muscle memory as Discord/Slack. The alternative ("once unlatched, stay off until Jump-to-latest is clicked") is more rigid and punishes the common case where the player scrolled up by accident.
+  - Transcript search was scoped to the *current campaign* only. Cross-campaign / archive search is an F-12 (save slots) follow-up because there's no other-campaign payload to search yet. Scene/turn jump was deliberately skipped for this pass because scene-index data lives in the backend's `memory.json`, not in `GameState`; a clean implementation needs either an API surface for memory-derived scenes or a frontend approximation walked off the action log, neither of which was worth blocking the rest of F-09 on.
+  - Filter state (transcript query, oracle query, oracle kind set) is component-local on the Inspector. Hoisting to the store would force the same persistence question save slots will answer; for now, "filters survive close/reopen, not page reload" matches everything else in the inspector (chaos-pending, drawer open/closed) and avoids preempting F-12.
+  - Anchor IDs match `ChatFeed`'s rendered ids exactly, including the synthesized `opening_<state-id>`. Diverging would mean the inspector could surface a search hit on the opening beat and then fail to scroll to it — the helpers and the feed are wired to the same vocabulary.
+  - "Show in chat" only renders when a narrative event actually exists for the outcome (regenerate-cancel can leave outcomes orphaned). Greying out instead of hiding would invite the player to wonder why a row that visibly exists can't be jumped to; structural absence is the cleaner cue.
+- Manual smoke checklist (active campaign, browser):
+  - **Auto-follow:** scroll up in the chat by more than ~120 px; the Jump-to-latest pill should appear at the bottom-right. Continue typing a turn and watch the pill stay; click it and the feed should snap to the bottom and resume auto-following on the next streamed token.
+  - **Transcript search:** open Inspector → expand "Transcript". Type a name from the campaign (e.g. an NPC). Hits should list with speaker pill + timestamp + highlighted snippet; clicking a hit closes the inspector, scrolls the matching message into view, and triggers a 1.7 s gold flash on the row. Ensure the synthesized opening beat is reachable by searching a phrase from `current_scene` or `setting_notes`.
+  - **Oracle filter + jump:** open "Oracle history". Type into the filter (e.g. a weapon name). The list should narrow to matching rolls, and the kind pills should AND with the text query. Toggle one or two pills (e.g. `Harm`, `Yes/No`). Click "Show in chat" on a row whose receipt corresponds to a real narrative event — the inspector closes and the feed scrolls to + flashes the matching DM message.
+  - **Reduced motion:** with the OS's `prefers-reduced-motion` set, the flash should be a quiet dwell tint that fades, not an animation.
+  - **Ended campaign:** end the campaign via `/retire`. The Inspector remains read-only (chaos / notes locked), but the Transcript and Oracle-history surfaces still search and jump correctly through the now-immutable archive.
 
-### F-10 Onboarding / First-Turn Guidance
-- Status: `backlog`
+### B-01 Inspector UI Layout & Truncation Cleanup
+- Status: `done`
 - Priority: `medium`
-- Goal: Add lightweight onboarding once active play begins.
+- Goal: Fix aggressive text truncation, horizontal bleeding, and nested scrollbar crowding in the Inspector.
 - Why:
-  Setup is guided, but active play still assumes too much implicit knowledge.
-- Candidate scope:
-  - first-turn helper text
-  - explain chat vs slash commands
-  - explain inspector / receipts / stop / regenerate
-- Likely touch points:
-  - `web/src/App.svelte`
-  - `web/src/components/Composer.svelte`
-  - `web/src/components/StatusStrip.svelte`
-  - `web/src/lib/slash.ts`
+  The drawer layout currently line-clamps long descriptions too aggressively and allows text to bleed into/under the scrollbars.
+- Final state:
+  - Drawer (`web/src/components/Drawer.svelte`): pinned `flex-shrink: 0` on `.drawer` to stop drawers from being vertically squashed below the flap's `min-height` inside the inspector's flex column (this was silently clipping flap labels behind the next flap when 7+ drawers stacked). Added `scrollbar-gutter: stable` and bumped `.body` right padding from `0.75rem` → `0.85rem` so inner-scrolled drawers no longer crowd prose against the scrollbar. `overflow-wrap: anywhere` is a defensive fallback against unbreakable tokens (long ids, URLs in notes) forcing horizontal overflow.
+  - Inspector (`web/src/components/Inspector.svelte`): mirrored the scrollbar-gutter fix on the outer `.body`. **Lifted `.end` (footer with "Open save library" / "Reset this save") out of `.body`** and made it a flex sibling of the body inside `.inspector`. The previous design glued the footer to `.body` via `position: sticky; bottom: 0` and faded the bottom drawer behind a gradient — that always clipped the last drawer's flap or content under the buttons. The new layout has the body own the scroll surface exclusively while the footer sits beneath it as a visible band, matching the inspector's `display: flex; flex-direction: column` shell.
+  - NPCs panel (`web/src/components/NPCsPanel.svelte`): split the disposition out of the role's flex row and placed it in its own paragraph (`.disposition`) below the role chip. The `-webkit-line-clamp: 2` on `.muted` is gone so dispositions wrap freely; the long Theuas / Osyth dispositions now read end-to-end without forcing the player to hover for the title-tooltip, and the role chip line stays compact. The `<span class="dot">•</span>` is dropped because the disposition no longer shares a flow with role.
+  - Threads panel (`web/src/components/ThreadsPanel.svelte`): removed `-webkit-line-clamp: 3` on the stakes paragraph; same `overflow-wrap: anywhere` defensive rule. `title` attribute is preserved so AT users still get the full string on focus.
+  - Notes editor (`web/src/components/NotesEditor.svelte`): removed `-webkit-line-clamp: 4` on the preview paragraphs; added `white-space: pre-wrap` so player-typed paragraph breaks survive into the readonly preview. The drawer's own `overflow-y: auto` plus stable scrollbar gutter handles unusually long notes without truncation.
+- Decisions:
+  - The ticket text mentioned an "Epithet/Name left, Description right" dual-column NPC card, but `NPC` doesn't carry an `epithet` field — only `name`, `role`, `disposition`, `status`. We interpreted "give the description room to breathe" as the player wanting the disposition to wrap freely without a clamp, achieved by stacking it below the role chip rather than introducing a new column primitive.
+  - Line-clamp removal looks like it would explode drawer heights. It doesn't, because every drawer keeps its `maxHeight` cap and `overflow-y: auto` — the player can still scroll within a drawer if a panel grows. We left the existing `maxHeight` values untouched (Threads `11rem`, NPCs `10rem`, Notes `12rem`, Cairn build notes `12rem`, Transcript `16rem`, Oracle history `18rem`) because the right answer to "scrollbars aren't cramped" turned out to be `scrollbar-gutter: stable` + `flex-shrink: 0`, not larger drawers.
+  - We deliberately did **not** fix the folio character card's truncation on the chat-side rail (`The myrrh-reeking fratricide who drags…`); that's outside the inspector and belongs to a separate ticket if/when it surfaces.
+- Tests:
+  - Unit / type: `npm run check` (svelte-check 0 errors / 0 warnings) and `npm test -- --run` (all 192 vitest specs pass) cover the regression surface — none of these components had visual snapshot tests, but the helper modules they depend on (`npcs.ts`, `threads.ts`, `history.ts`) keep their dedicated suites green.
+  - Manual: opened the Inspector via Pinchtab on the live dev stack, confirmed each drawer flap renders its label (the previous flex-shrink bug had been silently hiding "Threads", "Notes", "Cairn build notes", "Transcript", and "Oracle history" labels under the next flap). Expanded NPCs, Notes, Cairn build notes — measured rendered bounding boxes (`browser_get_bounding_box`) to verify dispositions / preview / Cairn notes wrap to multiple lines (e.g. setting prose now ~157px tall = 8 lines, was clamped to 4) and right-edge content stays ~45px clear of the inspector edge (≈ inspector body padding-right + drawer body padding-right + scrollbar gutter).
+  - Footer: confirmed "Open save library" + "Reset this save" sit as a fixed band beneath the scrollable body and never overlap drawer content regardless of which drawers are open.
+
+### F-10 Out-of-Character Rules Explainer
+- Status: `done`
+- Priority: `medium`
+- Goal: Add an out-of-character (OOC) rules explainer so the player can ask about mechanics or recent events.
+- Why:
+  Active play assumes implicit knowledge of the app's specific Cairn-inspired mechanics. The player needs a way to ask "how does attack work here?" or "why did that say ambush?" without breaking the in-fiction narrative flow.
+- Final state:
+  - Backend: `src/dungeon_master/explainer.py` is a dedicated OOC engine with its own system prompt and an `IMPLEMENTED_MECHANICS_SUMMARY` so explanations are grounded in *this app's* Cairn-inspired rules instead of generic D&D. `GameService.explain(...)` / `stream_explain(...)` use a new `_load_state_readonly` path that performs in-memory migrations/backfills without ever writing to disk. `POST /api/explain` and `/api/explain/stream` are wired up; the streaming variant emits `final_payload` with `kind="explanation"` carrying `{answer}`, mirroring the quiz/draft setup channel rather than `final_state`. Tests (`tests/test_api.py`) cover unary, streamed, and an explicit no-mutation assertion that compares `game_state.json` and `memory.json` mtimes/contents before and after an `/api/explain` call.
+  - Frontend: `/explain <question>` slash command (no aliases) with empty-body parser-level rejection; the suggestion menu surfaces it as a discoverable descriptor distinct from `/help`. `web/src/lib/api.ts` exposes `streamExplain` and a unary `explain` fallback (the latter runs only when streaming 404s during the backend transition window). Store wires `/explain` to `#runStreamingPayload<string>` with `finalKind: "explanation"`, persists the answer + the player's verbatim question as a single `ClientNote` of kind `"explanation"`, and routes the streamed deltas through the existing `streaming.{content,thinking}` buffer so the chat surface gets live tokens. `ChatMessage.svelte` adds an `ooc` speaker variant ("OOC · Archivist") with a verdigris rail and an optional `Q:` row above the answer body; `ChatFeed.svelte` branches the provisional bubble on `streaming.route === "explanation"` to render the OOC styling instead of the default DM bubble. `history.ts` folds question+answer into a single searchable transcript row (kind `system`, `isNote: true`) so OOC traffic is searchable but stays flagged as ephemeral.
+- Decisions:
+  - The OOC explainer is **non-canonical by contract**. It does not mutate `action_log`, write to `memory.json`, or feed back into future memory rebuilds. We deliberately route `/explain` through a dedicated `explain()` method instead of `submitTurn`/the planner so there is no possibility of the exchange leaking into canon. Manually verified end-to-end: `data/game_state.json` mtime is unchanged after a successful `/explain` round-trip, and `action_log` length stays identical.
+  - We render the OOC answer as a single Q+A card (with the player's verbatim question on the same `ClientNote`) rather than as two separate bubbles. Splitting them would make the chat feed look chatty and make it harder to skim back through OOC traffic; pairing them on one record also keeps reload-clears-OOC trivially correct.
+  - The explainer's `thinking_delta` events flow through the same collapsed-thinking block DM bubbles use. This is fine because the trace is ephemeral too — peeking at it doesn't break the no-mutation contract, and disabling it would have meant a separate streaming surface for OOC.
+  - We keep `/help` and `/explain` as separate descriptors. `/help` is the static command-list reference; `/explain` is a live, state-aware LLM-backed answer. Players reach for them in different mental modes; collapsing them would force one surface to do both jobs poorly.
 
 ## Later
 
 ### F-11 Optional Explicit Cairn Commands / Controls
-- Status: `later`
+- Status: `skipped`
 - Priority: `low`
 - Goal: Surface attack/harm/recover/equip as optional slash commands or UI controls.
 - Why:
   Useful as backup/discoverability, but not required as the main intended mechanism.
 - Note:
-  This should stay secondary to the LLM free-text flow.
+  This is now explicitly skipped. The project direction favors chat-first affordances that preserve player authorship and let the planner/router interpret intent, rather than adding a parallel explicit-controls layer for core Cairn actions.
+  If we revisit this area, it should be by re-framing the ticket into a chat-native aid (similar to how F-10 evolved into the OOC rules explainer), not by adding attack/harm/recover/equip buttons or slash verbs.
 
 ### F-12 Save Slots / Multiple Campaigns
+- Status: `done`
+- Priority: `low`
+- Goal: Support multiple campaigns / characters without manual file handling.
+- Why:
+  Resolves the F-06 archive-loss risk: ended campaigns now live on a real shelf rather than being overwritten by the next "reset". Also lets the player run multiple wanderers in parallel.
+- Final state:
+  - **Backend** (already landed): `src/dungeon_master/save_library.py` introduces a `SaveLibrary` that manages a `data/library.json` manifest plus per-save directories under `data/saves/<save_id>/`, each preserving the existing `StateStore` layout (`game_state.json`, `events.jsonl`, `memory.json`, `checkpoints/`, `turn-checkpoints/`). App startup auto-migrates the legacy flat `data/` layout into the first save slot, derives character-facing card summaries (`name`, `epithet`, identifying line, hover summary) from the real `GameState`, and exposes `GET /api/library/bootstrap`, `POST /api/library/saves`, `POST /api/library/select`. Backend stays single-active-save for v1: gameplay routes operate on one bound `GameService` and `service.bind_store` rebinds the active store on selection. Switching is blocked while any streamed request is registered in the cancellation registry so discard-only cancel semantics stay intact. Tests in `tests/test_save_library.py` and the integration tests in `tests/test_api.py`.
+  - **Frontend**: `web/src/lib/store.svelte.ts` now drives a `LibraryStatus` union (`loading | empty | selecting | ready`) plus `library: SaveSummary[]`, `activeSaveId`, `libraryError`, with `bootstrap()` / `createSave()` / `selectSave()` / `openLibrary()` / `closeLibrary()` methods and a `#resetEphemera()` helper that wipes per-save client buffers (notes, scroll request, provisional streaming, dice phase) on every switch. `web/src/lib/types.ts` mirrors `SaveSummary` and `SaveLibraryBootstrapResponse`; `web/src/lib/api.ts` exposes `bootstrapLibrary` / `createSave` / `selectSave`.
+  - `web/src/components/SaveLibrary.svelte` is the new shelf splash. It does double duty: an "empty shelf" frontispiece with a single "Begin a new campaign" CTA when there are no saves, and a card-grid selector when invoked mid-session. Cards are parchment-deckle, render the character's name + epithet + identifying line, mark the bound save with a "Bound" pip + brighter rail, and unfold a "Now …" hover/focus row pulling `state_summary` from the backend (scene number, encounter status, or "Ended by death/retirement/victory."). Switching is the click target on the whole tile; ended saves get a rust-iron rail so the lifecycle status reads at a glance.
+  - `web/src/components/SystemMenu.svelte` is a hamburger dropdown that lives on the top-right of the StatusStrip (and on the skeleton strip during character creation, so a fresh new-save isn't a one-way trapdoor). It exposes `Save library`, `Switch save` (only when more than one save exists), and `Begin a new campaign`. Click-outside / Escape close behavior is wired through a window-level pointerdown listener that only activates while the panel is open.
+  - `web/src/App.svelte` boots through `game.bootstrap()` instead of `refresh()` and routes the layout through a new exhaustive union (`loading | library-empty | library-selecting | setup | active | ended`). The library splashes own the screen until resolved; setup/active/ended remain unchanged behind them.
+  - `web/src/components/EndBanner.svelte` no longer wipes the active save: its CTA now calls `game.createSave(true)`, which adds a fresh tome and binds it as active while preserving the closed archive on the shelf. Copy and a new "Open save library" ghost button reflect the shift.
+  - `web/src/components/Inspector.svelte` splits the old single "Reset / Replace archive" footer into a non-destructive "Open save library" and an explicitly destructive "Reset this save" / "Wipe and re-roll this save" with rust-iron styling so the in-place wipe is clearly the dangerous option.
+  - Verification: `npm run check`, the full vitest suite (192 cases), and `npm run build` are all green. Live HTTP smoke confirmed: bootstrap auto-loads Vrtanes, the system menu's "Begin a new campaign" creates `save_039f5b3adf54` next to the existing `save_d1f2c1ffa6ee` and switches into character creation without touching Vrtanes' canon, the splash's "Switch save" returns to Vrtanes with chat history / character folio / mechanics intact, and `data/library.json` reflects the active-save flips correctly.
+- Decisions:
+  - **Slots-only, no branching/forking for v1.** The data layout (`data/saves/<save_id>/` with the existing `StateStore` shape) is already compatible with future branch checkpointing, but the UI and store stay flat to keep the model legible.
+  - **Auto-load on startup** mirrors the user-requested behavior: if `bootstrapLibrary` returns an `active_save_id`, the frontend immediately calls `/state` and transitions to `ready`. The empty-shelf splash is reachable only when the manifest has no saves at all.
+  - **Single source of truth for ephemera reset.** `#resetEphemera()` is called from both `createSave` and `selectSave` so a switch is atomic — the new save's state is the only thing the chat surface reads, with no stale OOC notes / mid-stream artifacts / scroll requests bleeding across.
+  - **Switch is refused with 409 while a stream is in flight.** The frontend surfaces the backend's exact error string in `libraryError` rather than auto-cancelling the player's turn. "Hit Stop first" is the cleaner contract.
+  - **No save deletion in v1.** Destructive on-disk ops with archive policy decisions are out of scope. The Inspector's "Reset this save" still exists as the only way to wipe a single save in place — useful for re-rolling an opening you don't like without growing the shelf.
+  - **System menu lives in the skeleton strip too.** During character creation the play-time StatusStrip is unmounted, so without this the player would have no escape from a fresh save until they finalized a sheet.
+
+### F-15 Campaign Setting Seed
+- Status: `backlog`
+- Priority: `medium`
+- Goal: Let the player describe the desired setting/tone *before* a new campaign is generated, instead of every new save defaulting to oppressive medieval dark fantasy.
+- Why:
+  The current build hardcodes "oppressive medieval dark fantasy, adjacent to Berserk / Dark Souls / Fear & Hunger" into character generation, encounter seeding, the campaign opening, and the narrator's tone block. That works for one mood but not for noble-bright high fantasy, sword & sorcery, gothic horror, weird fiction, post-apocalyptic, science fantasy, mythic, hearth-and-homestead, etc. Any future campaign that doesn't want the grimdark vibe currently has no clean way in. F-12 makes this much more visible than it was — the save library invites running multiple campaigns in parallel, and right now they would all be near-tonal-clones of each other regardless of the character concept.
+- Out-of-scope alignment note:
+  Cairn 2e (and Cairn 1e) do not use D&D-style alignment (`lawful/chaotic`, `good/evil`). Characters are defined by background / traits / bonds / omens, not a moral grid. So this ticket is explicitly **tonal/setting prompt seeding**, not "add alignment to the sheet". We should not introduce an alignment field as part of this ticket.
+- Field shape (proposed — refine before implementation):
+  - `time_period` — picker: `bronze_age | classical_antiquity | early_medieval | high_medieval | renaissance | early_modern | industrial | modern | near_future | far_future | post_apocalyptic | mythic_timeless`. Default `high_medieval`.
+  - `tone_grim_noble` — slider/discrete: `grim | mixed | noble`. Grim = the world doesn't want you to win; noble = heroism is genuinely possible. (Famous "fantasy four" axis #1.)
+  - `tone_dark_bright` — slider/discrete: `dark | mixed | bright`. Dark = oppressive imagery + hopeless mood; bright = wonder, hope, beauty. (Famous "fantasy four" axis #2; orthogonal to grim/noble.)
+  - `genre` — multi-select tag set: `high_fantasy | low_fantasy | sword_and_sorcery | dark_fantasy | gothic_horror | cosmic_horror | weird_fiction | fairy_tale | mythic | post_apocalyptic | science_fantasy | historical_fantasy | urban_fantasy | hearth_and_homestead`. At most 2-3 to avoid prompt soup.
+  - `magic_level` — `none | rare_numinous | common | ubiquitous`. Default `rare_numinous`.
+  - `tech_level` — `stone | iron | medieval | renaissance | industrial | modern | spacefaring`. Defaults follow `time_period` so the player only overrides when desired (e.g. medieval setting + lost spacefaring ruins).
+  - `stakes_scale` — `personal_local | regional | civilizational | cosmic`. Default `regional`.
+  - `inspirations` — short free-text (≤ 3 lines). Examples: "Berserk + Dark Souls + Fear & Hunger" (the current default), "Princess Mononoke + Ghibli", "Hyperion + Dune", "The Fisherman by John Langan". Backend lifts these into the prompt direction block but explicitly forbids copying named characters/locations/factions/lore.
+  - `restrictions` — short free-text (≤ 3 lines). Examples: "no modern slang", "no harm to children", "no sexual violence". Surfaced verbatim into the narrator and character generators' system prompts.
+  - `presets` — at minimum: `Oppressive Dark Fantasy` (current default), `High Fantasy`, `Sword & Sorcery`, `Gothic Horror`, `Cosmic Horror / Weird`, `Mythic & Folkloric`, `Post-Apocalyptic`, `Science Fantasy`, `Hearth & Homestead`. Picking a preset prefills the structured fields; the player can then tweak any one.
+- Backend scope:
+  - Add a `CampaignSeed` Pydantic model and persist it on `GameState` (so it survives reloads, regenerate, and memory rebuilds). Migration: existing saves get a default seed matching today's hardcoded "Oppressive Dark Fantasy" so Vrtanes' canon is bit-for-bit unchanged.
+  - Introduce a single `render_creative_direction(seed) -> str` helper. Replace every hardcoded "dark fantasy" / "Berserk · Dark Souls · Fear & Hunger" reference in the prompt corpus with a call to that helper. The hardcoded constant `SETTING_DIRECTION` in `campaign.py` becomes the helper's output for the default preset, not a literal string.
+  - Audit and rewrite the prompts that currently bake in the tone:
+    - `campaign.py::SETTING_DIRECTION`
+    - `campaign.py::CHARACTER_SYSTEM_PROMPT` (templates / scratch / quizzed all key off it)
+    - `campaign.py::CHARACTER_TEMPLATES_USER_PROMPT` ("archetypal dark-fantasy role" in the schema body)
+    - `campaign.py::DRAFT_SCRATCH_PROMPT`, `DRAFT_TEMPLATE_PROMPT`, `DRAFT_QUIZZED_USER_PROMPT_TEMPLATE`
+    - `campaign.py::CAMPAIGN_SYSTEM_PROMPT`
+    - `cairn.py::CAIRN_BACKFILL_SYSTEM_PROMPT` ("dark-fantasy character")
+    - `cairn.py::CAIRN_ENCOUNTER_SYSTEM_PROMPT` ("dark-fantasy scene")
+    - `narrative.py` narrator system prompt's `Tone:` block
+    - The character archetype examples in `CHARACTER_SYSTEM_PROMPT` ("scarred pilgrims, failed squires, gutter mystics, ...") are also tone-locked. Either move them behind preset-specific archetype banks, or make them seed-derived ("3-6 archetypal survivors of *this* setting/tone").
+  - The narrator's prompt should re-include the rendered direction block on every turn. It's small (~10-20 lines) and it's the cheapest way to keep tonal drift bounded across a long campaign without the planner ever needing to see the seed.
+  - `MemoryManager` does not need changes — memory is rebuilt from canon and the seed lives on `GameState`, not on memory cards.
+- Frontend scope:
+  - New step in the "Begin a new campaign" flow that comes **before** character creation. This is where the player picks the preset, tweaks fields, and writes inspirations / restrictions. Submitting the step persists the seed on the new save and then flows into the existing character setup pipeline (templates / scratch / assist) — those character-generation calls now already see the seed, so the templates already feel right for the chosen tone.
+  - Surface the seed elsewhere as a small read-only summary:
+    - `SaveLibrary.svelte` cards: a one-line genre/era badge under the kicker (e.g. `High Fantasy · Renaissance` or `Dark Fantasy · Medieval`). Helps the player tell parallel saves apart at a glance.
+    - `Inspector.svelte`: a collapsed "Setting seed" drawer that shows the chosen fields verbatim, useful for OOC reminders or for re-using as a screenshot recipe for a future save.
+  - Save library splash (empty-shelf mode) should pre-select the same default preset so an "I just want to play" first-run still produces the current default vibe without any clicks.
+  - Slash command `/explain how was this setting picked?` should round-trip through the existing OOC explainer with the seed surfaced in its readonly state context — this is free once the seed lives on `GameState`.
+- Decisions to lock down before implementation:
+  - **Locked or live?** v1 should *lock* the seed at campaign creation. Mid-campaign tonal swaps would silently reshape character templates / encounter seeds / narrator voice and create archive incoherence. A future ticket can add an "amend setting seed" affordance if it ever feels worth the complexity.
+  - **Free-text vs structured.** The user asked for "a few fields" — we should go structured for the dominant axes (era, grim/noble, dark/bright, genre, magic, tech, scale) and leave inspirations + restrictions as the only free-text slots. Pure free-text would re-create the prompt-engineering cliff for every player.
+  - **Forbidden imitation.** Inspirations are *flavor*, not a license to copy. The rendered direction block should always include a hard "no copied characters, locations, factions, or named lore from those works" line, exactly like the current `SETTING_DIRECTION` constant does.
+  - **Default preset name.** The current vibe is `Oppressive Dark Fantasy`. Worth confirming with the user — they may prefer a more neutral starter default (e.g. "High Fantasy") so first-time runs feel less monochromatic.
+- Risk note:
+  This is a moderately heavy lift (touches 4 backend prompt files + 1 narrator file + 2-3 new frontend components + a state-shape migration), but the cost is mostly *audit*, not new architecture. The save library + per-save persistence from F-12 already gives us the right place to put the seed. The lift is worth it because every other future campaign-flavor ticket (alternate magic systems, hard-sci-fi mode, fairy-tale mode) already wants this primitive.
+
+### F-16 Introduced-Only NPC Roster / Hidden Cast
+- Status: `done`
+- Priority: `high`
+- Goal: Make the player-visible NPC roster reflect only people who have actually entered the story, while still letting the backend track hidden/revealed cast state canonically.
+- Why:
+  The current contract exposes opener-seeded NPCs directly in the Inspector from turn 0, even when the narration has not introduced them yet. That feels spoiler-y and confusing ("who are these two people and why are they on my roster?"). The inverse failure also exists: a dominant recurring antagonist can appear repeatedly in narration and still fail to become a tracked NPC if the updater never promotes them. The player-visible roster should therefore be an **introduced cast**, not a dump of every backend-authored character idea.
+- Desired final state:
+  - Backend canonical NPC tracking becomes **visibility-aware**. An NPC can exist in canon before the player sees them, but the Inspector must only render NPCs whose existence has been introduced through committed narration / observation / direct encounter. Hidden NPCs remain available to the game system as continuity anchors, foreshadowed movers, or pre-authored campaign structure, but they are not visible to the player.
+  - Campaign generation may still author "secret" key NPCs if that improves long-arc coherence, but those NPCs must be persisted as hidden by default rather than immediately appearing in the visible roster.
+  - The updater should be more aggressive about promoting **named recurring antagonists and interlocutors in committed narration** into canonical NPC records. If the player is repeatedly speaking to / being hunted by / fighting a named person, that person should not remain absent from the roster just because the opener seed happened to contain somebody else.
+  - The Inspector's NPC drawer becomes explicitly "people you know about" rather than "all backend-authored cast records". Introduced retired NPCs may remain visible in a sunken/archived form, but hidden NPCs never render there.
+  - The memory sidecar may continue tracking both hidden and introduced NPCs if needed for backend continuity; the important split is **backend memory visibility != player-visible roster visibility**.
+- Candidate backend scope:
+  - Extend `NPC` (or an adjacent metadata shape) with a visibility field such as `hidden | introduced`, separate from lifecycle `status` (`active | retired`). Do **not** overload `retired` to mean "not yet seen" — those are different ideas.
+  - Adjust campaign bootstrap so generated NPCs start hidden unless the opening scene/current narration explicitly surfaces them.
+  - Teach the NPC updater to manage both **existence** and **reveal state**: `create hidden`, `introduce existing`, `update`, `retire`. The exact op vocabulary can stay small (e.g. `create`, `update`, `retire`, with an explicit `visible_to_player` boolean), but the resulting canon must preserve the hidden/introduced distinction.
+  - Add a post-narration or narration-aware pass that can auto-introduce NPCs when the final committed prose explicitly presents them to the player. This avoids the failure mode where the backend "knows" about a character but forgets to flip them visible after the narration lands.
+  - Strengthen promotion heuristics for recurring named figures: the hierophant-who-wears-your-face case should become a tracked NPC quickly even if the opener seeded different background cast.
+- Candidate frontend scope:
+  - `NPCsPanel.svelte` should render only introduced NPCs. If none are introduced yet, the empty state should read like "No known recurring figures yet" rather than implying the world is NPC-free.
+  - Optional future affordance: a subtle distinction between "currently relevant / in play" and "known but off-stage" once the hidden/introduced split exists, but that is secondary to fixing spoilers.
+- Decisions:
+  - The player-visible NPC panel is **not** a GM notebook or omniscient cast list. It is the roster of people the character actually knows or has materially encountered.
+  - "Record all NPCs no matter how small" is acceptable on the backend side, but it must not imply "show all NPCs to the player." The system may track tiny or hidden figures canonically for coherence without surfacing them.
+  - Existing saves are messy. For old campaigns we may accept imperfect migration (or even preserve the visible-spoiler state) rather than risk hiding currently-known characters incorrectly. The real target is future saves; the user explicitly accepts that this run may stay a bit spoiled.
+- Final state:
+  - Backend (recap): `GameState` carries `hidden_npcs` plus `npc_roster_version`; campaign bootstrap seeds opener NPCs into `hidden_npcs` instead of the visible `npcs` list, so fresh campaigns start with an empty visible roster. `NPCUpdater` can create/update/retire NPCs with a `player_visible` flag, and `GameService` runs a deterministic exact-name post-narration reveal step that moves a hidden NPC into the visible roster if the committed prose explicitly names them. A one-time legacy repair path runs on load for pre-F-16 saves, reseeding the visible/hidden split and persisting `npc_roster_version=2`. The Vrtanes save now loads with `visible [] / hidden ['Osyth', 'Theuas']` instead of showing the opener-seeded spoiler roster immediately.
+  - Frontend: `web/src/lib/types.ts` mirrors the new `hidden_npcs: NPC[]` + `npc_roster_version: number` fields on `GameState`. `NPCsPanel.svelte` updates its component doc to spell out the introduced-only contract (visible roster only; backend may still track a hidden cast on `state.hidden_npcs`, never displayed) and replaces the empty-state copy from the factual `"No NPCs in scene."` to `"No known recurring figures yet."` so an empty roster reads as "you haven't met anyone yet" rather than "the world is empty." No new affordance for known-but-offstage vs active was added — that was deliberately deferred per the kanban entry; the spoiler bug is the priority and the existing sort/pulse/retired-mute layered cues already carry recency.
+- Decisions:
+  - The player-visible NPC panel is **not** a GM notebook or omniscient cast list. It is the roster of people the character has actually been introduced to in committed narration. Hidden NPCs remain in `state.hidden_npcs` for backend continuity but are deliberately never rendered.
+  - The empty-state copy was rewritten because the literal "No NPCs in scene." wording read as a factual claim about the world rather than a UX hint; the new copy ("No known recurring figures yet.") matches the introduced-only mental model.
+  - Existing saves were one-time reseeded into the new contract on load; the legacy spoiler roster on the live Vrtanes save is gone without rolling the campaign back.
+
+### B-02 Reframe Notes As Campaign Directives
+- Status: `done`
+- Priority: `medium`
+- Goal: Reframe the current `Notes` drawer away from a vague freeform editor and toward a clearly-scoped persistent OOC steering surface.
+- Why:
+  The current `Setting` / `Player` notes editor works mechanically, but "Edit notes" reads like a generic scratchpad. The user does **not** want to feel pushed into constantly editing freeform notes during play; the only compelling use-case is stable per-campaign guidance such as "the hierophant cannot speak first" or other persistent, non-canonical OOC constraints. If the surface remains, its job should be obvious: durable campaign directives / prompt steering, not casual journaling.
+- Candidate scope:
+  - Rename/relabel the surface (`Campaign directives`, `GM guidance`, `Persistent guidance`, or similar) so it reads as an advanced OOC steering tool rather than a notebook.
+  - Add explanatory copy clarifying that these fields are persistent per-campaign guidance fed into future generation, not canonical action-log events.
+  - Consider whether both current fields (`setting_notes`, `player_notes`) remain the right mental model, or whether the UI should present them as "world guidance" vs "player intention / constraints".
+  - Keep the surface optional and somewhat tucked away; it should not become a required "prompt-engineering" chore before the game behaves.
+- Decision:
+  - If this surface exists, it should function as a **persistent per-campaign system-prompt proxy / OOC directive layer**, not as an ordinary text editor the player is expected to micromanage every session.
+- Final state:
+  - Backend (recap): `GameState` carries a dedicated `CampaignDirectives` model (`world_guidance`, `play_guidance`) separate from `setting_notes` / `player_notes`, and FastAPI exposes `POST /api/state/directives`. `GameService.update_directives(...)` persists that OOC steering layer without appending a visible `action_log` system event because directives are durable prompt guidance rather than transcript-worthy canon. The narrator, Cairn backfill/acquisition/encounter prompts, the NPC updater, and the OOC explainer all receive directives when present.
+  - Frontend: `web/src/lib/types.ts` mirrors the `CampaignDirectives` interface and the new required `directives: CampaignDirectives` field on `GameState`. `web/src/lib/api.ts` exposes `updateDirectives(world_guidance, play_guidance)` against `POST /api/state/directives`. `web/src/lib/store.svelte.ts` adds `updateDirectives(world, play)` action wrapping that call through the same `#run` plumbing every other state mutation uses, so the loading shimmer / cancel button behavior is uniform. `web/src/components/DirectivesEditor.svelte` is the new edit surface — a closed-by-default Inspector drawer with explicit OOC framing copy ("Out-of-character · persistent. Durable steering the system remembers across turns. Not narrated, not part of the story log…") above two labeled textareas (`World guidance`, `Play guidance`) with per-field hint copy and Save / Cancel buttons. Empty fields are legal; the read-mode renders a neutral "No directives set." hint with an `Add directives` affordance, while populated directives render as `kicker · prose` sections matching the rest of the inspector's typographic rhythm. The archived branch (campaign ended) renders the same kicker/prose pair as static archive prose without an edit affordance, mirroring the pattern the chaos / notes drawers already use for terminal campaigns. `web/src/components/Inspector.svelte` swaps the old `Notes` Drawer for `Directives` (`maxHeight: 14rem` so the two textareas fit without scroll-jitter inside the drawer body), and the now-unused `notes-archive` / `notes-body` CSS rules were deleted along with `NotesEditor.svelte` itself. `setting_notes` and `player_notes` remain canonical campaign material on the wire and feed prompts unchanged on the backend; they are simply no longer surfaced as an editable Inspector control because the user's intent is "this surface should be the OOC system-prompt proxy, not a generic journal."
+  - Tests: `web/src/lib/store.test.ts` adds `updateDirectives forwards both fields … and adopts the echoed state` (asserts `api.updateDirectives` is called with the new strings, `api.updateNotes` is *not* called, and the returned state replaces the store `state` wholesale). The `GameState` factories in `web/src/lib/{history,threads,npcs,end-campaign}.test.ts` were widened to include `npc_roster_version: 2`, `directives: { world_guidance: "", play_guidance: "" }`, and `hidden_npcs: []` so the suite continues to type-check after the new required fields landed. `npm run check` (svelte-check) is clean, the full Vitest suite is green at 193/193, and the production Vite build succeeds. Live HTTP smoke against the running backend confirms `POST /api/state/directives` round-trips both setting and clearing values, and that mutating directives does **not** append any system event to `action_log` (the contract for "OOC steering, not transcript canon").
+- Decisions:
+  - The directives surface deliberately replaces the old Notes editor rather than living alongside it. Surfacing both would re-create the original conceptual muddle (canonical campaign material vs OOC steering) the user explicitly flagged. `setting_notes` / `player_notes` remain as readonly backend canon; if a future feature wants to surface them as a "campaign canon" reference drawer, that can be a separate addition.
+  - Empty strings are legal on the wire and in the store. "Clear my guidance" is a single round-trip, and the editor renders a neutral hint rather than an error state when both fields are blank.
+  - The drawer height is capped at 14rem (vs 12rem for the old notes drawer) because the directives editor carries an explicit intro paragraph + two labeled textareas with per-field hints; the slightly taller cap keeps the "Save directives" button in view without scrolling within the drawer body.
+
+### F-11R Contextual Explain-This Hooks
 - Status: `later`
 - Priority: `low`
-- Goal: Support multiple campaigns / branches / characters without manual file handling.
+- Goal: Add chat-native one-tap OOC explainer hooks on existing mechanics surfaces.
 - Why:
-  Nice even for solo use, but explicitly deprioritized for now.
+  `F-11` as explicit attack/harm/recover/equip controls was skipped because it duplicated the planner-driven chat flow. The more useful reinterpretation is to help the player understand what the system just did without introducing a parallel action UI.
+- Candidate scope:
+  - Add small `Explain this` affordances on mechanical receipts, combat tracker rows, inventory/burden readouts, and other rules-heavy surfaces.
+  - Clicking a hook should pre-seed `/explain ...` with contextual state, not create canonical events.
+  - Answers remain ephemeral/non-canonical and reuse the existing F-10 OOC explainer pipeline.
+- Note:
+  This is the preferred “salvage” direction for the old F-11 area. If revisited, it should stay firmly chat-native and explanatory rather than becoming an explicit combat-controls layer.
 
 ## Tabled
 
@@ -195,4 +377,12 @@
 
 ## Done
 
-- None yet. Move tickets here only after they land and are verified.
+- **F-01 Retreat / Disengage** — full backend resolution path (DEX save + pursuit roll, `caught | disengaged | escaped` outcomes, `/api/cairn/retreat` route) plus the `/retreat`/`/flee`/`/disengage` slash with a contextual hint in the combat tracker. Funnels through the normal turn pipeline so narration + memory + receipts run uniformly.
+- **F-02 Inventory Progression** — full backend (`acquire_item` planner op, LLM-validated `InventoryItem`s with full Cairn semantics, burden + primary-weapon recomputation, `/api/cairn/acquire` route) plus the `/acquire`/`/gain`/`/loot`/`/take`/`/buy`/`/purchase` slash family. Each verb keeps its own fictional flavor end-to-end. No separate currency ledger.
+- **F-03 Dynamic Thread Updates** — full backend (`ThreadUpdater` module running pre-checkpoint with a bounded `create | update | resolve` op batch, plural `referenced_thread_ids` linkage, memory rebuilds aware of plural touched ids) plus the frontend reference pass (`recentlyTouchedThreadIds` + `sortThreadsForDisplay` helpers, threads panel sort + gold rail + one-shot pulse + Alagard `advanced` pip, inspector wiring). Read-only surface; threads still evolve only through the game pipeline.
+- **F-04 Dynamic NPC Updates** — full backend (`NPCUpdater` module running pre-checkpoint with a bounded `create | update | retire` op batch, `NPCStatus` + plural `referenced_npc_ids` linkage, memory rebuilds with status-aware `NPCMemory` and dedicated retrieval context) plus the frontend reference pass (`recentlyTouchedNpcIds` + `sortNpcsForDisplay` helpers, NPCs panel sort + status pill + gold rail + one-shot pulse + Alagard `advanced` / `newly retired` pip, inspector wiring). Retired NPCs are sunk and muted, never deleted. Read-only surface; NPCs still evolve only through the game pipeline.
+- **F-05 Enemy-First / Ambush Combat** — backend adds minimal encounter-opener metadata (`EncounterInitiator` on `EncounterState` / `CairnResolution`), a dedicated `resolve_enemy_opener(...)` Cairn path that seeds a real encounter from a hostile opener and advances it into round 2, and an internal planner op (`enemy_opener`) that still preserves the public `harm` route/outcome. Frontend reference pass mirrors the new fields, threads `initiator` through the combat adapter, adds `enemyInitiated` / `isAmbushOpener` / `formatCombatInitiator` helpers, surfaces a layered ambush cue (status-strip kicker swap + rust-blood tint, tracker `Ambush` flag, receipt strip tag swap + rail color, harm headline rewritten as `Ambush · …`, Cairn dl `Initiative` row). No new public API route or outcome kind.
+- **F-06 Campaign End / Death / Retirement Flow** — backend adds `CampaignStatus.ENDED` + `CampaignEndReason` (`death | retirement | victory`) + terminal metadata on `GameState`, a single `end_campaign(...)` service path for explicit retirement/victory, an auto-death finalizer wired into the turn commit pipeline, an `_ensure_active` guard that 409s every mutating route once ended, a legacy-save sync that migrates `active + dead` into `ended + death` on load, and a `POST /api/campaign/end` route. Frontend reference pass mirrors the new types, adds `endCampaign(...)` to the api/store, parses `/retire` and `/victory` (with optional player-authored summaries) and routes them straight to the lifecycle endpoint bypassing the planner, adds a pure `end-campaign.ts` helper module for kicker/headline/summary/timestamp formatting, replaces the Composer with a read-only `EndBanner.svelte` in the ended branch, makes the Inspector read-only when archived (chaos disabled, notes shown as static prose, reset rephrased as "Replace archive"), and slightly desaturates `app__main--ended` so the lifecycle shift reads even before the banner copy. Tests: new `end-campaign.test.ts`, slash + store coverage for the new commands, fixture widening in threads/npcs, `npm run check` + 152 vitest cases + production build all green; live LLM-backed manual smoke deferred to organic play.
+- **F-07 Common Actions Tray** — frontend-only discoverability layer in the Composer. New `web/src/lib/common-actions.ts` (pure helper for visibility / ordering / buffer-replacement) plus a tray strip rendered in `Composer.svelte` between the textarea and the send row. Always shows `Ask oracle`, `Random event`, `Scene check`, `Check gear`; in combat also shows `Attack`, `Recover`, `Retreat`. Click prefills the Composer (no auto-submit), with caret-at-end-of-inserted-text and an "append on a fresh line" rule that preserves typed prose. Disabled while loading; structurally absent in setup/ended layouts because the Composer itself is unmounted there. 12 new vitest cases; full suite 164 green; svelte-check + build green.
+- **F-08 Slash Suggestion Menu** — single `SLASH_COMMANDS` descriptor list shared by `/help` and the inline dropdown, with keyboard navigation, alias matching, and a11y wiring; F-02 extended it with the acquisition verbs.
+- **F-09 History Browsing** — frontend-only navigability layer over the existing `GameState` payload. New `web/src/lib/history.ts` (pure derivation + token-AND search across transcript rows and oracle outcomes, plus oracle-to-narrative event linking) drives a new "Transcript" Drawer in the Inspector and an inline filter strip (text + OracleKind pills) on "Oracle history". `ChatFeed.svelte` gains stable `data-event-id` anchors, opt-out auto-follow with a 120 px bottom band, a floating "Jump to latest" pill, and a 1.7 s gold flash on cross-component scroll targets. `store.svelte.ts` exposes `requestScrollTo` / `consumeScrollRequest` so the inspector can command the feed to scroll an event into view (with a rotating seq so repeat clicks on the same event still flash). 19 new vitest cases + 2 store cases; full suite 183 green; svelte-check + build green. Cross-campaign archive search is deferred to F-12; scene/turn jump deferred until backend exposes scene-index data from `memory.json`.

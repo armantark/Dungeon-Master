@@ -180,6 +180,36 @@ def test_narrative_prompt_includes_bounded_memory_context() -> None:
     assert "The abbey yard is wet with ash." in user_prompt
 
 
+def test_narrative_prompt_includes_campaign_directives_when_present() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.directives.world_guidance = "Keep miracles subtle and costly."
+    state.directives.play_guidance = "The hierophant cannot speak first."
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(
+            model=DEFAULT_MODEL,
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            reasoning_policy="auto",
+            exclude_reasoning=True,
+        ),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "I wait for the hierophant to answer.")
+
+    assert completion.messages is not None
+    user_prompt = completion.messages[1]["content"]
+    assert "Campaign directives:" in user_prompt
+    assert "Keep miracles subtle and costly." in user_prompt
+    assert "The hierophant cannot speak first." in user_prompt
+
+
 def test_narrative_prompt_compacts_character_payload() -> None:
     completion = RecordingCompletion()
     state = sample_state()

@@ -15,6 +15,11 @@ menu without breaking flow.
 -->
 <script lang="ts">
   import { combatFromState } from "../lib/combat";
+  import {
+    applyCommonAction,
+    deriveCommonActions,
+    type CommonAction,
+  } from "../lib/common-actions";
   import { game } from "../lib/store.svelte";
   import {
     suggestSlashCommands,
@@ -130,6 +135,8 @@ menu without breaking flow.
     "/event",
     "/scene I cross the bone bridge before dawn.",
     "/retreat down the chapel stair",
+    "/loot the captain's chest",
+    "/buy a flagon of ale and a wax-sealed map",
     "/help",
   ];
   // Pick once per mount - rotating mid-session is more annoying than helpful.
@@ -146,6 +153,26 @@ menu without breaking flow.
   const inActiveCombat = $derived(
     encounter !== null && encounter.active,
   );
+
+  // F-07 common-actions tray. Source of truth for which pills appear
+  // is `deriveCommonActions`; this component only renders + dispatches.
+  // We feed in the same combat reading the footer hint already uses
+  // so tray and hint can never disagree about whether combat is live.
+  const commonActions = $derived(deriveCommonActions(game.state, encounter));
+
+  function applyTrayAction(action: CommonAction): void {
+    // mousedown prevents the textarea from blurring before this fires,
+    // but we still want focus + caret-set in a microtask so the
+    // bound `value` write has propagated to the DOM by the time we
+    // call `setSelectionRange`.
+    const result = applyCommonAction(value, action);
+    value = result.text;
+    suggestionDismissed = false;
+    queueMicrotask(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(result.caret, result.caret);
+    });
+  }
 </script>
 
 <form class="composer" onsubmit={(e) => { e.preventDefault(); void send(); }}>
@@ -194,6 +221,44 @@ menu without breaking flow.
       </ul>
     {/if}
   </div>
+
+  {#if commonActions.length > 0}
+    <!--
+      The tray is a horizontally-scrollable strip of pixel pills. It
+      lives between the textarea and the send row so:
+       * the slash suggestion menu (which floats above the textarea)
+         doesn't overlap the tray, and
+       * the natural left-to-right reading order is type → pick action
+         (refine) → send.
+      We render in document order to keep tab order intuitive; the
+      buttons are real <button>s so screen readers announce labels
+      and the keyboard "Enter" + "Space" semantics come for free.
+    -->
+    <div
+      class="common-actions"
+      role="toolbar"
+      aria-label="Common actions"
+      aria-disabled={game.isLoading ? "true" : undefined}
+    >
+      {#each commonActions as action (action.id)}
+        <button
+          type="button"
+          class="action pixel"
+          title={action.summary}
+          aria-label={action.summary}
+          disabled={game.isLoading}
+          onmousedown={(e) => {
+            // mousedown so the textarea doesn't blur before the
+            // microtaskscheduled inside applyTrayAction re-focuses it.
+            e.preventDefault();
+            applyTrayAction(action);
+          }}
+        >
+          {action.label}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   <div class="row">
     <span class="hint pixel">
@@ -314,5 +379,54 @@ menu without breaking flow.
     font-size: 0.78rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  /*
+   * F-07 common-actions tray. The tray reads as a strip of margin
+   * notes pinned to the desk above the send row — small, tarnished
+   * pixel pills rather than full action buttons. Horizontal scroll
+   * keeps narrow viewports from forcing a wrap that would consume
+   * vertical space the chat needs.
+   */
+  .common-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    margin-top: 0.1rem;
+  }
+  .common-actions[aria-disabled="true"] {
+    opacity: 0.55;
+  }
+  .action {
+    font-family: var(--font-pixel);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.55rem;
+    color: var(--paper-bone);
+    background: color-mix(in oklab, var(--ink-deep) 86%, var(--ink-black));
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+    line-height: 1.2;
+    /*
+     * Subtle inset shadow so the pill reads as carved into the
+     * composer surface rather than floating above it. Matches the
+     * receipt-strip + chaos-pip vocabulary already on screen.
+     */
+    box-shadow: inset 0 -1px 0
+      color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
+  }
+  .action:hover:not(:disabled),
+  .action:focus-visible {
+    color: var(--gold-bright);
+    border-color: var(--gold-bright);
+    background: color-mix(in oklab, var(--gold-tarnished) 10%, var(--ink-deep));
+    outline: none;
+  }
+  .action:disabled {
+    cursor: not-allowed;
+    color: var(--paper-shadow);
   }
 </style>

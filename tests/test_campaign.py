@@ -97,7 +97,8 @@ def test_campaign_generator_builds_state_from_model_json() -> None:
 
     assert state.current_scene == "A generated opening scene."
     assert len(state.threads) == 3
-    assert len(state.npcs) == 2
+    assert len(state.npcs) == 0
+    assert len(state.hidden_npcs) == 2
     assert state.oracle_tables.event_focus[0] == "thread pressure"
     assert completion.request is not None
     # We deliberately omit `response_format=json_object` because Kimi K2.6

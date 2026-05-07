@@ -17,10 +17,20 @@ How messages are derived from state:
   6. Client-side notes (slash help, slash errors) are interleaved by
      timestamp.
 
-Auto-scroll to bottom whenever the message count grows. We don't try to
-preserve scroll on history-deep navigation because the chat is a forward
-narrative, not a browsing surface.
+F-09 browsing behavior:
+  - Each rendered row carries a `data-event-id` anchor matching its
+    canonical event id (or the synthesized `opening_<state-id>` for
+    the first DM beat).
+  - Auto-follow to bottom suspends as soon as the player scrolls up
+    out of the bottom band (default 120px). It resumes automatically
+    when they scroll back into the band, or explicitly when they hit
+    the floating "Jump to latest" pill.
+  - The Inspector commands cross-surface scrolls via
+    `game.scrollRequest`; we react to a fresh request by scrolling
+    the matching anchor into view and applying a one-shot flash
+    highlight, then clear the request from the store.
 -->
+
 <script lang="ts">
   import { onMount } from "svelte";
   import ChatMessage from "./ChatMessage.svelte";
@@ -35,16 +45,21 @@ narrative, not a browsing surface.
   // also appears in the file - see store_rune_conflict.
   const { state: gs }: Props = $props();
 
-  type Msg =
-    | {
-        kind: "dm" | "player" | "system";
-        id: string;
-        text: string;
-        timestamp: string;
-        outcome?: OracleOutcome | null;
-        thinking?: string | null;
-        streaming?: boolean;
-      };
+  type Msg = {
+    // F-10 added the `ooc` speaker for OOC explainer answers. See
+    // ChatMessage.svelte for the visual treatment; the union here
+    // mirrors the speaker prop accepted by that component.
+    kind: "dm" | "player" | "system" | "ooc";
+    id: string;
+    text: string;
+    timestamp: string;
+    outcome?: OracleOutcome | null;
+    thinking?: string | null;
+    streaming?: boolean;
+    // OOC-only: the player's question, rendered as a `Q:` row
+    // above the answer body.
+    question?: string | null;
+  };
 
   // Read `event.thinking` as an optional extension. The backend pass
   // adds a `thinking` field to GameEvent; until that lands, every
@@ -92,6 +107,20 @@ narrative, not a browsing surface.
   }
 
   function fromNote(note: ClientNote): Msg {
+    if (note.kind === "explanation") {
+      // F-10 OOC notes carry both the question and the answer so the
+      // chat surface can render a single Q+A card. We keep them as
+      // ClientNotes (not action_log entries) so they're ephemeral by
+      // construction — reload clears them and they never feed back
+      // into memory rebuilds.
+      return {
+        kind: "ooc",
+        id: note.id,
+        text: note.text,
+        timestamp: note.created_at,
+        question: note.question ?? null,
+      };
+    }
     return {
       kind: "system",
       id: note.id,
@@ -155,9 +184,30 @@ narrative, not a browsing surface.
     "retreat",
     "regenerate",
   ]);
+  // F-10: the explainer streams through the same NDJSON contract
+  // but produces an OOC bubble, not a DM bubble. We branch on the
+  // route here so the provisional surface gets the right speaker
+  // (and the right ChatMessage styling) without requiring a separate
+  // streaming buffer.
   const provisional: Msg | null = $derived.by(() => {
     if (!game.streaming.active) return null;
     const route = game.streaming.route;
+    if (route === "explanation") {
+      // We can't pull the player's verbatim question off the store
+      // because /explain is a one-shot dispatch — we don't keep the
+      // request body around. For the streaming bubble we leave the
+      // Q: row blank; the persisted ClientNote that replaces it
+      // carries the captured question and renders the full pair.
+      return {
+        kind: "ooc",
+        id: `provisional_${game.streaming.requestId ?? "live"}`,
+        text: game.streaming.content,
+        timestamp: new Date().toISOString(),
+        thinking: game.streaming.thinking,
+        streaming: true,
+        question: null,
+      };
+    }
     if (route !== null && !PROSE_ROUTES.has(route)) return null;
     return {
       kind: "dm",
@@ -179,10 +229,73 @@ narrative, not a browsing surface.
 
   let scroller: HTMLElement | undefined;
   let lastCount: number = $state(0);
+  // F-09: auto-follow latches off when the player scrolls up out of
+  // the bottom band, on again when they scroll back into it. The
+  // alternative ("once unlatched, stay off until the user clicks
+  // Jump-to-latest") is more rigid but punishes the common case
+  // where the player scrolled up by accident — resuming on
+  // re-bottom matches the muscle memory people have from chat apps.
+  let pinnedToBottom: boolean = $state(true);
+  // Last consumed scroll request seq. We track it instead of clearing
+  // `game.scrollRequest` synchronously because a freshly-set request
+  // for the same eventId still has to re-run the scroll/flash effect
+  // — Svelte's reactivity sees the seq bump even when the eventId
+  // didn't change.
+  let consumedScrollSeq: number = $state(-1);
+  // F-09 cross-component flash highlight. We pin the eventId here so
+  // the corresponding wrapper can apply the flash class deterministic-
+  // ally, and clear it on a timer so the rule doesn't linger.
+  let flashEventId: string | null = $state(null);
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function scrollToBottom(): void {
+  // Distance from the bottom edge below which auto-follow is on. We
+  // pick a band rather than `scrollTop === scrollBottom` because
+  // smooth-scroll animations and message-height changes mean the
+  // exact-bottom predicate flickers in/out spuriously.
+  const FOLLOW_THRESHOLD_PX = 120;
+  const FLASH_DURATION_MS = 1700;
+
+  function distanceFromBottom(): number {
+    if (!scroller) return 0;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior = "smooth"): void {
     if (!scroller) return;
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+  }
+
+  function jumpToLatest(): void {
+    pinnedToBottom = true;
+    scrollToBottom();
+  }
+
+  function handleScroll(): void {
+    if (!scroller) return;
+    pinnedToBottom = distanceFromBottom() <= FOLLOW_THRESHOLD_PX;
+  }
+
+  function flashRow(eventId: string): void {
+    flashEventId = eventId;
+    if (flashTimer !== null) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      flashEventId = null;
+      flashTimer = null;
+    }, FLASH_DURATION_MS);
+  }
+
+  function scrollToEvent(eventId: string): void {
+    if (!scroller) return;
+    // We use a CSS attribute selector instead of a Map<eventId,
+    // HTMLElement> because the {#each} block destroys/creates nodes
+    // on streaming churn; rebuilding the map after every render
+    // would just re-do this lookup work eagerly.
+    const target = scroller.querySelector<HTMLElement>(
+      `[data-event-id="${CSS.escape(eventId)}"]`,
+    );
+    if (target === null) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    flashRow(eventId);
   }
 
   // Scroll trigger: rerun when *either* the persisted message count or
@@ -191,8 +304,7 @@ narrative, not a browsing surface.
   // and shouldn't pull the viewport. Tracking provisional content
   // length keeps the bubble visible as tokens arrive (auto-follow);
   // a player who scrolled up to read backstory won't get yanked
-  // because the scroll behavior is `smooth` and we only nudge to
-  // bottom on count changes, not on every keystroke.
+  // because we gate the scroll on `pinnedToBottom`.
   const totalCount = $derived(
     messages.length
       + (provisional !== null ? 1 : 0)
@@ -202,41 +314,89 @@ narrative, not a browsing surface.
   $effect(() => {
     if (totalCount !== lastCount) {
       lastCount = totalCount;
-      requestAnimationFrame(scrollToBottom);
+      // Auto-follow is opt-out: when the player has scrolled away,
+      // we leave the viewport alone and surface the
+      // "Jump to latest" pill instead. Without this gate, every
+      // streamed token in the in-flight bubble would yank a player
+      // who's reading earlier prose back to the bottom.
+      //
+      // Auto-follow uses *instant* scroll, not smooth, on purpose:
+      // a smooth-scroll mid-animation fires `onscroll` repeatedly
+      // with `distanceFromBottom > FOLLOW_THRESHOLD_PX`, which
+      // would briefly flip `pinnedToBottom` to false and stall the
+      // follow on the next streamed token. Smooth scroll is
+      // reserved for the explicit jumpToLatest / scrollToEvent
+      // paths where the visual cue matters and there's no token
+      // race in flight.
+      if (pinnedToBottom) {
+        requestAnimationFrame(() => scrollToBottom("auto"));
+      }
     }
   });
 
+  // Cross-component scroll request consumer. We watch the store
+  // signal and run the scroll once per fresh seq value; the explicit
+  // seq guard prevents a second run on the same request when the
+  // store reactivity re-fires for unrelated reasons (state refresh,
+  // notes change). After consuming, we ask the store to clear the
+  // request so reloading the page or remounting the feed doesn't
+  // replay a stale jump.
+  $effect(() => {
+    const req = game.scrollRequest;
+    if (req === null) return;
+    if (req.seq === consumedScrollSeq) return;
+    consumedScrollSeq = req.seq;
+    requestAnimationFrame(() => {
+      scrollToEvent(req.eventId);
+      game.consumeScrollRequest();
+    });
+  });
+
   onMount(() => {
-    requestAnimationFrame(scrollToBottom);
+    requestAnimationFrame(() => scrollToBottom("auto"));
+    return () => {
+      if (flashTimer !== null) clearTimeout(flashTimer);
+    };
   });
 </script>
 
-<section class="feed" bind:this={scroller}>
+<div class="feed-shell">
+<section class="feed" bind:this={scroller} onscroll={handleScroll}>
   {#if messages.length === 0 && provisional === null}
     <div class="empty muted">The DM is preparing the opening scene…</div>
   {:else}
     {#each messages as message (message.id)}
-      <ChatMessage
-        eventId={message.id}
-        speaker={message.kind}
-        text={message.text}
-        timestamp={message.timestamp}
-        outcome={message.outcome ?? null}
-        thinking={message.thinking ?? null}
-        canRegenerate={canRegenerateMessage(message.kind, message.id, latestNarrativeId)}
-      />
+      <div
+        class="anchor"
+        class:flash={flashEventId === message.id}
+        data-event-id={message.id}
+      >
+        <ChatMessage
+          eventId={message.id}
+          speaker={message.kind}
+          text={message.text}
+          timestamp={message.timestamp}
+          outcome={message.outcome ?? null}
+          thinking={message.thinking ?? null}
+          question={message.question ?? null}
+          canRegenerate={canRegenerateMessage(message.kind, message.id, latestNarrativeId)}
+        />
+      </div>
     {/each}
     {#if provisional}
-      <ChatMessage
-        eventId={provisional.id}
-        speaker={provisional.kind}
-        text={provisional.text}
-        timestamp={provisional.timestamp}
-        outcome={provisional.outcome ?? null}
-        thinking={provisional.thinking ?? null}
-        streaming={true}
-        canRegenerate={false}
-      />
+      <div class="anchor" data-event-id={provisional.id}>
+        <ChatMessage
+          eventId={provisional.id}
+          speaker={provisional.kind}
+          text={provisional.text}
+          timestamp={provisional.timestamp}
+          outcome={provisional.outcome ?? null}
+          thinking={provisional.thinking ?? null}
+          question={provisional.question ?? null}
+          streaming={true}
+          canRegenerate={false}
+        />
+      </div>
     {/if}
   {/if}
 
@@ -245,7 +405,32 @@ narrative, not a browsing surface.
   {/if}
 </section>
 
+  {#if !pinnedToBottom}
+    <button
+      type="button"
+      class="jump-latest pixel"
+      onclick={jumpToLatest}
+      aria-label="Jump to latest message"
+    >
+      ↓ Jump to latest
+    </button>
+  {/if}
+</div>
+
 <style>
+  /*
+   * Positioned shell so the floating "Jump to latest" pill anchors to
+   * the chat region, not the document. The shell is itself a flex
+   * column so it can fill whatever vertical slot the parent layout
+   * gave it without needing the parent to know about F-09.
+   */
+  .feed-shell {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .feed {
     flex: 1;
     overflow-y: auto;
@@ -265,5 +450,89 @@ narrative, not a browsing surface.
   }
   .composing {
     padding: 0.6rem 1rem;
+  }
+
+  /*
+   * Anchors are layout-transparent — they exist purely so a
+   * `data-event-id` selector can find a stable target node. We avoid
+   * adding any margin/padding here so removing/adding the wrapper is
+   * a no-op for the chat's existing visual rhythm.
+   */
+  .anchor {
+    display: block;
+  }
+  /*
+   * Flash highlight applied to a row when it's the target of an
+   * inspector deep-link. The brief gold wash echoes the candle-lit
+   * receipt accent without competing with the receipt's own color.
+   * Reduced-motion users get a static dwell tint that fades on the
+   * same timer instead of an animation.
+   */
+  .anchor.flash {
+    animation: anchor-flash 1700ms ease-out;
+    border-radius: 4px;
+  }
+  @keyframes anchor-flash {
+    0% {
+      background: color-mix(in oklab, var(--gold-bright) 28%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--gold-bright) 40%, transparent) inset;
+    }
+    60% {
+      background: color-mix(in oklab, var(--gold-bright) 14%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--gold-bright) 22%, transparent) inset;
+    }
+    100% {
+      background: transparent;
+      box-shadow: 0 0 0 1px transparent inset;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .anchor.flash {
+      animation: none;
+      background: color-mix(in oklab, var(--gold-bright) 18%, transparent);
+      transition: background 1500ms ease;
+    }
+  }
+
+  /*
+   * "Jump to latest" floating pill. Sits at the bottom-right of the
+   * chat region, hovering above the chat fade. We deliberately
+   * mirror the common-actions pill aesthetic (pixel font, gold
+   * tarnished border) so the affordance feels native to the
+   * Composer's tray rather than a foreign control.
+   */
+  .jump-latest {
+    position: absolute;
+    right: 0.9rem;
+    bottom: 0.7rem;
+    z-index: 4;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--paper-bone);
+    background: color-mix(in oklab, var(--ink-black) 92%, transparent);
+    border: 1px solid var(--gold-tarnished);
+    border-radius: 2px;
+    box-shadow:
+      0 1px 0 color-mix(in oklab, var(--gold-tarnished) 30%, transparent) inset,
+      0 6px 16px rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+    transition:
+      transform 120ms ease,
+      background 160ms ease,
+      border-color 160ms ease;
+  }
+  .jump-latest:hover {
+    background: color-mix(in oklab, var(--ink-black) 80%, transparent);
+    border-color: var(--gold-bright);
+    color: var(--gold-bright);
+  }
+  .jump-latest:focus-visible {
+    outline: 2px solid var(--gold-bright);
+    outline-offset: 2px;
+  }
+  .jump-latest:active {
+    transform: translateY(1px);
   }
 </style>

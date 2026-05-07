@@ -43,12 +43,14 @@ class PlannedTurnOpKind(StrEnum):
     SCENE_CHECK = "scene_check"
     SAVE = "save"
     ATTACK = "attack"
+    ENEMY_OPENER = "enemy_opener"
     HARM = "harm"
     RECOVERY = "recovery"
     EQUIP = "equip"
     RETREAT = "retreat"
     INSPECT_INVENTORY = "inspect_inventory"
     SEARCH_SCENE = "search_scene"
+    ACQUIRE_ITEM = "acquire_item"
     USE_ITEM = "use_item"
     DROP_ITEM = "drop_item"
     NARRATE = "narrate"
@@ -182,6 +184,8 @@ Allowed op kinds:
 - save: the player is attempting one risky immediate action that should
   resolve as a Cairn-style save
 - attack: the player is attacking or striking a concrete foe right now
+- enemy_opener: a hostile foe is clearly striking first, springing an ambush,
+  or seizing initiative in a way that should start a tracked encounter now
 - harm: the player is explicitly taking damage or a blow should be resolved directly
 - recovery: the player is explicitly resting, catching breath, or recovering
 - equip: the player is explicitly readying, drawing, donning, stowing,
@@ -192,6 +196,8 @@ Allowed op kinds:
   or what they currently have
 - search_scene: the player is rummaging, checking, or inspecting the
   immediate area without definitely transitioning scenes
+- acquire_item: the player is explicitly taking, looting, receiving, buying,
+  or otherwise adding a concrete item or bundle to their carried gear now
 - use_item: the player is explicitly drinking, lighting, applying,
   consuming, or otherwise using a carried item
 - drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
@@ -207,18 +213,25 @@ Rules:
 - You may emit preparatory ops before one primary deterministic op,
   e.g. `equip` then `attack`, or `inspect_inventory` then `scene_check`.
 - Emit at most one primary oracle/mechanical op from this set:
-  `yes_no`, `random_event`, `scene_check`, `save`, `attack`, `harm`, `recovery`.
+  `yes_no`, `random_event`, `scene_check`, `save`, `attack`, `enemy_opener`,
+  `harm`, `recovery`.
 - If ops contain one of those primary oracle/mechanical ops, `route` must match it.
+- Exception: if the primary op is `enemy_opener`, `route` must be `harm`
+  because the stable public outcome kind remains `harm`.
 - If ops contain only `equip`, `route` may be `equip`.
-- If ops contain only `inspect_inventory`, `search_scene`, `use_item`,
+- If ops contain only `inspect_inventory`, `search_scene`, `acquire_item`, `use_item`,
   `drop_item`, or `narrate`, route must be `player_action`.
 - Use `save` only when the player is attempting one concrete risky action right now.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
 - If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
+- If kind is `enemy_opener`, include `harm_source` naming the hostile opener.
 - If kind is `recovery`, choose one `rest_kind`: `breather`, `full_rest`, or `week_recovery`.
 - If kind is `equip`, include `item_name` and whether the player is
   equipping (`true`) or unequipping (`false`).
 - If kind is `retreat`, use it only for an explicit attempt to break contact or flee.
+- If kind is `acquire_item`, use it only when the text supports adding gear
+  to inventory immediately. Preserve the player's wording; do not invent a
+  full item list in the planner itself.
 - If kind is `use_item` or `drop_item`, include `item_name`.
 - Use `harm` sparingly. Prefer `save` for risky actions and `attack` for offensive actions.
 - If kind is `yes_no`, preserve a supplied likelihood hint if one was explicitly given.
@@ -234,7 +247,7 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "ops": [\n'
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
-    'harm | recovery | equip | retreat | '
+    'enemy_opener | harm | recovery | equip | retreat | acquire_item | '
     'inspect_inventory | search_scene | use_item | drop_item",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
@@ -431,7 +444,7 @@ class TurnRouter:
             return self._fallback_plan(text)
         return TurnPlan(route=plan.route, text=text, ops=ops)
 
-    def _normalize_op(
+    def _normalize_op(  # noqa: C901
         self,
         op: PlannedTurnOp,
         *,
@@ -452,6 +465,13 @@ class TurnRouter:
         if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is None:
             message = "Attack ops require a target_name."
             raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.ENEMY_OPENER:
+            if route != TurnRoute.HARM:
+                message = "enemy_opener ops require the legacy route to remain harm."
+                raise ValueError(message)
+            if op.harm_source is None and op.target_name is None:
+                message = "enemy_opener ops require a harm_source or target_name."
+                raise ValueError(message)
         if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is None:
             message = "Recovery ops require a rest_kind."
             raise ValueError(message)
@@ -465,6 +485,7 @@ class TurnRouter:
         if op.kind in (
             PlannedTurnOpKind.INSPECT_INVENTORY,
             PlannedTurnOpKind.SEARCH_SCENE,
+            PlannedTurnOpKind.ACQUIRE_ITEM,
             PlannedTurnOpKind.USE_ITEM,
             PlannedTurnOpKind.DROP_ITEM,
             PlannedTurnOpKind.NARRATE,
@@ -484,7 +505,7 @@ class TurnRouter:
             item_name=op.item_name,
             equipped=op.equipped,
             harm_amount=op.harm_amount,
-            harm_source=op.harm_source,
+            harm_source=op.harm_source or op.target_name,
             armor_applies=op.armor_applies,
             in_combat=op.in_combat,
         )

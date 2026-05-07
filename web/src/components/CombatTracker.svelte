@@ -29,6 +29,7 @@ go on a sibling component so this one stays the trust surface.
     combatantHpTier,
     combatantStatusLabel,
     encounterHeadline,
+    enemyInitiated,
     firstRoundActionGated,
     sortCombatants,
   } from "../lib/combat";
@@ -45,6 +46,13 @@ go on a sibling component so this one stays the trust surface.
   const headline = $derived(encounterHeadline(encounter));
   const firstRound = $derived(firstRoundActionGated(encounter));
   const moraleTriggered = $derived(encounter !== null && encounter.morale_triggered);
+  // F-05: surface the ambush cue as long as the encounter is active and
+  // the foe was the one who opened it. We keep the flag visible across
+  // rounds (not just round 1) because it affects the player's framing
+  // for the whole fight — they were jumped, and that pretext shapes
+  // disengage / morale narration even later. The flag falls off naturally
+  // once the encounter clears (this whole section unmounts).
+  const ambushed = $derived(encounter !== null && encounter.active && enemyInitiated(encounter));
 </script>
 
 {#if encounter !== null && encounter.active}
@@ -54,8 +62,24 @@ go on a sibling component so this one stays the trust surface.
       <span class="pixel headline">{headline ?? "Active"}</span>
     </header>
 
-    {#if firstRound || moraleTriggered}
+    {#if ambushed || firstRound || moraleTriggered}
       <ul class="flags">
+        {#if ambushed}
+          <!--
+            Ambush flag rides above the first-round and morale flags
+            because it explains *why* the encounter exists at all (the
+            foe seized initiative). When ambush + first-round both
+            apply (the most common F-05 case in round 1), the player
+            reads the cause first, then the immediate mechanical
+            consequence. We don't include a damage number here — the
+            receipt directly under the assistant message owns the
+            mechanics; this rail is the trust-surface label.
+          -->
+          <li class="flag flag--ambush">
+            <span class="pixel flag-label">Ambush</span>
+            <span class="flag-text">A foe opened this fight before you could act.</span>
+          </li>
+        {/if}
         {#if firstRound}
           <li class="flag flag--first">
             <span class="pixel flag-label">First round</span>
@@ -185,6 +209,20 @@ go on a sibling component so this one stays the trust surface.
   }
   .flag--morale {
     border-left-color: var(--rust-iron);
+  }
+  /*
+   * Ambush rides on rust-blood + a slightly heavier left bar so it
+   * reads more alarming than the first-round (gold) and morale
+   * (rust-iron) cues — the implicit visual hierarchy is "you got
+   * jumped" > "you owe a save" > "they're wavering". We tint the
+   * background too so the flag stands out from the receipts under it.
+   */
+  .flag--ambush {
+    border-left: 3px solid var(--rust-blood);
+    background: color-mix(in oklab, var(--rust-blood) 18%, var(--ink-black) 70%);
+  }
+  .flag--ambush .flag-label {
+    color: var(--rust-blood);
   }
   .flag-label {
     color: var(--gold-tarnished);

@@ -110,6 +110,122 @@ describe("parseTurn", () => {
       reason: "through the cloister",
     });
   });
+
+  it("parses each acquisition verb and preserves the typed verb", () => {
+    expect(parseTurn("/loot the captain's chest")).toEqual({
+      kind: "acquire",
+      verb: "loot",
+      body: "the captain's chest",
+    });
+    expect(parseTurn("/take a wax-sealed letter from the altar")).toEqual({
+      kind: "acquire",
+      verb: "take",
+      body: "a wax-sealed letter from the altar",
+    });
+    expect(parseTurn("/buy a flagon of ale and a hooded cloak")).toEqual({
+      kind: "acquire",
+      verb: "buy",
+      body: "a flagon of ale and a hooded cloak",
+    });
+    expect(parseTurn("/acquire the gift the abbess offered me")).toEqual({
+      kind: "acquire",
+      verb: "acquire",
+      body: "the gift the abbess offered me",
+    });
+  });
+
+  it("collapses /gain and /purchase onto their canonical verbs", () => {
+    // We expose `gain` as a synonym for `acquire` and `purchase` for
+    // `buy` so the suggestion menu stays compact while still letting
+    // players type the verb that matches their fictional intent.
+    expect(parseTurn("/gain a healer's kit from Solyn")).toMatchObject({
+      kind: "acquire",
+      verb: "acquire",
+    });
+    expect(parseTurn("/purchase rope and a lantern")).toMatchObject({
+      kind: "acquire",
+      verb: "buy",
+    });
+  });
+
+  it("parses /retire with no arguments as an unsummarized retirement close", () => {
+    expect(parseTurn("/retire")).toEqual({
+      kind: "end",
+      reason: "retirement",
+      summary: "",
+    });
+  });
+
+  it("parses /retire with an explicit summary as the player's closing prose", () => {
+    expect(parseTurn("/retire I hang the blade above the hearth.")).toEqual({
+      kind: "end",
+      reason: "retirement",
+      summary: "I hang the blade above the hearth.",
+    });
+  });
+
+  it("parses /victory with no arguments as an unsummarized victory close", () => {
+    expect(parseTurn("/victory")).toEqual({
+      kind: "end",
+      reason: "victory",
+      summary: "",
+    });
+  });
+
+  it("parses /victory with an explicit summary as the player's closing prose", () => {
+    expect(parseTurn("/victory The crown is unmade.")).toEqual({
+      kind: "end",
+      reason: "victory",
+      summary: "The crown is unmade.",
+    });
+  });
+
+  it("trims whitespace from the closing summary", () => {
+    expect(parseTurn("/retire    a quiet life by the sea   ")).toEqual({
+      kind: "end",
+      reason: "retirement",
+      summary: "a quiet life by the sea",
+    });
+  });
+
+  it("parses /explain with the question as the body", () => {
+    expect(parseTurn("/explain how does atk work?")).toEqual({
+      kind: "explain",
+      question: "how does atk work?",
+    });
+  });
+
+  it("trims surrounding whitespace from the explain question", () => {
+    expect(parseTurn("/explain    why did that say ambush?   ")).toEqual({
+      kind: "explain",
+      question: "why did that say ambush?",
+    });
+  });
+
+  it("rejects /explain with no body and names the command in the error", () => {
+    // Empty-body errors live at the parser to avoid round-tripping
+    // a request that the backend's `min_length=1` validator would
+    // reject anyway. The error message must namedrop /explain so the
+    // player doesn't have to consult /help to figure out what
+    // command produced the hint.
+    const result = parseTurn("/explain");
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("/explain");
+    }
+  });
+
+  it("rejects acquisition commands without a body and names the verb in the error", () => {
+    for (const cmd of ["acquire", "loot", "take", "buy"]) {
+      const result = parseTurn(`/${cmd}`);
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        // The error message should namedrop the verb the player typed
+        // so it's obvious which command needs the missing body.
+        expect(result.message).toContain(`/${cmd}`);
+      }
+    }
+  });
 });
 
 describe("suggestSlashCommands", () => {
@@ -133,6 +249,47 @@ describe("suggestSlashCommands", () => {
   it("matches aliases too", () => {
     const matches = suggestSlashCommands("/fl");
     expect(matches.map((c) => c.name)).toEqual(["retreat"]);
+  });
+
+  it("surfaces every acquisition verb under its own descriptor", () => {
+    // Each acquisition verb has a fictionally distinct connotation, so
+    // we want all four canonical names to appear in the suggestion
+    // menu rather than collapsing them under one entry. The /a prefix
+    // intersects "acquire" and "ask"; we only assert the acquisition
+    // verb is present.
+    const acquireMatches = suggestSlashCommands("/ac");
+    expect(acquireMatches.map((c) => c.name)).toContain("acquire");
+    const lootMatches = suggestSlashCommands("/lo");
+    expect(lootMatches.map((c) => c.name)).toContain("loot");
+    const takeMatches = suggestSlashCommands("/ta");
+    expect(takeMatches.map((c) => c.name)).toContain("take");
+    const buyMatches = suggestSlashCommands("/bu");
+    expect(buyMatches.map((c) => c.name)).toContain("buy");
+  });
+
+  it("matches /purchase and /gain through aliases on the canonical descriptors", () => {
+    expect(suggestSlashCommands("/pur").map((c) => c.name)).toContain("buy");
+    expect(suggestSlashCommands("/ga").map((c) => c.name)).toContain("acquire");
+  });
+
+  it("surfaces /explain as a discoverable descriptor distinct from /help", () => {
+    // `/help` is the static command-list reference; `/explain` is a
+    // live LLM-backed, state-aware question. They must not collapse
+    // into one another in the suggestion menu — players expect
+    // typing `/ex` to surface the explainer, and typing `/he` to
+    // surface the help reference.
+    expect(suggestSlashCommands("/ex").map((c) => c.name)).toContain("explain");
+    const explainEntry = SLASH_COMMANDS.find((c) => c.name === "explain");
+    expect(explainEntry).toBeDefined();
+    expect(explainEntry?.usage).toContain("question");
+  });
+
+  it("surfaces /retire and /victory as separate descriptors so the menu reads them as distinct lifecycle ops", () => {
+    // Both terminal-close commands have to be discoverable in their
+    // own right; collapsing them under one alias would lose the
+    // chosen reason at the menu level and force a sub-arg.
+    expect(suggestSlashCommands("/ret").map((c) => c.name)).toContain("retire");
+    expect(suggestSlashCommands("/vi").map((c) => c.name)).toContain("victory");
   });
 
   it("suppresses suggestions once an argument is being typed", () => {

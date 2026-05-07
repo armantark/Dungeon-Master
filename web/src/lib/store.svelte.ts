@@ -9,16 +9,18 @@
 //   same state object as the persisted state.
 
 import { api, ApiError, StreamTransportError } from "./api";
-import { parseTurn, SLASH_HELP } from "./slash";
+import { parseTurn, SLASH_HELP, type AcquireVerb } from "./slash";
 import type { StreamHandlers, StreamResult } from "./streaming";
 import type { StreamRoute } from "./streaming-types";
 import type {
+  CampaignEndReason,
   CharacterQuiz,
   CharacterQuizAnswer,
   CharacterSheet,
   GameState,
   Likelihood,
   OracleOutcome,
+  SaveSummary,
 } from "./types";
 
 // Rolling animation phase. We deliberately gate the narrative reveal on
@@ -60,6 +62,30 @@ function buildRetreatPrompt(reason: string): string {
   return `I attempt to retreat from combat: ${cleaned}`;
 }
 
+/**
+ * Compose the natural-language prompt sent to the turn planner for the
+ * acquisition slash commands. The planner is trained on first-person
+ * acquisition phrases ("I take", "I loot", "I buy", etc.), so we use
+ * the verb the player typed verbatim — looting a corpse and buying at
+ * a market should feel different in the resulting narration, and the
+ * narrator picks up that flavor from the verb without us having to
+ * smuggle it through structured fields.
+ *
+ * We don't append a trailing period if the body already ends with
+ * sentence-terminal punctuation (`.`, `!`, `?`) so player-authored
+ * sentences land verbatim. Otherwise we add one to keep the planner's
+ * input grammatically tidy.
+ */
+function buildAcquirePrompt(verb: AcquireVerb, body: string): string {
+  const cleaned = body.trim();
+  // The empty-body path is rejected at the parser level, so this is a
+  // defensive belt-and-suspenders fallback rather than a real branch.
+  if (!cleaned) return `I ${verb} the offered item.`;
+  const ending = cleaned.slice(-1);
+  const needsTerminator = ending !== "." && ending !== "!" && ending !== "?";
+  return `I ${verb} ${cleaned}${needsTerminator ? "." : ""}`;
+}
+
 function emptyStreamingState(): StreamingState {
   return {
     active: false,
@@ -74,11 +100,58 @@ function emptyStreamingState(): StreamingState {
 // Inline "system message" that the chat surfaces alongside server events.
 // We keep these client-only because they're transient feedback (help
 // text, slash-error hints) and don't belong in the persisted action log.
+//
+// F-10 added an `explanation` kind for the OOC rules explainer. Those
+// notes carry both the player's question and the LLM's answer so the
+// chat surface can render them as a single OOC card (instead of two
+// disjoint bubbles). They live in the same ephemeral buffer as help/
+// error/info notes — reload clears them, the action log never sees
+// them, and they never round-trip through `memory.json`.
 export interface ClientNote {
   id: string;
-  kind: "help" | "error" | "info";
+  kind: "help" | "error" | "info" | "explanation";
   text: string;
   created_at: string;
+  // OOC explainer-only: the player's question, preserved verbatim. We
+  // store it on the note (rather than reconstructing it from the
+  // adjacent player message) because OOC traffic does not become an
+  // action_log player event — there's no canonical anchor to pair
+  // the answer with otherwise.
+  question?: string;
+}
+
+// F-12 save library state. We model the library as a discriminated
+// status rather than a "ready vs not-ready" boolean because the
+// app shell has three distinct splashes to render:
+//   - "loading"   : we haven't yet finished the bootstrap call,
+//                   so we can't tell whether to show the selector
+//                   or auto-load play.
+//   - "empty"     : the bootstrap call returned and there are no
+//                   saves on disk — the only legal action is to
+//                   start a fresh campaign.
+//   - "selecting" : the player explicitly opened the save library
+//                   from the system menu mid-session. We need to
+//                   keep the rest of the app intact (current state,
+//                   chat history) until the player picks a save,
+//                   so we keep `state` populated while the splash
+//                   is open.
+//   - "ready"     : an active save is bound and `state` is the
+//                   live `GameState` for that save. This is the
+//                   normal play path.
+// Modeling them as a union forces every consumer to handle the
+// loading/empty branches, which we'd otherwise drift on.
+export type LibraryStatus = "loading" | "empty" | "selecting" | "ready";
+
+// F-09 cross-component scroll request. The Inspector commands the
+// ChatFeed to scroll a particular event into view (oracle deep-link,
+// transcript search hit). We model this as a one-shot signal with a
+// rotating sequence number rather than a plain `eventId | null`
+// because a sequence of clicks on the *same* eventId has to re-trigger
+// the scroll/flash effect — without `seq`, Svelte's reactivity would
+// see "the same value" and skip the run.
+export interface ScrollRequest {
+  eventId: string;
+  seq: number;
 }
 
 // Note: never write `$state<T>(...)` with explicit type arguments. Svelte 5
@@ -110,8 +183,31 @@ class GameStore {
   // component - e.g. a chat receipt's "show full mechanics" link - can
   // command the drawer to open without prop drilling.
   inspectorOpen: boolean = $state(false);
+
+  // F-09 history-browser scroll target. Set by `requestScrollTo` and
+  // cleared once the ChatFeed has consumed it. The seq counter
+  // rotates so identical-eventId requests still fire the scroll/flash
+  // effect — see the ScrollRequest type doc.
+  scrollRequest: ScrollRequest | null = $state(null);
+  #scrollSeq = 0;
   #abortController: AbortController | null = null;
   #cancelRequested = false;
+
+  // F-12 Save library --------------------------------------------------------
+  //
+  // `library` is the canonical list of saves and `activeSaveId` is the
+  // one bound to `state`. We deliberately keep `library` flat at the
+  // store level (not nested behind another object) because the StatusStrip
+  // hamburger menu and the SaveLibrary splash both subscribe to it
+  // independently — flat fields keep Svelte 5's reactivity cheap
+  // without forcing both consumers to share a derived selector.
+  library: SaveSummary[] = $state([]);
+  activeSaveId: string | null = $state(null);
+  libraryStatus: LibraryStatus = $state("loading");
+  // Distinct from `state.error`: a library failure (bootstrap, switch)
+  // can happen before any save is bound, so a top-level surface needs
+  // its own error sink. The splash screen renders this verbatim.
+  libraryError: string | null = $state(null);
 
   // Derived: the most recent oracle outcome on the persisted state. Exposed
   // as a getter (via `$derived.by`) so the dice tumbler can subscribe and
@@ -125,6 +221,149 @@ class GameStore {
     await this.#run((signal) => api.getState(signal));
   }
 
+  /**
+   * F-12 startup bootstrap. Calls `/api/library/bootstrap`, then either
+   *   (a) auto-loads the active save's `GameState` and transitions to
+   *       `libraryStatus: "ready"` — this is the steady-state launch
+   *       experience the user asked for ("if a campaign exists, just
+   *       load it"); or
+   *   (b) sets `libraryStatus: "empty"` and lets the SaveLibrary splash
+   *       render the "begin your first campaign" prompt.
+   *
+   * We intentionally swallow `getState` errors during auto-load by
+   * surfacing them on `state.error` rather than `libraryError`: once an
+   * active save is selected, the library was bootstrapped successfully,
+   * and a `getState` failure is a normal play-time error (network, etc.)
+   * the App-level error rail already knows how to render. Bootstrap
+   * itself only fails the splash if the *library manifest* call fails.
+   */
+  async bootstrap(): Promise<void> {
+    this.libraryStatus = "loading";
+    this.libraryError = null;
+    try {
+      const response = await api.bootstrapLibrary();
+      this.library = response.saves;
+      this.activeSaveId = response.active_save_id;
+      if (response.active_save_id === null) {
+        this.libraryStatus = "empty";
+        this.state = null;
+        return;
+      }
+      await this.#run((signal) => api.getState(signal));
+      this.libraryStatus = "ready";
+    } catch (exc) {
+      this.libraryStatus = "empty";
+      this.libraryError = this.#formatError(exc);
+    }
+  }
+
+  /**
+   * F-12 create a new save slot and (by default) immediately select it.
+   *
+   * Why we always reset client-side ephemera on a save switch:
+   *   `notes`, the provisional streaming buffer, and the scroll request
+   *   are all keyed off the *current save's* event stream. Carrying any
+   *   of them across a switch would mean the new campaign opens with
+   *   stale OOC bubbles, mid-stream artifacts, or scroll requests that
+   *   point at event ids that no longer exist. Clearing here keeps the
+   *   switch atomic — the new save's `GameState` is the only thing the
+   *   chat surface reads, and there's nothing left over to filter out.
+   *
+   * `select=false` exists for an eventual "stage a save without leaving
+   * the current campaign" UX (we don't ship that surface in v1, but the
+   * backend already supports it and exposing the parameter keeps the
+   * call sites uniform).
+   */
+  async createSave(select: boolean = true): Promise<string | null> {
+    this.libraryError = null;
+    try {
+      const beforeIds = new Set(this.library.map((entry) => entry.save_id));
+      const response = await api.createSave(select);
+      this.library = response.saves;
+      this.activeSaveId = response.active_save_id;
+      const created = response.saves.find((entry) => !beforeIds.has(entry.save_id)) ?? null;
+      if (select) {
+        this.#resetEphemera();
+        await this.#run((signal) => api.getState(signal));
+        this.libraryStatus = "ready";
+      }
+      return created?.save_id ?? null;
+    } catch (exc) {
+      this.libraryError = this.#formatError(exc);
+      return null;
+    }
+  }
+
+  /**
+   * F-12 switch the active save. The backend rejects this with 409
+   * while a streamed request is in flight (see
+   * `_guard_save_library_idle`), so we don't try to be clever about
+   * cancelling first — letting the player see "Cannot switch saves
+   * while a request is still in flight." is the cleaner contract than
+   * silently aborting their current turn under them.
+   *
+   * On success we wholesale replace `state` and clear ephemera, the
+   * same way `createSave` does.
+   */
+  async selectSave(saveId: string): Promise<void> {
+    if (saveId === this.activeSaveId && this.state !== null) {
+      // Selecting the already-active save is a no-op rather than a
+      // round-trip — the splash uses this path when the player picks
+      // their current campaign by mistake.
+      this.libraryStatus = "ready";
+      return;
+    }
+    this.libraryError = null;
+    try {
+      const response = await api.selectSave(saveId);
+      this.library = response.saves;
+      this.activeSaveId = response.active_save_id;
+      this.#resetEphemera();
+      await this.#run((signal) => api.getState(signal));
+      this.libraryStatus = "ready";
+    } catch (exc) {
+      this.libraryError = this.#formatError(exc);
+    }
+  }
+
+  /**
+   * F-12 open the save library splash mid-session. We keep `state`
+   * populated so that hitting "Cancel" (or hardware back) returns to
+   * the live campaign without a refetch, and so the splash can show
+   * the active save's "you are here" cue without re-asking the server.
+   */
+  openLibrary(): void {
+    if (this.libraryStatus === "ready") {
+      this.libraryStatus = "selecting";
+    }
+    // Refresh the summaries fire-and-forget so the splash isn't stale
+    // (a long-running session may have advanced the active save's
+    // scene/encounter counters that the cards display on hover).
+    void api
+      .bootstrapLibrary()
+      .then((response) => {
+        this.library = response.saves;
+        if (response.active_save_id !== null) {
+          this.activeSaveId = response.active_save_id;
+        }
+      })
+      .catch(() => {
+        // Stale data is acceptable — the splash still works against
+        // whatever we last loaded.
+      });
+  }
+
+  /**
+   * F-12 close the splash without switching. Only valid when an active
+   * save is loaded; the empty-library splash is a hard stop until a
+   * save is created.
+   */
+  closeLibrary(): void {
+    if (this.activeSaveId !== null && this.state !== null) {
+      this.libraryStatus = "ready";
+    }
+  }
+
   async reset(): Promise<void> {
     await this.#run((signal) => api.reset(signal), { cancelLabel: "Stop reset" });
   }
@@ -135,6 +374,23 @@ class GameStore {
 
   async updateNotes(settingNotes: string, playerNotes: string): Promise<void> {
     await this.#run((signal) => api.updateNotes(settingNotes, playerNotes, signal));
+  }
+
+  /**
+   * B-02 persist campaign directives (OOC steering surface).
+   *
+   * Routed through the same `#run` plumbing as every other state
+   * mutation so the loading shimmer / cancel button behave
+   * consistently — the backend swap of "did the action_log gain
+   * an entry?" is invisible to the call site, which is the right
+   * level of abstraction for the Inspector editor: it just wants
+   * to commit and trust that the next render sees the new
+   * directives.
+   */
+  async updateDirectives(worldGuidance: string, playGuidance: string): Promise<void> {
+    await this.#run((signal) =>
+      api.updateDirectives(worldGuidance, playGuidance, signal),
+    );
   }
 
   async askYesNo(question: string, likelihood: Likelihood): Promise<void> {
@@ -159,6 +415,47 @@ class GameStore {
       cancelLabel: "Stop response",
       rollAware: false,
     });
+  }
+
+  /**
+   * F-10 OOC rules explainer. Streams an explanation through the
+   * `final_payload` channel and lands the answer as an ephemeral
+   * `ClientNote` (kind `"explanation"`) — the question and answer
+   * stay on the same note so the chat surface can render a single
+   * OOC card rather than two disjoint bubbles.
+   *
+   * Why we deliberately do NOT mutate `state.action_log`:
+   *   The OOC channel is non-canonical by contract. Persisting the
+   *   exchange would mean future memory rebuilds and narrative
+   *   prompts include the explainer's prose, which would slowly
+   *   poison the in-fiction voice. Keeping the record client-side
+   *   matches the backend's `_load_state_readonly` guarantee and
+   *   makes "ephemeral" a UX promise we can verify (reload clears).
+   *
+   * Streaming UI: while in flight, the ChatFeed renders an OOC
+   * provisional bubble keyed off `streaming.route === "explanation"`.
+   * On stream completion the provisional bubble is replaced by the
+   * persisted ClientNote in one tick — the question is captured on
+   * the note up-front so the visual identity (Q + A pair) is stable
+   * across the swap.
+   */
+  async explain(question: string): Promise<void> {
+    const cleaned = question.trim();
+    if (!cleaned) return;
+    const answer = await this.#runStreamingPayload<string>({
+      stream: (handlers, signal) => api.streamExplain(cleaned, handlers, signal),
+      fallback: async (signal) => {
+        const response = await api.explain(cleaned, signal);
+        return response.answer;
+      },
+      finalKind: "explanation",
+      extract: (payload) => (payload as { answer: string }).answer,
+      cancelLabel: "Stop explaining",
+    });
+    if (answer === null) return;
+    const trimmed = answer.trim();
+    if (trimmed === "") return;
+    this.#explanationNote(cleaned, trimmed);
   }
 
   async submitTurn(text: string): Promise<void> {
@@ -241,6 +538,25 @@ class GameStore {
     });
   }
 
+  /**
+   * F-06 explicit terminal close. We pass `null` for an empty
+   * summary so the backend's deterministic-default branch fires —
+   * that keeps the rule "End-Banner always has prose to render"
+   * enforced server-side, which means new clients can't accidentally
+   * push an empty summary into the canon. The backend rejects this
+   * call with a 409 if the encounter is still active or if death
+   * is requested while the character is alive; we surface the
+   * detail string so the player sees *why* the close was refused.
+   */
+  async endCampaign(reason: CampaignEndReason, summary: string): Promise<void> {
+    const trimmed = summary.trim();
+    const payloadSummary = trimmed === "" ? null : trimmed;
+    await this.#run(
+      (signal) => api.endCampaign(reason, payloadSummary, signal),
+      { cancelLabel: "Stop close" },
+    );
+  }
+
   async startCampaign(): Promise<void> {
     await this.#runStreaming({
       stream: (handlers, signal) => api.streamStartCampaign(handlers, signal),
@@ -302,6 +618,35 @@ class GameStore {
         // behavior the player gets from typing it as prose.
         await this.submitTurn(buildRetreatPrompt(parsed.reason));
         return true;
+      case "acquire":
+        // Same funnel-through-the-planner reasoning as /retreat. The
+        // explicit `/api/cairn/acquire` endpoint exists for callers
+        // that want a deterministic primitive, but the chat-first
+        // invariant says every player turn should produce narration
+        // and memory updates. The planner classifies "I take/loot/buy"
+        // as ACQUIRE_ITEM, so the slash and natural-language paths
+        // converge on the exact same backend pipeline.
+        await this.submitTurn(buildAcquirePrompt(parsed.verb, parsed.body));
+        return true;
+      case "explain":
+        // F-10 OOC explainer. The question never round-trips through
+        // the planner — the explainer is a separate, read-only LLM
+        // path that intentionally does not mutate canon. Routing
+        // through `submitTurn` would persist the exchange in
+        // `action_log` and contaminate future memory rebuilds, which
+        // is exactly what we don't want.
+        await this.explain(parsed.question);
+        return true;
+      case "end":
+        // F-06 terminal close. Unlike /retreat and /acquire, this
+        // does *not* funnel through the planner — terminal-state
+        // transitions are a lifecycle op, not an in-fiction action,
+        // so we hit the dedicated `/campaign/end` endpoint directly
+        // and let the End-Banner read off the resulting state. The
+        // backend writes a system event for the close so the chat
+        // archive still has a closing beat.
+        await this.endCampaign(parsed.reason, parsed.summary);
+        return true;
       case "action":
         await this.submitTurn(parsed.text);
         return true;
@@ -314,6 +659,34 @@ class GameStore {
 
   openInspector(): void {
     this.inspectorOpen = true;
+  }
+
+  /**
+   * F-09 cross-component scroll. The Inspector calls this when the
+   * player clicks an oracle row's "Show in chat" link or a search hit
+   * — `eventId` must be the canonical event id from `action_log` (or
+   * the synthesized `opening_<state-id>` for the very first DM beat).
+   * We bump the sequence counter on every call so back-to-back
+   * requests for the same eventId still re-trigger the feed's
+   * scroll/flash effect.
+   *
+   * Closing the Inspector is the caller's choice, not this method's:
+   * "scroll to a row" is sometimes paired with "and keep the panel
+   * open so I can scan more results", and sometimes paired with
+   * "close the panel out of my way". The signal stays orthogonal.
+   */
+  requestScrollTo(eventId: string): void {
+    this.#scrollSeq += 1;
+    this.scrollRequest = { eventId, seq: this.#scrollSeq };
+  }
+
+  /**
+   * Called by the ChatFeed once it has applied the scroll. Clears
+   * the request so a re-render of the feed (e.g. after a stream
+   * finalizes) doesn't replay the scroll a second time.
+   */
+  consumeScrollRequest(): void {
+    this.scrollRequest = null;
   }
 
   dismissNote(id: string): void {
@@ -381,6 +754,25 @@ class GameStore {
 
   // --- internals ---
 
+  /**
+   * F-12 clear every client-only buffer that was scoped to the
+   * previous save. Called from `createSave` and `selectSave` on the
+   * happy path; deliberately *not* called on bootstrap failure (the
+   * splash needs to keep its `libraryError` visible).
+   *
+   * We don't touch `inspectorOpen` because the player's preference for
+   * having the inspector open is a UX setting, not save-scoped — if
+   * they had it open in their last save, it stays open in the next.
+   */
+  #resetEphemera(): void {
+    this.notes = [];
+    this.error = null;
+    this.scrollRequest = null;
+    this.streaming = emptyStreamingState();
+    this.pendingOracle = null;
+    this.rollPhase = "idle";
+  }
+
   #note(kind: ClientNote["kind"], text: string): void {
     this.notes = [
       ...this.notes,
@@ -388,6 +780,24 @@ class GameStore {
         id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         kind,
         text,
+        created_at: new Date().toISOString(),
+      },
+    ];
+  }
+
+  // F-10: separate helper because explanation notes carry both the
+  // question and answer. We could overload `#note(...)` instead, but
+  // that would mean every other call site has to remember to leave
+  // the question undefined; a focused helper keeps the OOC shape
+  // self-documenting at the call site.
+  #explanationNote(question: string, answer: string): void {
+    this.notes = [
+      ...this.notes,
+      {
+        id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        kind: "explanation",
+        text: answer,
+        question,
         created_at: new Date().toISOString(),
       },
     ];
@@ -564,7 +974,7 @@ class GameStore {
   async #runStreamingPayload<TFinal>(opts: {
     stream: (handlers: StreamHandlers, signal: AbortSignal) => Promise<StreamResult>;
     fallback: (signal: AbortSignal) => Promise<TFinal>;
-    finalKind: "character_quiz" | "character_draft";
+    finalKind: "character_quiz" | "character_draft" | "explanation";
     extract: (payload: unknown) => TFinal;
     cancelLabel?: string;
   }): Promise<TFinal | null> {

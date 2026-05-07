@@ -15,6 +15,7 @@ import type {
   CairnItemTag,
   CairnMechanicsSource,
   CairnRestKind,
+  EncounterInitiator,
   OracleOutcome,
 } from "./types";
 
@@ -259,12 +260,33 @@ function formatAttackHeadline(outcome: OracleOutcome): string {
   return `Attack · ${target} · ${dmg} dmg`;
 }
 
+// F-05: a harm outcome that *opened* the fight reads better as
+// "Ambush · 2 · HP 4" than the generic "Harm · 2 · HP 4". The backend
+// tags this with `combat_started=true` *and* `combat_initiator=enemy`;
+// we need both signals because a player attack can also flip
+// combat_started=true, but the initiator is then `player` and the
+// existing "Harm · …" framing remains correct (the player chose the
+// fight). For non-opening harm (trap damage, established round-N foe
+// blow), `combat_started` is null/false and we keep the plain prefix.
+function harmHeadlinePrefix(outcome: OracleOutcome): string {
+  const cairn = outcome.cairn;
+  if (
+    cairn !== null
+    && cairn.combat_started === true
+    && cairn.combat_initiator === "enemy"
+  ) {
+    return "Ambush";
+  }
+  return "Harm";
+}
+
 function formatHarmHeadline(outcome: OracleOutcome): string {
   const cairn = outcome.cairn;
   if (cairn === null) return "Harm";
   const dmg = cairn.damage_after_armor;
   const hpAfter = cairn.hp_after;
-  const head = dmg === null ? "Harm" : `Harm · ${dmg}`;
+  const prefix = harmHeadlinePrefix(outcome);
+  const head = dmg === null ? prefix : `${prefix} · ${dmg}`;
   const hp = hpAfter === null ? null : `HP ${hpAfter}`;
   const scar = cairn.scar_result;
   return [head, hp, scar].filter((part) => part !== null && part !== "").join(" · ");
@@ -287,4 +309,39 @@ function formatRetreatHeadline(outcome: OracleOutcome): string {
     case "escaped":
       return "Retreat · Escaped";
   }
+}
+
+// --- Initiative / ambush surfacing -------------------------------------
+
+// F-05 surfaces who opened the encounter. The receipt uses this to
+// render an "Initiative" row inside the Cairn dl block — useful when
+// the player scrolls the oracle history and wants to see who started
+// each fight. Returns null for outcomes outside any encounter (trap
+// harm, off-combat harm) and for legacy outcomes that pre-date the
+// field.
+const INITIATOR_LABEL: Record<EncounterInitiator, string> = {
+  player: "Player struck first",
+  enemy: "Foe seized initiative",
+};
+
+export function formatCombatInitiator(
+  initiator: EncounterInitiator | null | undefined,
+): string | null {
+  if (initiator === null || initiator === undefined) return null;
+  return INITIATOR_LABEL[initiator];
+}
+
+// True when the resolution opened a tracked fight as an enemy ambush.
+// We expose this as a single predicate so the receipt and the chat
+// don't each rebuild the same `combat_started && combat_initiator`
+// check; if the backend ever loosens the contract (e.g. "the foe
+// jumps you but the encounter was already pre-seeded"), this is the
+// one place to update.
+export function isAmbushOpener(outcome: OracleOutcome): boolean {
+  const cairn = outcome.cairn;
+  return (
+    cairn !== null
+    && cairn.combat_started === true
+    && cairn.combat_initiator === "enemy"
+  );
 }

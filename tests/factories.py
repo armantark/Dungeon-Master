@@ -14,6 +14,7 @@ def sample_state() -> GameState:
         current_scene="A generated scene waits for player action.",
         setting_notes="Generated setting notes for tests.",
         player_notes="Generated player notes for tests.",
+        npc_roster_version=2,
         campaign_status=CampaignStatus.ACTIVE,
         character=CharacterSheet(
             name="Test Wanderer",

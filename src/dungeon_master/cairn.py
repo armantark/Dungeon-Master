@@ -20,6 +20,7 @@ from dungeon_master.models import (
     CairnRestKind,
     CharacterSheet,
     EncounterEndReason,
+    EncounterInitiator,
     EncounterState,
     EnemyCombatant,
     GameState,
@@ -203,11 +204,68 @@ Known NPCs:
 Character JSON:
 <<CHARACTER_JSON>>
 
-Player turn that is escalating into combat:
+Combat trigger text:
 <<PLAYER_INPUT>>
+
+Encounter initiator:
+<<ENCOUNTER_INITIATOR>>
 
 Named target, if any:
 <<TARGET_NAME>>
+"""
+
+CAIRN_ACQUISITION_SYSTEM_PROMPT = """You convert an active-play acquisition into
+canonical Cairn-style carried items.
+
+Return only valid JSON.
+
+Rules:
+- Only author items explicitly present in, or directly implied by, the
+  acquisition text. Do not invent bonus loot, currency systems, or merchants.
+- Keep the result practical and playable. Prefer 1-3 items; use 4 only for a
+  small coherent bundle.
+- If the text implies money, arrows, rations, herbs, or similar fungible
+  goods, represent them as one bundle item rather than inventing a quantity
+  field.
+- Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
+  uses, equipped state.
+- `equipped` should usually be false unless the text clearly says the player
+  immediately readies, dons, or straps on the item.
+- Preserve the player's meaning; do not rewrite a humble find into treasure.
+"""
+
+CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
+{
+  "items": [
+    {
+      "name": "practical acquired item name",
+      "details": "how this item exists in the fiction and helps in play",
+      "tags": ["petty", "weapon", "utility"],
+      "slots": 1,
+      "weapon_damage_die": null,
+      "armor_bonus": 0,
+      "uses": null,
+      "equipped": false
+    }
+  ]
+}
+
+Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
+
+Acquisition text:
+<<ACQUISITION>>
+
+Current scene:
+<<CURRENT_SCENE>>
+
+Setting notes:
+<<SETTING_NOTES>>
+
+Current inventory:
+<<INVENTORY_JSON>>
+
+Character build notes:
+<<CHARACTER_NOTES>>
 """
 
 
@@ -257,6 +315,10 @@ class GeneratedEncounterCombatant(StrictModel):
 class GeneratedEncounterSeed(StrictModel):
     notes: str = ""
     combatants: list[GeneratedEncounterCombatant] = Field(min_length=1, max_length=4)
+
+
+class GeneratedInventoryAcquisition(StrictModel):
+    items: list[GeneratedCairnItemProfile] = Field(min_length=1, max_length=4)
 
 
 BackfillFunction = Callable[[GameState], CharacterSheet]
@@ -354,6 +416,7 @@ class CairnEngine:
             player_input=f"Attack {target_name}",
             target_name=target_name,
             fallback_target_armor=target_armor,
+            initiator=EncounterInitiator.PLAYER,
             cancel_token=cancel_token,
         )
         target = self._require_target(encounter, target_name)
@@ -447,6 +510,7 @@ class CairnEngine:
                 combat_round=round_before,
                 combat_started=combat_started,
                 combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
                 player_acted=player_acted,
                 initiative_target=initiative_target,
                 weapon_item_id=weapon.id if weapon is not None else None,
@@ -473,6 +537,77 @@ class CairnEngine:
                 morale_success=morale_success,
                 defeated_combatant_ids=defeated_ids,
                 fled_combatant_ids=fled_ids,
+                scar_result=enemy_harm.scar_result,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def resolve_enemy_opener(
+        self,
+        state: GameState,
+        *,
+        source: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        encounter = self._ensure_encounter(
+            state,
+            player_input=text,
+            target_name=source,
+            fallback_target_armor=0,
+            initiator=EncounterInitiator.ENEMY,
+            cancel_token=cancel_token,
+        )
+        round_before = encounter.round_number
+        combat_started = encounter.initiator == EncounterInitiator.ENEMY and round_before == 1
+        encounter.first_round_dex_gate_pending = False
+        encounter.player_disengaged = False
+        encounter.pursuit_active = False
+        encounter.end_reason = None
+
+        enemy_harm = self._resolve_enemy_turn(
+            state,
+            encounter,
+            preferred_attacker_name=source,
+        )
+        encounter.active = self._has_active_enemies(encounter)
+        if encounter.active:
+            encounter.round_number += 1
+            encounter.end_reason = None
+            summary = (
+                f"{enemy_harm.source} seizes the initiative. {enemy_harm.summary} "
+                f"Combat is active in round {encounter.round_number}."
+            )
+        else:
+            encounter.end_reason = EncounterEndReason.VICTORY
+            encounter.notes = "No active foes remain."
+            summary = (
+                f"{enemy_harm.source} struck first. {enemy_harm.summary} "
+                "The immediate fight is no longer active."
+            )
+
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=summary,
+            rolls=enemy_harm.rolls,
+            question=text,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=round_before,
+                combat_started=combat_started,
+                combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
+                player_acted=False,
+                target_name=enemy_harm.source,
+                target_armor=enemy_harm.armor_value,
+                damage_after_armor=enemy_harm.damage_after_armor,
+                hp_before=enemy_harm.hp_before,
+                hp_after=enemy_harm.hp_after,
+                str_before=enemy_harm.str_before,
+                str_after=enemy_harm.str_after,
+                enemy_damage=enemy_harm.damage_after_armor,
+                enemy_damage_source=enemy_harm.source if enemy_harm.damage_after_armor else None,
                 scar_result=enemy_harm.scar_result,
                 overloaded=state.character.cairn.overloaded,
             ),
@@ -548,6 +683,7 @@ class CairnEngine:
                 success=retreat_success,
                 combat_round=round_before,
                 combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
                 hp_before=enemy_harm.hp_before,
                 hp_after=enemy_harm.hp_after,
                 str_before=enemy_harm.str_before,
@@ -587,6 +723,11 @@ class CairnEngine:
             question=source,
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(
+                combat_initiator=(
+                    state.encounter.initiator
+                    if in_combat and state.encounter.active
+                    else None
+                ),
                 target_name=source,
                 target_armor=applied.armor_value,
                 base_damage=amount,
@@ -620,14 +761,14 @@ class CairnEngine:
                 cairn.fatigue = 0
                 cairn.critically_wounded = False
         elif not cairn.deprived:
-                cairn.hp = cairn.max_hp
-                cairn.fatigue = 0
-                cairn.str_score = cairn.max_str_score
-                cairn.dex_score = cairn.max_dex_score
-                cairn.wil_score = cairn.max_wil_score
-                cairn.critically_wounded = False
-                cairn.paralyzed = False
-                cairn.delirious = False
+            cairn.hp = cairn.max_hp
+            cairn.fatigue = 0
+            cairn.str_score = cairn.max_str_score
+            cairn.dex_score = cairn.max_dex_score
+            cairn.wil_score = cairn.max_wil_score
+            cairn.critically_wounded = False
+            cairn.paralyzed = False
+            cairn.delirious = False
 
         self._recompute_derived(state.character)
         return OracleOutcome(
@@ -701,6 +842,63 @@ class CairnEngine:
         self._recompute_derived(state.character)
         return f"Dropped {target.name}."
 
+    def acquire_items(
+        self,
+        state: GameState,
+        *,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
+        self._require_ready(state)
+        cleaned = text.strip()
+        if not cleaned:
+            message = "Acquisition text cannot be empty."
+            raise ValueError(message)
+
+        generated: GeneratedInventoryAcquisition | None = None
+        if self._config.is_usable():
+            prompt = self._build_acquisition_prompt(state, cleaned)
+            request = CompletionRequest(
+                model=self._config.model,
+                messages=[
+                    {"role": "system", "content": CAIRN_ACQUISITION_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=max(self._config.max_tokens, 2200),
+                timeout=self._config.timeout_seconds,
+                stream=True,
+                api_key=self._config.api_key,
+                base_url=self._config.base_url,
+                reasoning_effort="low",
+                reasoning={
+                    "max_tokens": 900,
+                    "exclude": self._config.exclude_reasoning,
+                },
+                extra_headers=self._openrouter_headers(),
+                response_format=None,
+                cancel_token=cancel_token,
+            )
+            try:
+                payload = self._complete_json(request)
+                generated = GeneratedInventoryAcquisition.model_validate_json(
+                    extract_json_object(payload),
+                )
+            except ValueError:
+                generated = None
+
+        if generated is None:
+            generated = self._fallback_inventory_acquisition(cleaned)
+
+        acquired = self._inventory_items_from_profiles(
+            generated.items,
+            source=CairnMechanicsSource.EXPLICIT,
+        )
+        state.character.inventory.extend(acquired)
+        self._normalize_newly_equipped_weapons(state.character, acquired)
+        self._recompute_derived(state.character)
+        return self._inventory_acquisition_summary(acquired)
+
     def _backfill_character(
         self,
         state: GameState,
@@ -745,23 +943,11 @@ class CairnEngine:
         authored: CharacterSheet,
         generated: GeneratedCairnBackfill,
     ) -> CharacterSheet:
-        inventory = [
-            InventoryItem(
-                name=item.name,
-                details=item.details,
-                cairn=CairnItemState(
+        inventory = self._inventory_items_from_profiles(
+            generated.inventory,
             source=CairnMechanicsSource.NARRATIVE_BACKFILL,
-                    backfill_version=CURRENT_BACKFILL_VERSION,
-                    tags=item.tags,
-                    slots=item.slots,
-                    weapon_damage_die=item.weapon_damage_die,
-                    armor_bonus=item.armor_bonus,
-                    uses=item.uses,
-                    equipped=item.equipped,
-                ),
-            )
-            for item in generated.inventory
-        ]
+            backfill_version=CURRENT_BACKFILL_VERSION,
+        )
         return authored.model_copy(
             update={
                 "inventory": inventory,
@@ -795,6 +981,98 @@ class CairnEngine:
             deep=True,
         )
 
+    def _inventory_items_from_profiles(
+        self,
+        profiles: list[GeneratedCairnItemProfile],
+        *,
+        source: CairnMechanicsSource,
+        backfill_version: int = 0,
+    ) -> list[InventoryItem]:
+        return [
+            InventoryItem(
+                name=profile.name,
+                details=profile.details,
+                cairn=CairnItemState(
+                    source=source,
+                    backfill_version=backfill_version,
+                    tags=profile.tags,
+                    slots=profile.slots,
+                    weapon_damage_die=profile.weapon_damage_die,
+                    armor_bonus=profile.armor_bonus,
+                    uses=profile.uses,
+                    equipped=profile.equipped,
+                ),
+            )
+            for profile in profiles
+        ]
+
+    def _normalize_newly_equipped_weapons(
+        self,
+        character: CharacterSheet,
+        acquired: list[InventoryItem],
+    ) -> None:
+        equipped_weapon = next(
+            (
+                item
+                for item in acquired
+                if CairnItemTag.WEAPON in item.cairn.tags and item.cairn.equipped
+            ),
+            None,
+        )
+        if equipped_weapon is None:
+            return
+        for item in character.inventory:
+            if CairnItemTag.WEAPON in item.cairn.tags:
+                item.cairn.equipped = item.id == equipped_weapon.id
+
+    def _build_acquisition_prompt(self, state: GameState, text: str) -> str:
+        return (
+            CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE.replace("<<ACQUISITION>>", text)
+            .replace("<<CURRENT_SCENE>>", state.current_scene)
+            .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
+            .replace(
+                "<<INVENTORY_JSON>>",
+                json.dumps(
+                    [item.model_dump(mode="json") for item in state.character.inventory],
+                    indent=2,
+                ),
+            )
+            .replace("<<CHARACTER_NOTES>>", state.character.cairn.notes or "(none)")
+        )
+
+    def _fallback_inventory_acquisition(self, text: str) -> GeneratedInventoryAcquisition:
+        return GeneratedInventoryAcquisition(
+            items=[
+                GeneratedCairnItemProfile(
+                    name="Acquired gear",
+                    details=f"Taken during play: {text}",
+                    tags=[CairnItemTag.UTILITY],
+                    slots=1,
+                    weapon_damage_die=None,
+                    armor_bonus=0,
+                    uses=None,
+                    equipped=False,
+                ),
+            ],
+        )
+
+    def _inventory_acquisition_summary(self, acquired: list[InventoryItem]) -> str:
+        names = ", ".join(item.name for item in acquired)
+        equipped = [
+            item.name
+            for item in acquired
+            if item.cairn.equipped
+            and (
+                CairnItemTag.WEAPON in item.cairn.tags
+                or CairnItemTag.ARMOR in item.cairn.tags
+                or CairnItemTag.SHIELD in item.cairn.tags
+            )
+        ]
+        if equipped:
+            equipped_names = ", ".join(equipped)
+            return f"Acquired {names}. Readied: {equipped_names}."
+        return f"Acquired {names}."
+
     def _build_backfill_prompt(self, state: GameState) -> str:
         return (
             CAIRN_BACKFILL_USER_PROMPT_TEMPLATE.replace(
@@ -802,7 +1080,7 @@ class CairnEngine:
                 state.character.model_dump_json(indent=2),
             )
             .replace("<<CURRENT_SCENE>>", state.current_scene)
-            .replace("<<SETTING_NOTES>>", state.setting_notes)
+            .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
             .replace("<<THREAD_TITLES>>", ", ".join(thread.title for thread in state.threads) or "(none)")
             .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
         )
@@ -840,13 +1118,14 @@ class CairnEngine:
             headers["X-Title"] = self._config.app_name
         return headers or None
 
-    def _ensure_encounter(
+    def _ensure_encounter(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         target_name: str,
         fallback_target_armor: int,
+        initiator: EncounterInitiator,
         cancel_token: CancellationToken | None = None,
     ) -> EncounterState:
         encounter = state.encounter
@@ -858,22 +1137,29 @@ class CairnEngine:
             player_input=player_input,
             target_name=target_name,
             fallback_target_armor=fallback_target_armor,
+            initiator=initiator,
             cancel_token=cancel_token,
         )
         return state.encounter
 
-    def _seed_encounter(
+    def _seed_encounter(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         target_name: str,
         fallback_target_armor: int,
+        initiator: EncounterInitiator,
         cancel_token: CancellationToken | None = None,
     ) -> EncounterState:
         generated: GeneratedEncounterSeed | None = None
         if self._config.is_usable():
-            prompt = self._build_encounter_prompt(state, player_input=player_input, target_name=target_name)
+            prompt = self._build_encounter_prompt(
+                state,
+                player_input=player_input,
+                target_name=target_name,
+                initiator=initiator,
+            )
             request = CompletionRequest(
                 model=self._config.model,
                 messages=[
@@ -917,6 +1203,7 @@ class CairnEngine:
             active=True,
             round_number=1,
             first_round_dex_gate_pending=True,
+            initiator=initiator,
             combatants=[
                 EnemyCombatant(
                     name=combatant.name,
@@ -943,15 +1230,27 @@ class CairnEngine:
         *,
         player_input: str,
         target_name: str,
+        initiator: EncounterInitiator,
     ) -> str:
         return (
             CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
-            .replace("<<SETTING_NOTES>>", state.setting_notes)
+            .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
             .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
             .replace("<<CHARACTER_JSON>>", state.character.model_dump_json(indent=2))
             .replace("<<PLAYER_INPUT>>", player_input)
+            .replace("<<ENCOUNTER_INITIATOR>>", initiator.value)
             .replace("<<TARGET_NAME>>", target_name)
         )
+
+    def _prompt_setting_context(self, state: GameState) -> str:
+        if not state.directives.has_content():
+            return state.setting_notes
+        directive_lines: list[str] = []
+        if state.directives.world_guidance.strip():
+            directive_lines.append(f"World guidance: {state.directives.world_guidance.strip()}")
+        if state.directives.play_guidance.strip():
+            directive_lines.append(f"Play guidance: {state.directives.play_guidance.strip()}")
+        return state.setting_notes + "\n\nCampaign directives:\n" + "\n".join(directive_lines)
 
     def _fallback_encounter_seed(
         self,
@@ -1105,7 +1404,13 @@ class CairnEngine:
             False,
         )
 
-    def _resolve_enemy_turn(self, state: GameState, encounter: EncounterState) -> HarmApplication:
+    def _resolve_enemy_turn(
+        self,
+        state: GameState,
+        encounter: EncounterState,
+        *,
+        preferred_attacker_name: str | None = None,
+    ) -> HarmApplication:
         active = [
             combatant
             for combatant in encounter.combatants
@@ -1125,10 +1430,26 @@ class CairnEngine:
                 scar_result=None,
             )
 
-        enemy_rolls: list[tuple[EnemyCombatant, Roll]] = [
-            (combatant, self._roll(combatant.weapon_damage_die, f"enemy_damage_{combatant.id}"))
-            for combatant in active
-        ]
+        preferred_attacker = (
+            self._find_combatant(encounter, preferred_attacker_name)
+            if preferred_attacker_name is not None
+            else None
+        )
+        if preferred_attacker is not None and not preferred_attacker.defeated and not preferred_attacker.fled:
+            enemy_rolls = [
+                (
+                    preferred_attacker,
+                    self._roll(
+                        preferred_attacker.weapon_damage_die,
+                        f"enemy_damage_{preferred_attacker.id}",
+                    ),
+                ),
+            ]
+        else:
+            enemy_rolls = [
+                (combatant, self._roll(combatant.weapon_damage_die, f"enemy_damage_{combatant.id}"))
+                for combatant in active
+            ]
         highest_combatant, highest_roll = max(enemy_rolls, key=lambda pair: pair[1].result)
         applied = self._apply_harm_to_character(
             state.character.cairn,

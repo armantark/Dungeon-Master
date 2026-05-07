@@ -467,6 +467,13 @@ class NarrativeEngine:
             f"Player notes: {self._clip_prompt_text(state.player_notes, 350)}",
             f"Oracle outcome JSON: {self._compact_outcome_json(outcome)}",
         ]
+        if state.directives.has_content():
+            lines.extend(
+                [
+                    "Campaign directives:",
+                    self._directives_prompt_block(state),
+                ],
+            )
         if memory_context:
             lines.extend(
                 [
@@ -494,6 +501,20 @@ class NarrativeEngine:
             ],
         )
         return "\n".join(lines)
+
+    def _directives_prompt_block(self, state: GameState) -> str:
+        lines: list[str] = []
+        if state.directives.world_guidance.strip():
+            lines.append(
+                "World guidance: "
+                + self._clip_prompt_text(state.directives.world_guidance, 350),
+            )
+        if state.directives.play_guidance.strip():
+            lines.append(
+                "Play guidance: "
+                + self._clip_prompt_text(state.directives.play_guidance, 350),
+            )
+        return "\n".join(lines) or "(none)"
 
     def _compact_character_json(self, state: GameState) -> str:
         character = state.character

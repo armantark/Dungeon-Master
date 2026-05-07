@@ -37,6 +37,20 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
   .drawer {
     padding: 0;
     overflow: hidden;
+    /*
+     * B-01: the inspector lays drawers out in a `display: flex;
+     * flex-direction: column` body. Without this, each drawer's
+     * `flex-shrink: 1` (the flexbox default) lets the section be
+     * vertically compressed below the flap button's intrinsic
+     * 3.55rem min-height, and the parent's `overflow: hidden` then
+     * clips the flap mid-button — labels and chevrons end up
+     * visually hidden under the next drawer's flap. Pinning
+     * `flex-shrink: 0` keeps each drawer at its natural height; the
+     * inspector body's `overflow-y: auto` is what should produce
+     * the scrollbar when the stack is taller than the viewport,
+     * not flex shrinking.
+     */
+    flex-shrink: 0;
   }
   .flap {
     width: 100%;
@@ -69,7 +83,23 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
     color: var(--gold-tarnished);
   }
   .body {
-    padding: 0.65rem 0.75rem 0.75rem;
+    padding: 0.65rem 0.85rem 0.75rem;
     overflow-y: auto;
+    /*
+     * B-01: when a drawer's content overflows its `maxHeight`, the
+     * inner scrollbar used to overlap the right padding and crowd
+     * the prose against text-on-scrollbar (Chrome/Safari render
+     * scrollbars inside the right padding area). `scrollbar-gutter:
+     * stable` reserves the gutter unconditionally — content stays
+     * put whether or not the scrollbar is visible, and the bumped
+     * 0.85rem right padding keeps a comfortable gap between text
+     * and gutter so prose never sits flush against the scrollbar.
+     * `overflow-wrap: anywhere` is a defensive fallback for the
+     * occasional unbreakable string (a long item id pasted into
+     * notes, a URL the LLM emits) so it can never push the layout
+     * horizontally and reintroduce a horizontal scrollbar.
+     */
+    scrollbar-gutter: stable;
+    overflow-wrap: anywhere;
   }
 </style>

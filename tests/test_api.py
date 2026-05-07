@@ -8,7 +8,7 @@ serialization, and state-mutation contracts without spending tokens.
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -23,7 +23,9 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.explainer import ExplanationResult
 from dungeon_master.models import (
+    NPC,
     AttackStance,
     CairnAbility,
     CairnCharacterState,
@@ -32,16 +34,21 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnResolution,
     CairnRestKind,
+    CampaignEndReason,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterQuizOption,
     CharacterQuizQuestion,
     CharacterSheet,
+    EncounterInitiator,
     EncounterState,
     EnemyCombatant,
     GameState,
+    GameThread,
+    InventoryItem,
     Likelihood,
+    NPCStatus,
     OracleKind,
     OracleOutcome,
     RetreatOutcome,
@@ -52,10 +59,20 @@ from dungeon_master.narrative import (
     NarrativeConfig,
     NarrativeResult,
 )
+from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdateResult
 from dungeon_master.oracle import OracleEngine
+from dungeon_master.save_library import SaveLibrary
 from dungeon_master.service import GameService
 from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import RoutedTurn, TurnRoute, TurnRouter
+from dungeon_master.thread_updater import ThreadUpdateResult
+from dungeon_master.turn_router import (
+    PlannedTurnOp,
+    PlannedTurnOpKind,
+    RoutedTurn,
+    TurnPlan,
+    TurnRoute,
+    TurnRouter,
+)
 from tests.factories import sample_state
 
 if TYPE_CHECKING:
@@ -63,6 +80,8 @@ if TYPE_CHECKING:
 
 
 class FakeNarrative:
+    _config = NarrativeConfig(model="", api_key=None, base_url=None)
+
     def generate(  # noqa: PLR0913
         self,
         state: GameState,
@@ -132,6 +151,51 @@ class ThoughtfulNarrative(FakeNarrative):
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+        )
+
+
+class FakeExplainer:
+    def generate_result(
+        self,
+        state: GameState,
+        question: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ExplanationResult:
+        del cancel_token
+        memory_suffix = " / mem yes" if memory_context else ""
+        latest = state.oracle_history[-1].summary if state.oracle_history else "no prior outcome"
+        return ExplanationResult(
+            answer=(
+                f"OOC: {question} / latest {latest} / chaos {state.chaos_factor}{memory_suffix}"
+            ),
+        )
+
+    def iter_stream(
+        self,
+        state: GameState,
+        question: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, ExplanationResult]:
+        del cancel_token
+        yield CompletionDelta(thinking="Explainer considered the current state.")
+        yield CompletionDelta(
+            content=self.generate_result(
+                state,
+                question,
+                memory_context=memory_context,
+            ).answer,
+        )
+        return ExplanationResult(
+            answer=self.generate_result(
+                state,
+                question,
+                memory_context=memory_context,
+            ).answer,
+            thinking="Explainer considered the current state.",
         )
 
 
@@ -365,6 +429,40 @@ class FakeCairnEngine:
         if equipped:
             state.character.cairn.primary_weapon_item_id = item_id
 
+    def acquire_items(
+        self,
+        state: GameState,
+        *,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
+        del cancel_token
+        lantern = InventoryItem(
+            name="Pilgrim lantern",
+            details="Taken during play.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.LIGHT, CairnItemTag.UTILITY],
+                slots=1,
+                uses=3,
+                equipped="ready" in text.lower(),
+            ),
+        )
+        purse = InventoryItem(
+            name="Purse of old silver",
+            details="A small bundle of spendable coin.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.PETTY, CairnItemTag.UTILITY],
+                slots=0,
+            ),
+        )
+        state.character.inventory.extend([lantern, purse])
+        state.character.cairn.slots_used = sum(
+            item.cairn.slots for item in state.character.inventory
+        )
+        return "Acquired Pilgrim lantern, Purse of old silver."
+
     def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
         for item in list(state.character.inventory):
             if item.id != item_id:
@@ -470,6 +568,45 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             ),
         )
 
+    def resolve_enemy_opener(
+        self,
+        state: GameState,
+        *,
+        source: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        state.encounter = EncounterState(
+            active=True,
+            round_number=2,
+            first_round_dex_gate_pending=False,
+            initiator=EncounterInitiator.ENEMY,
+            combatants=[EnemyCombatant(name=source, hp=4, max_hp=4)],
+            notes="A hostile foe seized the initiative.",
+        )
+        state.character.cairn.hp = max(0, state.character.cairn.hp - 1)
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=f"{source} struck first: {text}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=1,
+                combat_started=True,
+                combat_active=True,
+                combat_initiator=EncounterInitiator.ENEMY,
+                player_acted=False,
+                target_name=source,
+                damage_after_armor=1,
+                hp_before=4,
+                hp_after=state.character.cairn.hp,
+                str_before=state.character.cairn.max_str_score,
+                str_after=state.character.cairn.str_score,
+                enemy_damage=1,
+                enemy_damage_source=source,
+            ),
+        )
+
     def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
         state.character.cairn.hp = state.character.cairn.max_hp
         return OracleOutcome(
@@ -478,6 +615,95 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(rest_kind=kind, hp_before=0, hp_after=state.character.cairn.hp),
         )
+
+
+class FatalPlayableCairnEngine(FakePlayableCairnEngine):
+    def suffer_harm(
+        self,
+        state: GameState,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> OracleOutcome:
+        del in_combat, armor_applies
+        state.character.cairn.hp = 0
+        state.character.cairn.str_score = 0
+        state.character.cairn.dead = True
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=f"Fatal harm from {source}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=source,
+                base_damage=amount,
+                damage_after_armor=amount,
+                hp_before=1,
+                hp_after=0,
+                str_before=1,
+                str_after=0,
+            ),
+        )
+
+
+class FakeThreadUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+    ) -> None:
+        self._mutate = mutate
+
+    def update_threads(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ThreadUpdateResult:
+        del player_input, execution_context, memory_context, cancel_token
+        if self._mutate is None:
+            return ThreadUpdateResult()
+        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, outcome))
+
+
+class FakeNpcUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+        repair: LegacyNPCRosterRepairResult | None = None,
+    ) -> None:
+        self._mutate = mutate
+        self._repair = repair
+
+    def update_npcs(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> NPCUpdateResult:
+        del player_input, execution_context, memory_context, cancel_token
+        if self._mutate is None:
+            return NPCUpdateResult()
+        return NPCUpdateResult(touched_npc_ids=self._mutate(state, outcome))
+
+    def reseed_legacy_roster(
+        self,
+        state: GameState,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+        use_model: bool = False,
+    ) -> LegacyNPCRosterRepairResult:
+        del state, memory_context, cancel_token, use_model
+        return self._repair or LegacyNPCRosterRepairResult()
 
 
 def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:  # noqa: PLR0911
@@ -514,15 +740,25 @@ def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:
     return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=text)
 
 
-def _client(tmp_path: Path, *, turn_router: TurnRouter | None = None) -> TestClient:
+def _client(
+    tmp_path: Path,
+    *,
+    turn_router: TurnRouter | None = None,
+    thread_updater: FakeThreadUpdater | None = None,
+    npc_updater: FakeNpcUpdater | None = None,
+    explainer: FakeExplainer | None = None,
+) -> TestClient:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
         narrative=FakeNarrative(),
+        explainer=explainer or FakeExplainer(),
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakePlayableCairnEngine(),
         turn_router=turn_router or TurnRouter(classifier=scripted_classifier),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
     )
     return TestClient(create_app(service=service))
 
@@ -532,6 +768,7 @@ def _setup_client(tmp_path: Path) -> TestClient:
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
         narrative=FakeNarrative(),
+        explainer=FakeExplainer(),
         campaign_generator=FakeCampaignGenerator(),
         character_generator=SetupCharacterGenerator(),
         cairn_engine=FakePlayableCairnEngine(),
@@ -545,8 +782,23 @@ def _thoughtful_client(tmp_path: Path) -> TestClient:
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
         narrative=ThoughtfulNarrative(),
+        explainer=FakeExplainer(),
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakePlayableCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+    return TestClient(create_app(service=service))
+
+
+def _thoughtful_setup_client(tmp_path: Path) -> TestClient:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=ThoughtfulNarrative(),
+        explainer=FakeExplainer(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=SetupCharacterGenerator(),
         cairn_engine=FakePlayableCairnEngine(),
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
@@ -558,6 +810,7 @@ def _broken_planner_client(tmp_path: Path) -> TestClient:
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
         narrative=FakeNarrative(),
+        explainer=FakeExplainer(),
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakePlayableCairnEngine(),
@@ -572,6 +825,19 @@ def _broken_planner_client(tmp_path: Path) -> TestClient:
         ),
     )
     return TestClient(create_app(service=service))
+
+
+def _library_service(tmp_path: Path) -> GameService:
+    return GameService(
+        store=StateStore(tmp_path / "seed_game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        explainer=FakeExplainer(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=SetupCharacterGenerator(),
+        cairn_engine=FakePlayableCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
 
 
 def test_health(tmp_path: Path) -> None:
@@ -595,6 +861,89 @@ def test_cancel_live_request_returns_true(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json() == {"cancelled": True}
     assert token.cancelled
+
+
+def test_library_bootstrap_returns_empty_when_no_saves_exist(tmp_path: Path) -> None:
+    service = _library_service(tmp_path)
+    library = SaveLibrary(tmp_path / "game_state.json")
+
+    with TestClient(create_app(service=service, save_library=library)) as client:
+        response = client.get("/api/library/bootstrap")
+        state_response = client.get("/api/state")
+
+    assert response.status_code == 200
+    assert response.json() == {"active_save_id": None, "saves": []}
+    assert state_response.status_code == 409
+    assert state_response.json()["detail"] == "No active save selected."
+
+
+def test_create_save_endpoint_selects_new_save_and_exposes_state(tmp_path: Path) -> None:
+    service = _library_service(tmp_path)
+    library = SaveLibrary(tmp_path / "game_state.json")
+
+    with TestClient(create_app(service=service, save_library=library)) as client:
+        response = client.post("/api/library/saves", json={"select": True})
+        state_response = client.get("/api/state")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_save_id"] is not None
+    assert len(payload["saves"]) == 1
+    assert payload["saves"][0]["campaign_status"] == "character_creation"
+    assert state_response.status_code == 200
+    assert state_response.json()["campaign_status"] == "character_creation"
+
+
+def test_select_save_endpoint_switches_the_active_state_store(tmp_path: Path) -> None:
+    service = _library_service(tmp_path)
+    library = SaveLibrary(tmp_path / "game_state.json")
+
+    first_id = library.create_save(create_state=service.new_setup_state(), select=True)
+    second_id = library.create_save(create_state=service.new_setup_state(), select=False)
+
+    first_store = StateStore(library.state_path_for(first_id))
+    first_state = first_store.load()
+    first_state.character.name = "Vrtanes"
+    first_state.character.epithet = "Myrrh-stained anathematist"
+    first_store.save(first_state, create_checkpoint=False)
+
+    second_store = StateStore(library.state_path_for(second_id))
+    second_state = second_store.load()
+    second_state.character.name = "Sahak"
+    second_state.character.epithet = "Apostolic penitent"
+    second_store.save(second_state, create_checkpoint=False)
+
+    with TestClient(create_app(service=service, save_library=library)) as client:
+        initial = client.get("/api/state")
+        switched = client.post("/api/library/select", json={"save_id": second_id})
+        after_switch = client.get("/api/state")
+
+    assert initial.status_code == 200
+    assert initial.json()["character"]["name"] == "Vrtanes"
+    assert switched.status_code == 200
+    assert switched.json()["active_save_id"] == second_id
+    assert after_switch.status_code == 200
+    assert after_switch.json()["character"]["name"] == "Sahak"
+
+
+def test_select_save_endpoint_rejects_switch_while_request_is_in_flight(
+    tmp_path: Path,
+) -> None:
+    service = _library_service(tmp_path)
+    library = SaveLibrary(tmp_path / "game_state.json")
+
+    library.create_save(create_state=service.new_setup_state(), select=True)
+    second_id = library.create_save(create_state=service.new_setup_state(), select=False)
+
+    with TestClient(create_app(service=service, save_library=library)) as client:
+        cast("Any", client.app).state.cancellation_registry.register("req_live")
+        response = client.post("/api/library/select", json={"save_id": second_id})
+
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"]
+        == "Cannot switch saves while a request is still in flight."
+    )
 
 
 def test_state_round_trip(tmp_path: Path) -> None:
@@ -723,6 +1072,40 @@ def test_submit_turn_routes_attack(tmp_path: Path) -> None:
     assert payload["oracle_history"][0]["cairn"]["target_name"] == "Abbey ghoul"
 
 
+def test_submit_turn_routes_enemy_opener_into_tracked_encounter(tmp_path: Path) -> None:
+    def ambush_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.HARM,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ENEMY_OPENER,
+                    text=text,
+                    harm_source="Abbey ghoul",
+                ),
+            ),
+        )
+
+    with _client(tmp_path, turn_router=TurnRouter(classifier=ambush_classifier)) as client:
+        response = client.post(
+            "/api/turn",
+            json={
+                "text": (
+                    "The abbey ghoul drops from the choir loft and claws me before I can "
+                    "raise my cudgel."
+                ),
+            },
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["oracle_history"][0]["kind"] == "harm"
+    assert payload["oracle_history"][0]["cairn"]["combat_started"] is True
+    assert payload["oracle_history"][0]["cairn"]["combat_initiator"] == "enemy"
+    assert payload["encounter"]["active"] is True
+    assert payload["encounter"]["initiator"] == "enemy"
+
+
 def test_submit_turn_routes_recovery(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         response = client.post(
@@ -768,6 +1151,74 @@ def test_submit_turn_routes_equip(tmp_path: Path) -> None:
     assert payload["action_log"][-1]["title"] == "Narrative response"
 
 
+def test_submit_turn_can_return_dynamic_thread_updates(tmp_path: Path) -> None:
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = GameThread(
+            title="The hierophant's unfinished demand",
+            stakes="If ignored, the abbey's claim hardens into pursuit.",
+        )
+        state.threads.append(created)
+        return (created.id,)
+
+    with _client(tmp_path, thread_updater=FakeThreadUpdater(mutate=mutate)) as client:
+        response = client.post(
+            "/api/turn",
+            json={"text": "I agree to hear the hierophant's charge."},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    created = next(
+        thread
+        for thread in payload["threads"]
+        if thread["title"] == "The hierophant's unfinished demand"
+    )
+    assert payload["oracle_history"][0]["referenced_thread_id"] == created["id"]
+    assert payload["oracle_history"][0]["referenced_thread_ids"] == [created["id"]]
+
+
+def test_submit_turn_can_return_dynamic_npc_updates(tmp_path: Path) -> None:
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = NPC(
+            name="Brother Vahagn",
+            role="Bell-ringer hiding a blood debt",
+            disposition="guarded",
+        )
+        state.npcs.append(created)
+        return (created.id,)
+
+    with _client(tmp_path, npc_updater=FakeNpcUpdater(mutate=mutate)) as client:
+        response = client.post(
+            "/api/turn",
+            json={"text": "I ask the bell-ringer why he watches me."},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    created = next(npc for npc in payload["npcs"] if npc["name"] == "Brother Vahagn")
+    assert created["status"] == NPCStatus.ACTIVE.value
+    assert payload["oracle_history"][0]["referenced_npc_id"] == created["id"]
+    assert payload["oracle_history"][0]["referenced_npc_ids"] == [created["id"]]
+
+
+def test_update_directives_endpoint_persists_ooc_guidance(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/state/directives",
+            json={
+                "world_guidance": "Keep miracles subtle and costly.",
+                "play_guidance": "The hierophant cannot speak first.",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["directives"]["world_guidance"] == "Keep miracles subtle and costly."
+    assert payload["directives"]["play_guidance"] == "The hierophant cannot speak first."
+    assert all(event["title"] != "Campaign directives updated" for event in payload["action_log"])
+
+
 def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     """The streaming endpoint speaks the NDJSON contract the frontend expects.
 
@@ -808,6 +1259,69 @@ def test_submit_turn_stream_emits_explicit_planning_error(tmp_path: Path) -> Non
     assert parsed[0]["type"] == "meta"
     assert parsed[-1]["type"] == "error"
     assert parsed[-1]["code"] == "planning_failed"
+
+
+def test_explain_endpoint_returns_non_canonical_answer(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        client.post(
+            "/api/oracle/yes-no",
+            json={"question": "Does anything stir?", "likelihood": "Even odds"},
+        )
+        response = client.post(
+            "/api/explain",
+            json={"question": "Why did that outcome happen?"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"].startswith("OOC: Why did that outcome happen?")
+    assert "latest" in payload["answer"]
+    assert payload["thinking"] == ""
+
+
+def test_explain_stream_emits_final_payload(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/explain/stream",
+            json={"question": "What does ambush mean here?"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    parsed = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    types = [event["type"] for event in parsed]
+    assert types[0] == "meta"
+    assert parsed[0]["route"] == "explanation"
+    assert "thinking_delta" in types
+    assert "content_delta" in types
+    assert types[-1] == "final_payload"
+    final = parsed[-1]
+    assert final["kind"] == "explanation"
+    assert final["payload"]["answer"].startswith("OOC: What does ambush mean here?")
+    assert final["thinking"] == "Explainer considered the current state."
+
+
+def test_explain_endpoint_does_not_mutate_state_or_memory(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    with _client(tmp_path) as client:
+        client.post(
+            "/api/oracle/yes-no",
+            json={"question": "Does anything stir?", "likelihood": "Even odds"},
+        )
+        before_state = store.state_path.read_text(encoding="utf-8")
+        before_memory = store.memory_path.read_text(encoding="utf-8")
+
+        response = client.post(
+            "/api/explain",
+            json={"question": "Why did I get that receipt?"},
+        )
+
+        after_state = store.state_path.read_text(encoding="utf-8")
+        after_memory = store.memory_path.read_text(encoding="utf-8")
+
+    assert response.status_code == 200
+    assert before_state == after_state
+    assert before_memory == after_memory
 
 
 def test_streamed_turn_persists_thinking_on_narrative_event(tmp_path: Path) -> None:
@@ -955,13 +1469,34 @@ def test_character_draft_stream_emits_final_payload(tmp_path: Path) -> None:
 
 def test_campaign_start_persists_thinking_on_init_event(tmp_path: Path) -> None:
     character = sample_state().character.model_copy(deep=True)
-    with _thoughtful_client(tmp_path) as client:
+    with _thoughtful_setup_client(tmp_path) as client:
         client.post("/api/character/finalize", json={"character": character.model_dump()})
         response = client.post("/api/campaign/start")
     assert response.status_code == 200
     system_event = response.json()["action_log"][-1]
     assert system_event["title"] == "Campaign initialized"
     assert "Thought" in system_event["thinking"] or system_event["thinking"] == ""
+
+
+def test_campaign_end_endpoint_marks_retirement_and_blocks_future_turns(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        ended = client.post(
+            "/api/campaign/end",
+            json={
+                "reason": CampaignEndReason.RETIREMENT.value,
+                "summary": "Vrtanes leaves the abbey road and does not return.",
+            },
+        )
+        blocked = client.post("/api/turn", json={"text": "I keep walking into the hills."})
+
+    assert ended.status_code == 200
+    body = ended.json()
+    assert body["campaign_status"] == CampaignStatus.ENDED.value
+    assert body["campaign_end_reason"] == CampaignEndReason.RETIREMENT.value
+    assert body["campaign_end_summary"] == "Vrtanes leaves the abbey road and does not return."
+    assert body["action_log"][-1]["title"] == "Campaign ended"
+    assert blocked.status_code == 409
+    assert "retirement" in blocked.json()["detail"]
 
 
 def test_cairn_save_endpoint(tmp_path: Path) -> None:
@@ -1016,6 +1551,42 @@ def test_cairn_harm_and_recover_endpoints(tmp_path: Path) -> None:
     assert recovered.json()["oracle_history"][-1]["kind"] == "recovery"
 
 
+def test_cairn_harm_endpoint_can_end_campaign_on_death(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FatalPlayableCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    with TestClient(create_app(service=service)) as client:
+        seeded = client.get("/api/state").json()
+        seeded["character"]["cairn"]["hp"] = 1
+        seeded["character"]["cairn"]["str_score"] = 1
+        store.save(GameState.model_validate(seeded), create_checkpoint=False)
+
+        response = client.post(
+            "/api/cairn/harm",
+            json={
+                "amount": 5,
+                "source": "Falling masonry",
+                "in_combat": True,
+                "armor_applies": False,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["campaign_status"] == CampaignStatus.ENDED.value
+    assert body["campaign_end_reason"] == CampaignEndReason.DEATH.value
+    assert "Final turn: Fatal harm from Falling masonry." in body["campaign_end_summary"]
+    assert body["action_log"][-1]["title"] == "Campaign ended"
+
+
 def test_cairn_retreat_endpoint(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
     seeded = sample_state()
@@ -1035,6 +1606,22 @@ def test_cairn_retreat_endpoint(tmp_path: Path) -> None:
     outcome = response.json()["oracle_history"][-1]
     assert outcome["kind"] == "retreat"
     assert outcome["cairn"]["retreat_outcome"] == "escaped"
+
+
+def test_cairn_acquire_endpoint(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/cairn/acquire",
+            json={"text": "I buy a lantern and a purse of old silver."},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action_log"][0]["title"] == "Inventory acquired"
+    assert body["oracle_history"][-1]["summary"] == "Acquired Pilgrim lantern, Purse of old silver."
+    assert [item["name"] for item in body["character"]["inventory"]][-2:] == [
+        "Pilgrim lantern",
+        "Purse of old silver",
+    ]
 
 
 def test_cairn_equip_endpoint(tmp_path: Path) -> None:

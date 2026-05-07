@@ -230,6 +230,74 @@ def test_classifier_can_return_compound_plan_and_route_uses_primary_op() -> None
     assert routed.target_name == "Abbey ghoul"
 
 
+def test_classifier_can_return_inventory_acquisition_plan() -> None:
+    def acquisition_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ACQUIRE_ITEM,
+                    text="I loot the abbey ghoul for a lantern and a purse of coins.",
+                ),
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.EQUIP,
+                    text="I ready the lantern.",
+                    item_name="Pilgrim lantern",
+                    equipped=True,
+                ),
+            ),
+        )
+
+    router = TurnRouter(
+        classifier=acquisition_classifier,
+    )
+
+    planned = router.plan("I loot the abbey ghoul for a lantern and a purse of coins.")
+    routed = router.route("I loot the abbey ghoul for a lantern and a purse of coins.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert [op.kind for op in planned.ops] == [
+        PlannedTurnOpKind.ACQUIRE_ITEM,
+        PlannedTurnOpKind.EQUIP,
+    ]
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert routed.item_name == "Pilgrim lantern"
+    assert routed.equipped is True
+
+
+def test_classifier_can_return_enemy_opener_plan_while_preserving_harm_route() -> None:
+    def ambush_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.HARM,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ENEMY_OPENER,
+                    text=text,
+                    harm_source="Abbey ghoul",
+                ),
+            ),
+        )
+
+    router = TurnRouter(
+        classifier=ambush_classifier,
+    )
+
+    planned = router.plan(
+        "The abbey ghoul drops from the choir loft and claws me before I can raise my cudgel.",
+    )
+    routed = router.route(
+        "The abbey ghoul drops from the choir loft and claws me before I can raise my cudgel.",
+    )
+
+    assert planned.route == TurnRoute.HARM
+    assert planned.ops[0].kind == PlannedTurnOpKind.ENEMY_OPENER
+    assert planned.ops[0].harm_source == "Abbey ghoul"
+    assert routed.route == TurnRoute.HARM
+    assert routed.harm_source == "Abbey ghoul"
+
+
 def test_router_prompt_includes_bounded_memory_context() -> None:
     completion = RecordingRouterCompletion()
     router = TurnRouter(

@@ -4,6 +4,7 @@ import {
   combatFromState,
   combatantHpTier,
   combatantStatusLabel,
+  enemyInitiated,
   encounterHeadline,
   firstRoundActionGated,
   sortCombatants,
@@ -45,6 +46,7 @@ function makeEncounter(
     round: 1,
     player_ready: false,
     morale_triggered: false,
+    initiator: null,
     combatants: [],
     summary: null,
     ...overrides,
@@ -125,6 +127,61 @@ describe("encounterHeadline", () => {
   it("returns 'Encounter brewing' for round zero", () => {
     expect(encounterHeadline(makeEncounter({ round: 0 }))).toBe("Encounter brewing");
   });
+
+  it("prefixes the headline with 'Ambush · ' when the foe opened the fight", () => {
+    // F-05: enemy-opened encounters advance to round 2 immediately
+    // after the opener resolves (the player's next move is round 2),
+    // so the ambush prefix shows the moment the combat tracker mounts.
+    expect(
+      encounterHeadline(
+        makeEncounter({ round: 2, player_ready: true, initiator: "enemy" }),
+      ),
+    ).toBe("Ambush · Round 2");
+  });
+
+  it("does not prefix player-initiated fights with 'Ambush · '", () => {
+    // Sanity check: the prefix is initiator-gated, so a normal
+    // player attack must still read "Round N" without the prefix.
+    expect(
+      encounterHeadline(
+        makeEncounter({ round: 2, player_ready: true, initiator: "player" }),
+      ),
+    ).toBe("Round 2");
+  });
+
+  it("suppresses the ambush prefix on the first-round DEX gate label", () => {
+    // The DEX-gate label is already loud; doubling up would clutter
+    // the strip. The status strip carries the ambush kicker
+    // independently, so the player still sees the ambush cue at a
+    // glance even on round 1.
+    expect(
+      encounterHeadline(
+        makeEncounter({ round: 1, player_ready: false, initiator: "enemy" }),
+      ),
+    ).toBe("Round 1 · DEX save to act");
+  });
+
+  it("falls back to the cleared summary regardless of initiator once active is false", () => {
+    expect(
+      encounterHeadline(
+        makeEncounter({
+          active: false,
+          initiator: "enemy",
+          summary: "The marauders broke and fled.",
+        }),
+      ),
+    ).toBe("The marauders broke and fled.");
+  });
+});
+
+describe("enemyInitiated", () => {
+  it("returns true only when initiator is exactly 'enemy'", () => {
+    expect(enemyInitiated(makeEncounter({ initiator: "enemy" }))).toBe(true);
+    expect(enemyInitiated(makeEncounter({ initiator: "player" }))).toBe(false);
+    expect(enemyInitiated(makeEncounter({ initiator: null }))).toBe(false);
+    // Null encounter → no fight tracked → never an ambush.
+    expect(enemyInitiated(null)).toBe(false);
+  });
 });
 
 describe("firstRoundActionGated", () => {
@@ -170,6 +227,7 @@ describe("combatFromState", () => {
       active: boolean;
       round_number: number;
       first_round_dex_gate_pending: boolean;
+      initiator: "player" | "enemy" | null;
       casualty_morale_checked: boolean;
       half_force_morale_checked: boolean;
       combatants: object[];
@@ -180,6 +238,10 @@ describe("combatFromState", () => {
       active: false,
       round_number: 0,
       first_round_dex_gate_pending: false,
+      // Default to null so test cases that don't care about the
+      // initiator behave like the pre-F-05 wire. Test cases that do
+      // care override explicitly.
+      initiator: null,
       casualty_morale_checked: false,
       half_force_morale_checked: false,
       combatants: [],
@@ -291,5 +353,50 @@ describe("combatFromState", () => {
     });
     const adapted = combatFromState({ encounter });
     expect(adapted?.summary).toBe("The marauders broke and fled.");
+  });
+
+  it("mirrors the backend initiator straight onto the adapted encounter", () => {
+    // F-05: the wire ships `initiator: "enemy"` for an ambush. We
+    // mirror it verbatim so the tracker / status strip don't need
+    // to re-parse anything before deciding whether to show the
+    // ambush cue.
+    const enemyAdapted = combatFromState({
+      encounter: backendEncounter({
+        active: true,
+        round_number: 2,
+        initiator: "enemy",
+        combatants: [backendFoe()],
+      }),
+    });
+    expect(enemyAdapted?.initiator).toBe("enemy");
+
+    const playerAdapted = combatFromState({
+      encounter: backendEncounter({
+        active: true,
+        round_number: 1,
+        initiator: "player",
+        combatants: [backendFoe()],
+      }),
+    });
+    expect(playerAdapted?.initiator).toBe("player");
+  });
+
+  it("defaults a missing initiator (legacy state) to null instead of throwing", () => {
+    // Pre-F-05 state blobs don't include the field. Adapting them
+    // must produce a usable encounter — the absent field collapses
+    // to null and the UI degrades to the pre-F-05 behavior of
+    // "no ambush cue".
+    const adapted = combatFromState({
+      encounter: {
+        active: true,
+        round_number: 1,
+        first_round_dex_gate_pending: true,
+        casualty_morale_checked: false,
+        half_force_morale_checked: false,
+        combatants: [backendFoe()],
+        notes: "",
+      },
+    });
+    expect(adapted?.initiator).toBeNull();
   });
 });

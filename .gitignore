@@ -14,6 +14,12 @@ data/memory.json
 data/checkpoints/
 data/turn-checkpoints/
 data/backups/
+# F-12 multi-save layout: per-save runtime state.
+# `library.json` is the active-save manifest, `saves/<save_id>/` is
+# a full StateStore root per campaign. None of this is source code;
+# it's regenerated as the user plays.
+data/library.json
+data/saves/
 
 # Frontend
 web/node_modules/

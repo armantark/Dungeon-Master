@@ -43,9 +43,38 @@ export type EventType = "oracle" | "narrative" | "player" | "system";
 
 export type ThreadStatus = "active" | "resolved";
 
+// NPC continuity. `retired` mirrors the backend's `NPCStatus.RETIRED`:
+// the NPC has left the active cast (died, departed, became irrelevant)
+// but is preserved in canon so memory can still reference them and so
+// they can be reactivated by a future `update` op without inventing a
+// new identity. The frontend treats `retired` as a sink-and-mute state
+// — visible in the panel, but never highlighted as if they were still
+// driving play. See F-04 in memory-bank/featureKanban.md.
+export type NPCStatus = "active" | "retired";
+
 export type SceneStatus = "expected" | "altered" | "interrupted";
 
-export type CampaignStatus = "character_creation" | "ready_to_start" | "active";
+// `ended` is the F-06 terminal state. Once the campaign reaches it, the
+// frontend renders chat as a read-only archive (no Composer, no slash
+// commands that mutate state) and the only canonical control is
+// "Begin a new campaign" which calls `/state/reset`. We intentionally
+// keep the active-state union intact instead of routing every screen
+// through a "is play allowed?" boolean — switching on
+// `campaign_status` keeps the App-level layout split mechanical and
+// exhaustive at the type level.
+export type CampaignStatus =
+  | "character_creation"
+  | "ready_to_start"
+  | "active"
+  | "ended";
+
+// Mirrors backend `CampaignEndReason`. `death` is the auto-end the
+// service triggers when a turn drops STR / HP to a fatal Cairn state;
+// `retirement` is the explicit "I walk away" close; `victory` is the
+// explicit "the campaign is won" close. The frontend uses this to
+// pick the End-Banner kicker / glyph / tone — never to gate behavior
+// (the gate is `campaign_status === "ended"`).
+export type CampaignEndReason = "death" | "retirement" | "victory";
 
 // `unset` means the backend has not yet derived Cairn mechanics for this
 // record. The frontend uses it as a gate: never render the mechanics
@@ -65,6 +94,13 @@ export type EncounterEndReason =
   | "victory"
   | "enemy_rout"
   | "player_escaped";
+
+// Mirrors backend `EncounterInitiator`. Tells the UI who started the
+// fight so the combat tracker / receipt can label an enemy-opened fight
+// as an ambush instead of a normal player-initiated swing. F-05 only
+// publishes this when an encounter exists; resolutions outside combat
+// (e.g. trap damage, environmental harm) leave it null.
+export type EncounterInitiator = "player" | "enemy";
 
 export type RetreatOutcome = "caught" | "disengaged" | "escaped";
 
@@ -121,6 +157,12 @@ export interface NPC {
   name: string;
   role: string;
   disposition: string;
+  // F-04: dynamic NPC updates can retire an NPC instead of deleting it.
+  // Older state blobs that pre-date the field still deserialize cleanly
+  // because the backend defaults retired-less NPCs to `active`, so the
+  // wire never sends `undefined`. We keep it required here to force any
+  // new TS code path to think about which bucket it's rendering.
+  status: NPCStatus;
 }
 
 // Mirrors `CairnItemState` in models.py. `weapon_damage_die` is the d-side
@@ -203,6 +245,30 @@ export interface CairnResolution {
   str_after: number | null;
   fatigue_before: number | null;
   fatigue_after: number | null;
+  // Combat-context fields published when the resolution belongs to an
+  // active encounter (F-05). All optional because most non-combat
+  // outcomes (yes/no oracle, scene check, recovery outside the fight)
+  // simply omit them. We don't promote them into the required side of
+  // the union because that would force the rest of the codebase — and
+  // every existing test factory — to provide them everywhere.
+  combat_round?: number | null;
+  combat_started?: boolean | null;
+  combat_active?: boolean | null;
+  // Tells the receipt / tracker who started the fight when this
+  // outcome opened or escalated combat. `enemy` is the F-05 ambush
+  // path; `player` is the normal attack path. Null for resolutions
+  // that didn't seed an encounter (e.g. trap harm).
+  combat_initiator?: EncounterInitiator | null;
+  // False for the F-05 enemy-opener path because the player didn't
+  // get to act yet — the foe seized initiative. We use this on the
+  // receipt to render "(no player action)" / "Initiative · enemy".
+  player_acted?: boolean | null;
+  // Damage the foe applied to the player on this very resolution.
+  // F-05 enemy openers always populate this (the opener strike is
+  // the whole point); player attacks may also set it when the
+  // counterattack landed in the same turn.
+  enemy_damage?: number | null;
+  enemy_damage_source?: string | null;
   retreat_outcome?: RetreatOutcome | null;
   player_disengaged?: boolean | null;
   pursuit_active?: boolean | null;
@@ -257,6 +323,45 @@ export interface CharacterQuizResponse {
   quiz: CharacterQuiz;
 }
 
+// F-12 Save library. Mirrors `SaveSummary` in `save_library.py`.
+//
+// `identifying_line` is the short backstory blurb the backend chose for
+// the card body (it falls back to archetype / current scene if the
+// backstory is empty). `state_summary` is the hover/expand reveal —
+// scene number plus combat / archive context. We keep both as plain
+// strings rather than richer structures so the card UI never has to
+// re-derive them and the wire stays trivially diff-friendly.
+export type SaveCampaignStatus = CampaignStatus;
+export interface SaveSummary {
+  save_id: string;
+  state_id: string;
+  character_name: string;
+  character_epithet: string;
+  identifying_line: string;
+  state_summary: string;
+  campaign_status: SaveCampaignStatus;
+  campaign_end_reason: CampaignEndReason | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface SaveLibraryBootstrapResponse {
+  active_save_id: string | null;
+  saves: SaveSummary[];
+}
+
+// F-10 OOC rules explainer. Mirrors the backend `ExplanationResponse`.
+// `thinking` is a non-empty string when the model surfaced a reasoning
+// trace; `""` when the model produced none. We don't render it as an
+// independent surface — the streaming `thinking_delta` events animate
+// the trace inside the chat's collapsed-thinking block. The unary
+// shape exists primarily so tests can assert no-mutation against the
+// fallback path.
+export interface ExplanationResponse {
+  answer: string;
+  thinking: string;
+}
+
 export interface OracleTables {
   event_focus: string[];
   event_actions: string[];
@@ -279,8 +384,26 @@ export interface OracleOutcome {
   event_action: string | null;
   event_tone: string | null;
   event_subject: string | null;
+  // The legacy primary thread reference. Kept for backward-compatible
+  // surfaces (e.g. older oracle history rows). New code should prefer
+  // the plural `referenced_thread_ids` because a single turn can now
+  // touch several threads via the dynamic thread updater (F-03).
   referenced_thread_id: string | null;
+  // All thread ids the resolved turn touched — created, updated, or
+  // resolved. Always includes `referenced_thread_id` when present, plus
+  // any threads the post-outcome updater advanced. We use this for the
+  // "recently advanced" surface in the Threads panel.
+  referenced_thread_ids: string[];
+  // The legacy primary NPC reference, still emitted by older oracle
+  // outcomes (e.g. random-event picks). New code should prefer the
+  // plural `referenced_npc_ids` because the post-outcome NPC updater
+  // can create / update / retire several NPCs in a single turn.
   referenced_npc_id: string | null;
+  // All NPC ids the resolved turn touched — created, updated, or
+  // retired (F-04). Always includes `referenced_npc_id` when present,
+  // plus anyone the post-outcome updater advanced. Used for the
+  // "recently advanced" surface in the NPCs panel.
+  referenced_npc_ids: string[];
   scene_status: SceneStatus | null;
   cairn: CairnResolution | null;
 }
@@ -294,6 +417,28 @@ export interface GameEvent {
   oracle_outcome_id: string | null;
 }
 
+// B-02 Campaign directives — the persistent OOC steering surface.
+//
+// We deliberately keep this separate from `setting_notes` /
+// `player_notes`. Those two fields are *canonical campaign material*
+// (world bible, character backstory) authored at generation time and
+// fed into prose. Directives are something different: a small,
+// player-authored OOC dial like "the hierophant cannot speak first"
+// or "keep miracles subtle" that the system should remember but
+// never narrate. Sharing one editor for both meanings was the bug —
+// once the surface is meaningfully scoped, the player stops feeling
+// nudged into freeform journaling and the model gets a cleaner
+// channel for stable steering.
+//
+// Both fields are `string` (not optional) because the backend
+// always emits them; an empty string means "no guidance set", which
+// the editor renders as a neutral hint rather than as an error
+// state.
+export interface CampaignDirectives {
+  world_guidance: string;
+  play_guidance: string;
+}
+
 export interface GameState {
   id: string;
   created_at: string;
@@ -303,11 +448,46 @@ export interface GameState {
   current_scene: string;
   scene_status: SceneStatus;
   campaign_status: CampaignStatus;
+  // F-06 terminal-state metadata. All three are null while the
+  // campaign is alive (any non-`ended` status) and populated when the
+  // service marks the campaign ended. `campaign_end_summary` is
+  // canon-grade prose — either authored by the player on
+  // `/retire`/`/victory`, or a deterministic default written by the
+  // service for auto-deaths so the archive always has something to
+  // read in the End-Banner.
+  campaign_end_reason: CampaignEndReason | null;
+  campaign_ended_at: string | null;
+  campaign_end_summary: string | null;
   character?: CharacterSheet;
+  // F-16: monotonic version of the visible/hidden NPC roster split.
+  // The backend stamps `2` on any save it has migrated into the
+  // hidden-cast contract; older saves load as `1` and are reseeded
+  // exactly once. The frontend doesn't branch on this field today —
+  // it exists so future UI behavior (e.g. "your roster was just
+  // reorganized" pip) can detect a version bump without re-walking
+  // canon.
+  npc_roster_version: number;
   setting_notes: string;
   player_notes: string;
+  // B-02: persistent OOC steering, distinct from the canonical
+  // setting/player notes. The Inspector edits this surface; the
+  // backend never appends it to the action log because it is
+  // durable prompt guidance, not transcript canon.
+  directives: CampaignDirectives;
   threads: GameThread[];
+  // F-16: introduced cast only. The opener-seeded recurring figures
+  // start in `hidden_npcs` and are moved here once committed
+  // narration explicitly names them, so the panel never spoils a
+  // character the player hasn't actually met.
   npcs: NPC[];
+  // F-16: backend-only cast continuity. Hidden NPCs are tracked
+  // canonically so the system can reference them in prompts and
+  // promote them on first introduction, but the player UI deliberately
+  // never reads from this list. We mirror it on the wire because the
+  // backend always sends it, and not modeling it would force every
+  // call site to coerce `unknown` — but no component should display
+  // it.
+  hidden_npcs: NPC[];
   oracle_tables: OracleTables;
   oracle_history: OracleOutcome[];
   action_log: GameEvent[];

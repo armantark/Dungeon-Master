@@ -10,6 +10,7 @@ from dungeon_master.models import (
     EventType,
     GameState,
     GameThread,
+    NPCStatus,
     OracleKind,
     OracleOutcome,
     SceneStatus,
@@ -71,6 +72,7 @@ class NPCMemory(StrictModel):
     name: str = Field(min_length=1)
     role: str = ""
     disposition: str = ""
+    status: NPCStatus = NPCStatus.ACTIVE
     summary: str = Field(min_length=1)
     last_touched_turn: int = Field(default=0, ge=0)
     recent_developments: list[str] = Field(default_factory=list)
@@ -168,6 +170,74 @@ class PlannerMemoryContext(StrictModel):
         if self.revealed_facts:
             sections.append(
                 "Revealed facts:\n" + "\n".join(f"- {item}" for item in self.revealed_facts),
+            )
+        return "\n\n".join(sections)
+
+
+class ThreadUpdateMemoryContext(StrictModel):
+    scene_summary: str = ""
+    recent_turns: list[str] = Field(default_factory=list)
+    active_threads: list[str] = Field(default_factory=list)
+    open_loops: list[str] = Field(default_factory=list)
+    revealed_facts: list[str] = Field(default_factory=list)
+    callback_candidates: list[str] = Field(default_factory=list)
+
+    def render(self) -> str:
+        sections: list[str] = []
+        if self.scene_summary:
+            sections.append(f"Current scene summary: {self.scene_summary}")
+        if self.recent_turns:
+            sections.append(
+                "Recent turn summaries:\n" + "\n".join(f"- {item}" for item in self.recent_turns),
+            )
+        if self.active_threads:
+            sections.append(
+                "Current threads:\n" + "\n".join(f"- {item}" for item in self.active_threads),
+            )
+        if self.open_loops:
+            sections.append("Open loops:\n" + "\n".join(f"- {item}" for item in self.open_loops))
+        if self.revealed_facts:
+            sections.append(
+                "Revealed facts:\n" + "\n".join(f"- {item}" for item in self.revealed_facts),
+            )
+        if self.callback_candidates:
+            sections.append(
+                "Callback candidates:\n"
+                + "\n".join(f"- {item}" for item in self.callback_candidates),
+            )
+        return "\n\n".join(sections)
+
+
+class NPCUpdateMemoryContext(StrictModel):
+    scene_summary: str = ""
+    recent_turns: list[str] = Field(default_factory=list)
+    active_npcs: list[str] = Field(default_factory=list)
+    open_loops: list[str] = Field(default_factory=list)
+    revealed_facts: list[str] = Field(default_factory=list)
+    callback_candidates: list[str] = Field(default_factory=list)
+
+    def render(self) -> str:
+        sections: list[str] = []
+        if self.scene_summary:
+            sections.append(f"Current scene summary: {self.scene_summary}")
+        if self.recent_turns:
+            sections.append(
+                "Recent turn summaries:\n" + "\n".join(f"- {item}" for item in self.recent_turns),
+            )
+        if self.active_npcs:
+            sections.append(
+                "Current NPCs:\n" + "\n".join(f"- {item}" for item in self.active_npcs),
+            )
+        if self.open_loops:
+            sections.append("Open loops:\n" + "\n".join(f"- {item}" for item in self.open_loops))
+        if self.revealed_facts:
+            sections.append(
+                "Revealed facts:\n" + "\n".join(f"- {item}" for item in self.revealed_facts),
+            )
+        if self.callback_candidates:
+            sections.append(
+                "Callback candidates:\n"
+                + "\n".join(f"- {item}" for item in self.callback_candidates),
             )
         return "\n\n".join(sections)
 
@@ -279,19 +349,104 @@ class MemoryManager:
             callback_candidates=self._narrative_callbacks(memory, outcome),
         )
 
+    def retrieve_for_thread_updater(
+        self,
+        state: GameState,
+        memory: MemoryState,
+        player_input: str,
+        outcome: OracleOutcome,
+    ) -> ThreadUpdateMemoryContext:
+        del state
+        query = player_input.lower()
+        direct_thread_ids = self._thread_ids_for_outcome(outcome)
+        direct_threads = [
+            thread for thread in memory.thread_memory if thread.thread_id in direct_thread_ids
+        ]
+        matched_threads = [
+            thread
+            for thread in memory.thread_memory
+            if (
+                thread.status == ThreadStatus.ACTIVE
+                and thread.thread_id not in direct_thread_ids
+                and self._query_matches_label(query, thread.title)
+            )
+        ]
+        fallback_threads = [
+            thread
+            for thread in memory.thread_memory
+            if (
+                thread.status == ThreadStatus.ACTIVE
+                and thread.thread_id not in direct_thread_ids
+                and thread not in matched_threads
+            )
+        ]
+        active_threads = [
+            f"{thread.title} ({thread.status.value}): {thread.summary}"
+            for thread in [*direct_threads[:2], *matched_threads[:2], *fallback_threads[:2]]
+        ]
+        return ThreadUpdateMemoryContext(
+            scene_summary=memory.current_scene_summary,
+            recent_turns=[self._render_turn(turn) for turn in memory.recent_turn_summaries[-2:]],
+            active_threads=active_threads[:4],
+            open_loops=[loop.text for loop in memory.open_loops[:4]],
+            revealed_facts=self._narrative_facts(memory, outcome)[:4],
+            callback_candidates=self._narrative_callbacks(memory, outcome)[:3],
+        )
+
+    def retrieve_for_npc_updater(
+        self,
+        state: GameState,
+        memory: MemoryState,
+        player_input: str,
+        outcome: OracleOutcome,
+    ) -> NPCUpdateMemoryContext:
+        del state
+        query = player_input.lower()
+        direct_npc_ids = self._npc_ids_for_outcome(outcome)
+        direct_npcs = [
+            npc for npc in memory.npc_memory if npc.npc_id in direct_npc_ids
+        ]
+        matched_npcs = [
+            npc
+            for npc in memory.npc_memory
+            if (
+                npc.status == NPCStatus.ACTIVE
+                and npc.npc_id not in direct_npc_ids
+                and self._query_matches_label(query, npc.name)
+            )
+        ]
+        fallback_npcs = [
+            npc
+            for npc in memory.npc_memory
+            if (
+                npc.status == NPCStatus.ACTIVE
+                and npc.npc_id not in direct_npc_ids
+                and npc not in matched_npcs
+            )
+        ]
+        active_npcs = [
+            f"{npc.name} ({npc.status.value})"
+            + (
+                f" - {npc.role}; {npc.disposition}: {npc.summary}"
+                if npc.role or npc.disposition
+                else f": {npc.summary}"
+            )
+            for npc in [*direct_npcs[:2], *matched_npcs[:2], *fallback_npcs[:2]]
+        ]
+        return NPCUpdateMemoryContext(
+            scene_summary=memory.current_scene_summary,
+            recent_turns=[self._render_turn(turn) for turn in memory.recent_turn_summaries[-2:]],
+            active_npcs=active_npcs[:4],
+            open_loops=[loop.text for loop in memory.open_loops[:4]],
+            revealed_facts=self._narrative_facts(memory, outcome)[:4],
+            callback_candidates=self._narrative_callbacks(memory, outcome)[:3],
+        )
+
     def _apply_turn(self, memory: MemoryState, state: GameState, turn: CommittedTurnMemory) -> None:
         turn_index = memory.turn_count + 1
         scene_key = state.current_scene
-        thread_ids = (
-            [turn.outcome.referenced_thread_id]
-            if turn.outcome.referenced_thread_id is not None
-            else []
-        )
-        npc_ids = (
-            [turn.outcome.referenced_npc_id]
-            if turn.outcome.referenced_npc_id is not None
-            else []
-        )
+        thread_ids = self._thread_ids_for_outcome(turn.outcome)
+        npc_ids = self._npc_ids_for_outcome(turn.outcome)
         turn_memory = TurnMemory(
             turn_index=turn_index,
             oracle_outcome_id=turn.outcome.id,
@@ -422,6 +577,7 @@ class MemoryManager:
                         name=npc.name,
                         role=npc.role,
                         disposition=npc.disposition,
+                        status=npc.status,
                         summary=_npc_summary(npc, development),
                         last_touched_turn=turn.turn_index if touched else 0,
                         recent_developments=[development] if touched else [],
@@ -431,6 +587,7 @@ class MemoryManager:
             card.name = npc.name
             card.role = npc.role
             card.disposition = npc.disposition
+            card.status = npc.status
             if touched:
                 card.last_touched_turn = turn.turn_index
                 card.recent_developments.append(development)
@@ -442,7 +599,13 @@ class MemoryManager:
             for card in memory.npc_memory
             if any(card.npc_id == npc.id for npc in npcs)
         ]
-        memory.npc_memory.sort(key=lambda card: (-card.last_touched_turn, card.name))
+        memory.npc_memory.sort(
+            key=lambda card: (
+                card.status != NPCStatus.ACTIVE,
+                -card.last_touched_turn,
+                card.name,
+            ),
+        )
 
     def _update_location_memory(self, memory: MemoryState, turn: TurnMemory) -> None:
         card = next(
@@ -522,6 +685,7 @@ class MemoryManager:
                     name=npc.name,
                     role=npc.role,
                     disposition=npc.disposition,
+                    status=npc.status,
                     summary=_npc_summary(npc, ""),
                 ),
             )
@@ -597,7 +761,7 @@ class MemoryManager:
                 ),
             )
         for npc in memory.npc_memory:
-            if npc.last_touched_turn <= 0:
+            if npc.status != NPCStatus.ACTIVE or npc.last_touched_turn <= 0:
                 continue
             candidates.append(
                 CallbackCandidate(
@@ -664,12 +828,20 @@ class MemoryManager:
         matched_npcs = [
             npc
             for npc in memory.npc_memory
-            if npc.last_touched_turn > 0 and self._query_matches_label(query, npc.name)
+            if (
+                npc.status == NPCStatus.ACTIVE
+                and npc.last_touched_turn > 0
+                and self._query_matches_label(query, npc.name)
+            )
         ]
         fallback_npcs = [
             npc
             for npc in memory.npc_memory
-            if npc.last_touched_turn > 0 and npc not in matched_npcs
+            if (
+                npc.status == NPCStatus.ACTIVE
+                and npc.last_touched_turn > 0
+                and npc not in matched_npcs
+            )
         ]
         lines.extend(
             f"NPC - {npc.name}: {npc.summary}"
@@ -700,19 +872,16 @@ class MemoryManager:
         outcome: OracleOutcome,
     ) -> list[str]:
         lines: list[str] = []
+        direct_thread_ids = self._thread_ids_for_outcome(outcome)
         location = next(
             (item for item in memory.location_memory if item.location_key == state.current_scene),
             None,
         )
         if location is not None:
             lines.append(f"Location - {location.label}: {location.summary}")
-        if outcome.referenced_thread_id is not None:
+        for thread_id in direct_thread_ids:
             thread = next(
-                (
-                    item
-                    for item in memory.thread_memory
-                    if item.thread_id == outcome.referenced_thread_id
-                ),
+                (item for item in memory.thread_memory if item.thread_id == thread_id),
                 None,
             )
             if thread is not None:
@@ -722,12 +891,13 @@ class MemoryManager:
             for thread in memory.thread_memory
             if (
                 thread.status == ThreadStatus.ACTIVE
-                and thread.thread_id != outcome.referenced_thread_id
+                and thread.thread_id not in direct_thread_ids
             )
         )
-        if outcome.referenced_npc_id is not None:
+        direct_npc_ids = self._npc_ids_for_outcome(outcome)
+        for npc_id in direct_npc_ids:
             npc = next(
-                (item for item in memory.npc_memory if item.npc_id == outcome.referenced_npc_id),
+                (item for item in memory.npc_memory if item.npc_id == npc_id),
                 None,
             )
             if npc is not None:
@@ -735,19 +905,25 @@ class MemoryManager:
         lines.extend(
             f"NPC - {npc.name}: {npc.summary}"
             for npc in memory.npc_memory
-            if npc.last_touched_turn > 0 and npc.npc_id != outcome.referenced_npc_id
+            if (
+                npc.status == NPCStatus.ACTIVE
+                and npc.last_touched_turn > 0
+                and npc.npc_id not in direct_npc_ids
+            )
         )
         return lines[:6]
 
     def _narrative_facts(self, memory: MemoryState, outcome: OracleOutcome) -> list[str]:
         selected: list[str] = []
-        if outcome.referenced_thread_id is not None or outcome.referenced_npc_id is not None:
+        direct_thread_ids = self._thread_ids_for_outcome(outcome)
+        direct_npc_ids = self._npc_ids_for_outcome(outcome)
+        if direct_thread_ids or direct_npc_ids:
             selected.extend(
                 fact.text
                 for fact in reversed(memory.revealed_facts)
                 if (
-                    outcome.referenced_thread_id in fact.related_thread_ids
-                    or outcome.referenced_npc_id in fact.related_npc_ids
+                    any(thread_id in fact.related_thread_ids for thread_id in direct_thread_ids)
+                    or any(npc_id in fact.related_npc_ids for npc_id in direct_npc_ids)
                 )
             )
         selected.extend(
@@ -758,17 +934,22 @@ class MemoryManager:
         return _dedupe_strings(selected)[:5]
 
     def _narrative_callbacks(self, memory: MemoryState, outcome: OracleOutcome) -> list[str]:
+        direct_thread_ids = self._thread_ids_for_outcome(outcome)
+        direct_npc_ids = self._npc_ids_for_outcome(outcome)
         direct = [
             f"{candidate.text} ({candidate.reason})"
             for candidate in memory.callback_candidates
             if (
                 (
-                    outcome.referenced_thread_id is not None
-                    and outcome.referenced_thread_id in candidate.related_thread_ids
+                    direct_thread_ids
+                    and any(
+                        thread_id in candidate.related_thread_ids
+                        for thread_id in direct_thread_ids
+                    )
                 )
                 or (
-                    outcome.referenced_npc_id is not None
-                    and outcome.referenced_npc_id in candidate.related_npc_ids
+                    direct_npc_ids
+                    and any(npc_id in candidate.related_npc_ids for npc_id in direct_npc_ids)
                 )
             )
         ]
@@ -776,6 +957,20 @@ class MemoryManager:
             f"{candidate.text} ({candidate.reason})" for candidate in memory.callback_candidates
         ]
         return _dedupe_strings(direct + fallback)[:4]
+
+    def _thread_ids_for_outcome(self, outcome: OracleOutcome) -> list[str]:
+        if outcome.referenced_thread_ids:
+            return _dedupe_strings(outcome.referenced_thread_ids)
+        if outcome.referenced_thread_id is not None:
+            return [outcome.referenced_thread_id]
+        return []
+
+    def _npc_ids_for_outcome(self, outcome: OracleOutcome) -> list[str]:
+        if outcome.referenced_npc_ids:
+            return _dedupe_strings(outcome.referenced_npc_ids)
+        if outcome.referenced_npc_id is not None:
+            return [outcome.referenced_npc_id]
+        return []
 
     def _dedupe_facts(self, facts: list[RevealedFact]) -> list[RevealedFact]:
         seen: dict[tuple[str, str], RevealedFact] = {}
@@ -853,6 +1048,8 @@ def _thread_summary(thread: GameThread, development: str) -> str:
 
 def _npc_summary(npc: NPC, development: str) -> str:
     parts = [npc.name]
+    if npc.status != NPCStatus.ACTIVE:
+        parts.append(f"Status: {npc.status.value}.")
     if npc.role:
         parts.append(f"Role: {npc.role}.")
     if npc.disposition:

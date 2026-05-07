@@ -55,6 +55,11 @@ class ThreadStatus(StrEnum):
     RESOLVED = "resolved"
 
 
+class NPCStatus(StrEnum):
+    ACTIVE = "active"
+    RETIRED = "retired"
+
+
 class SceneStatus(StrEnum):
     EXPECTED = "expected"
     ALTERED = "altered"
@@ -65,6 +70,7 @@ class CampaignStatus(StrEnum):
     CHARACTER_CREATION = "character_creation"
     READY_TO_START = "ready_to_start"
     ACTIVE = "active"
+    ENDED = "ended"
 
 
 class CairnMechanicsSource(StrEnum):
@@ -95,6 +101,17 @@ class EncounterEndReason(StrEnum):
     VICTORY = "victory"
     ENEMY_ROUT = "enemy_rout"
     PLAYER_ESCAPED = "player_escaped"
+
+
+class EncounterInitiator(StrEnum):
+    PLAYER = "player"
+    ENEMY = "enemy"
+
+
+class CampaignEndReason(StrEnum):
+    DEATH = "death"
+    RETIREMENT = "retirement"
+    VICTORY = "victory"
 
 
 class RetreatOutcome(StrEnum):
@@ -139,6 +156,7 @@ class NPC(StrictModel):
     name: str = Field(min_length=1)
     role: str = ""
     disposition: str = "unknown"
+    status: NPCStatus = NPCStatus.ACTIVE
 
 
 class EnemyCombatant(StrictModel):
@@ -169,6 +187,7 @@ class EncounterState(StrictModel):
     active: bool = False
     round_number: int = Field(default=0, ge=0)
     first_round_dex_gate_pending: bool = False
+    initiator: EncounterInitiator | None = None
     casualty_morale_checked: bool = False
     half_force_morale_checked: bool = False
     player_disengaged: bool = False
@@ -242,6 +261,7 @@ class CairnResolution(StrictModel):
     combat_round: int | None = Field(default=None, ge=0)
     combat_started: bool | None = None
     combat_active: bool | None = None
+    combat_initiator: EncounterInitiator | None = None
     player_acted: bool | None = None
     initiative_target: int | None = Field(default=None, ge=1, le=20)
     attack_stance: AttackStance | None = None
@@ -288,6 +308,23 @@ class CharacterSheet(StrictModel):
     condition: str = "Uninjured, for now."
     inventory: list[InventoryItem] = Field(default_factory=list)
     cairn: CairnCharacterState = Field(default_factory=CairnCharacterState)
+
+
+class CampaignDirectives(StrictModel):
+    """Persistent OOC guidance for this campaign.
+
+    These are intentionally distinct from `setting_notes` and
+    `player_notes`. Those older fields still carry campaign/world seed
+    prose and character-facing backstory context, while directives are a
+    durable steering layer for future model work ("this NPC cannot speak
+    first", "keep miracles subtle", "avoid modern slang").
+    """
+
+    world_guidance: str = ""
+    play_guidance: str = ""
+
+    def has_content(self) -> bool:
+        return bool(self.world_guidance.strip() or self.play_guidance.strip())
 
 
 class CharacterQuizOption(StrictModel):
@@ -351,7 +388,9 @@ class OracleOutcome(StrictModel):
     event_tone: str | None = None
     event_subject: str | None = None
     referenced_thread_id: str | None = None
+    referenced_thread_ids: list[str] = Field(default_factory=list)
     referenced_npc_id: str | None = None
+    referenced_npc_ids: list[str] = Field(default_factory=list)
     scene_status: SceneStatus | None = None
     cairn: CairnResolution | None = None
 
@@ -375,18 +414,39 @@ class GameState(StrictModel):
     current_scene: str = Field(min_length=1)
     scene_status: SceneStatus = SceneStatus.EXPECTED
     campaign_status: CampaignStatus = CampaignStatus.ACTIVE
+    campaign_end_reason: CampaignEndReason | None = None
+    campaign_ended_at: datetime | None = None
+    campaign_end_summary: str | None = None
+    npc_roster_version: int = Field(default=2, ge=0)
     character: CharacterSheet = Field(default_factory=CharacterSheet)
     setting_notes: str = Field(min_length=1)
     player_notes: str = Field(min_length=1)
+    directives: CampaignDirectives = Field(default_factory=CampaignDirectives)
     threads: list[GameThread] = Field(default_factory=list)
     npcs: list[NPC] = Field(default_factory=list)
+    hidden_npcs: list[NPC] = Field(default_factory=list)
     encounter: EncounterState = Field(default_factory=EncounterState)
     oracle_tables: OracleTables
     oracle_history: list[OracleOutcome] = Field(default_factory=list)
     action_log: list[GameEvent] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def mark_legacy_npc_roster_version(cls, data: object) -> object:
+        """Mark missing-roster-version payloads as legacy saves."""
+        if not isinstance(data, dict):
+            return data
+        if "npc_roster_version" in data:
+            return data
+        migrated = dict(data)
+        migrated["npc_roster_version"] = 1
+        return migrated
+
     def touch(self) -> None:
         self.updated_at = utc_now()
+
+    def all_npcs(self) -> list[NPC]:
+        return [*self.npcs, *self.hidden_npcs]
 
     @model_validator(mode="after")
     def seed_character_from_legacy_notes(self) -> GameState:

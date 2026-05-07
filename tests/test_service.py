@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,7 @@ from dungeon_master.campaign import (
 )
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
 from dungeon_master.models import (
+    NPC,
     AttackStance,
     CairnAbility,
     CairnCharacterState,
@@ -20,25 +21,33 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnResolution,
     CairnRestKind,
+    CampaignEndReason,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterQuizOption,
     CharacterQuizQuestion,
     CharacterSheet,
+    EncounterInitiator,
     EncounterState,
     EnemyCombatant,
     EventType,
     GameState,
+    GameThread,
+    InventoryItem,
     Likelihood,
+    NPCStatus,
     OracleKind,
     OracleOutcome,
     RetreatOutcome,
+    ThreadStatus,
 )
-from dungeon_master.narrative import CompletionDelta
+from dungeon_master.narrative import CompletionDelta, NarrativeConfig
+from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdateResult
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.service import GameService
 from dungeon_master.state_store import StateStore
+from dungeon_master.thread_updater import ThreadUpdateResult
 from dungeon_master.turn_router import (
     PlannedTurnOp,
     PlannedTurnOpKind,
@@ -51,6 +60,8 @@ from tests.factories import sample_state
 
 
 class FakeNarrative:
+    _config = NarrativeConfig(model="", api_key=None, base_url=None)
+
     def generate(  # noqa: PLR0913
         self,
         state: GameState,
@@ -250,7 +261,72 @@ class SetupCharacterGenerator(FakeCharacterGenerator):
         return state
 
 
+class FakeThreadUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+    ) -> None:
+        self._mutate = mutate
+        self.calls: list[tuple[str, str]] = []
+
+    def update_threads(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ThreadUpdateResult:
+        del execution_context, memory_context, cancel_token
+        self.calls.append((player_input, outcome.summary))
+        if self._mutate is None:
+            return ThreadUpdateResult()
+        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, outcome))
+
+
+class FakeNpcUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+        repair: LegacyNPCRosterRepairResult | None = None,
+    ) -> None:
+        self._mutate = mutate
+        self._repair = repair
+        self.calls: list[tuple[str, str]] = []
+
+    def update_npcs(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> NPCUpdateResult:
+        del execution_context, memory_context, cancel_token
+        self.calls.append((player_input, outcome.summary))
+        if self._mutate is None:
+            return NPCUpdateResult()
+        return NPCUpdateResult(touched_npc_ids=self._mutate(state, outcome))
+
+    def reseed_legacy_roster(
+        self,
+        state: GameState,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+        use_model: bool = False,
+    ) -> LegacyNPCRosterRepairResult:
+        del state, memory_context, cancel_token, use_model
+        return self._repair or LegacyNPCRosterRepairResult()
+
+
 class CountingNarrative:
+    _config = NarrativeConfig(model="", api_key=None, base_url=None)
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -390,6 +466,45 @@ class FakeCairnEngine:
             ),
         )
 
+    def resolve_enemy_opener(
+        self,
+        state: GameState,
+        *,
+        source: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        state.encounter = EncounterState(
+            active=True,
+            round_number=2,
+            first_round_dex_gate_pending=False,
+            initiator=EncounterInitiator.ENEMY,
+            combatants=[EnemyCombatant(name=source, hp=4, max_hp=4)],
+            notes="A hostile foe seized the initiative.",
+        )
+        state.character.cairn.hp = max(0, state.character.cairn.hp - 1)
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=f"{source} struck first: {text}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=1,
+                combat_started=True,
+                combat_active=True,
+                combat_initiator=EncounterInitiator.ENEMY,
+                player_acted=False,
+                target_name=source,
+                damage_after_armor=1,
+                hp_before=4,
+                hp_after=state.character.cairn.hp,
+                str_before=state.character.cairn.max_str_score,
+                str_after=state.character.cairn.str_score,
+                enemy_damage=1,
+                enemy_damage_source=source,
+            ),
+        )
+
     def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
         state.character.cairn.hp = state.character.cairn.max_hp
         return OracleOutcome(
@@ -421,6 +536,40 @@ class FakeCairnEngine:
         if equipped:
             state.character.cairn.primary_weapon_item_id = item_id
 
+    def acquire_items(
+        self,
+        state: GameState,
+        *,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
+        del cancel_token
+        lantern = InventoryItem(
+            name="Pilgrim lantern",
+            details="Taken during play.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.LIGHT, CairnItemTag.UTILITY],
+                slots=1,
+                uses=3,
+                equipped="ready" in text.lower(),
+            ),
+        )
+        purse = InventoryItem(
+            name="Purse of old silver",
+            details="A small bundle of spendable coin.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.PETTY, CairnItemTag.UTILITY],
+                slots=0,
+            ),
+        )
+        state.character.inventory.extend([lantern, purse])
+        state.character.cairn.slots_used = sum(
+            item.cairn.slots for item in state.character.inventory
+        )
+        return "Acquired Pilgrim lantern, Purse of old silver."
+
     def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
         for item in list(state.character.inventory):
             if item.id != item_id:
@@ -448,6 +597,36 @@ class FakeCairnEngine:
             return f"Dropped {item.name}."
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
+
+
+class FatalFakeCairnEngine(FakeCairnEngine):
+    def suffer_harm(
+        self,
+        state: GameState,
+        *,
+        amount: int,
+        source: str,
+        in_combat: bool,
+        armor_applies: bool,
+    ) -> OracleOutcome:
+        del in_combat, armor_applies
+        state.character.cairn.hp = 0
+        state.character.cairn.str_score = 0
+        state.character.cairn.dead = True
+        return OracleOutcome(
+            kind=OracleKind.HARM,
+            summary=f"Fatal harm from {source}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=source,
+                base_damage=amount,
+                damage_after_armor=amount,
+                hp_before=1,
+                hp_after=0,
+                str_before=1,
+                str_after=0,
+            ),
+        )
 
 
 def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:  # noqa: PLR0911
@@ -635,6 +814,45 @@ def test_service_player_turn_routes_attack(tmp_path: Path) -> None:
     assert state.oracle_history[0].cairn.target_name == "Abbey ghoul"
 
 
+def test_service_player_turn_routes_enemy_opener_into_tracked_combat(tmp_path: Path) -> None:
+    def ambush_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.HARM,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ENEMY_OPENER,
+                    text=text,
+                    harm_source="Abbey ghoul",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=ambush_classifier),
+    )
+
+    state = service.submit_player_turn(
+        "The abbey ghoul drops from the choir loft and claws me before I can raise my cudgel.",
+    )
+
+    assert state.action_log[0].title == "Player action"
+    assert state.action_log[1].title == "Ambush resolution"
+    assert state.oracle_history[0].kind == "harm"
+    assert state.oracle_history[0].cairn is not None
+    assert state.oracle_history[0].cairn.combat_initiator == EncounterInitiator.ENEMY
+    assert state.oracle_history[0].cairn.combat_started is True
+    assert state.encounter.active is True
+    assert state.encounter.initiator == EncounterInitiator.ENEMY
+
+
 def test_service_player_turn_routes_recovery(tmp_path: Path) -> None:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
@@ -739,6 +957,64 @@ def test_service_player_turn_executes_compound_inventory_plan(tmp_path: Path) ->
     assert "Dropped Test map." in state.action_log[1].content
 
 
+def test_service_player_turn_executes_inventory_acquisition_plan(tmp_path: Path) -> None:
+    def acquire_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ACQUIRE_ITEM,
+                    text="I loot the abbey ghoul for a lantern and a purse of coins.",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=acquire_classifier),
+    )
+
+    state = service.submit_player_turn("I loot the abbey ghoul for a lantern and a purse of coins.")
+
+    assert state.oracle_history[0].kind == OracleKind.PLAYER_ACTION
+    assert [item.name for item in state.character.inventory] == [
+        "Test knife",
+        "Test map",
+        "Pilgrim lantern",
+        "Purse of old silver",
+    ]
+    assert "Acquired Pilgrim lantern, Purse of old silver." in state.action_log[1].content
+
+
+def test_service_explicit_inventory_acquire_records_system_and_narrative(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    state = service.acquire_inventory("I buy a lantern and a purse of old silver.")
+
+    assert state.action_log[0].title == "Inventory acquired"
+    assert state.action_log[1].title == "Narrative response"
+    assert state.oracle_history[0].summary == "Acquired Pilgrim lantern, Purse of old silver."
+    assert [item.name for item in state.character.inventory][-2:] == [
+        "Pilgrim lantern",
+        "Purse of old silver",
+    ]
+
+
 def test_finalize_character_sets_ready_to_start(tmp_path: Path) -> None:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
@@ -796,6 +1072,86 @@ def test_load_state_backfills_active_character_once(tmp_path: Path) -> None:
         item.cairn.source == CairnMechanicsSource.NARRATIVE_BACKFILL
         for item in state.character.inventory
     )
+
+
+def test_load_state_syncs_dead_active_campaign_into_terminal_death_state(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    seeded = sample_state()
+    seeded.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=0,
+        dex_score=10,
+        wil_score=10,
+        max_str_score=10,
+        max_dex_score=10,
+        max_wil_score=10,
+        hp=0,
+        max_hp=4,
+        dead=True,
+    )
+    store.save(seeded, create_checkpoint=False)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    loaded = service.load_state()
+    persisted = store.load()
+
+    assert loaded.campaign_status == CampaignStatus.ENDED
+    assert loaded.campaign_end_reason == CampaignEndReason.DEATH
+    assert loaded.campaign_end_summary == "Test Wanderer's campaign ended in death."
+    assert persisted.campaign_status == CampaignStatus.ENDED
+    assert persisted.campaign_end_reason == CampaignEndReason.DEATH
+
+
+def test_end_campaign_marks_retirement_and_blocks_further_play(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    ended = service.end_campaign(
+        reason=CampaignEndReason.RETIREMENT,
+        summary="Vrtanes lays down the cudgel and leaves the chapel road behind.",
+    )
+
+    assert ended.campaign_status == CampaignStatus.ENDED
+    assert ended.campaign_end_reason == CampaignEndReason.RETIREMENT
+    assert (
+        ended.campaign_end_summary
+        == "Vrtanes lays down the cudgel and leaves the chapel road behind."
+    )
+    assert ended.action_log[-1].title == "Campaign ended"
+
+    with pytest.raises(ValueError, match="retirement"):
+        service.submit_player_turn("I keep walking down the ash-dark road.")
+
+
+def test_end_campaign_marks_victory_with_default_summary(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    ended = service.end_campaign(reason=CampaignEndReason.VICTORY)
+
+    assert ended.campaign_status == CampaignStatus.ENDED
+    assert ended.campaign_end_reason == CampaignEndReason.VICTORY
+    assert ended.campaign_end_summary == "Test Wanderer achieved a final victory."
 
 
 def test_service_resolve_save_records_deterministic_outcome(tmp_path: Path) -> None:
@@ -866,6 +1222,36 @@ def test_service_harm_can_trigger_str_loss(tmp_path: Path) -> None:
     assert harmed.oracle_history[-1].kind == "harm"
     assert harmed.character.cairn.hp == 0
     assert harmed.character.cairn.str_score <= harmed.character.cairn.max_str_score
+
+
+def test_service_fatal_harm_ends_campaign_in_death(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FatalFakeCairnEngine(),
+    )
+
+    state = service.load_state()
+    state.character.cairn.hp = 1
+    state.character.cairn.str_score = 1
+    store.save(state, create_checkpoint=False)
+
+    harmed = service.suffer_harm(
+        amount=5,
+        source="Falling masonry",
+        in_combat=True,
+        armor_applies=False,
+    )
+
+    assert harmed.campaign_status == CampaignStatus.ENDED
+    assert harmed.campaign_end_reason == CampaignEndReason.DEATH
+    assert harmed.campaign_end_summary is not None
+    assert "Final turn: Fatal harm from Falling masonry." in harmed.campaign_end_summary
+    assert harmed.action_log[-1].title == "Campaign ended"
 
 
 def test_service_recovery_restores_hp(tmp_path: Path) -> None:
@@ -1048,6 +1434,266 @@ def test_memory_sidecar_preserves_explicit_input_and_execution_context(tmp_path:
     )
     assert memory.recent_turn_summaries[-1].execution_context
     assert "Equipment updated" in memory.recent_turn_summaries[-1].execution_context
+
+
+def test_service_thread_updater_creates_thread_and_persists_memory(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = GameThread(
+            title="The hierophant's unfinished demand",
+            stakes="If ignored, the abbey's claim hardens into open pursuit.",
+        )
+        state.threads.append(created)
+        return (created.id,)
+
+    updater = FakeThreadUpdater(mutate=mutate)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=updater,
+    )
+
+    state = service.submit_player_action("I accept the charge, but not the leash.")
+    memory = store.load_memory()
+
+    created = next(
+        thread for thread in state.threads if thread.title == "The hierophant's unfinished demand"
+    )
+    assert updater.calls == [
+        (
+            "I accept the charge, but not the leash.",
+            state.oracle_history[-1].summary,
+        ),
+    ]
+    assert state.oracle_history[-1].referenced_thread_id == created.id
+    assert state.oracle_history[-1].referenced_thread_ids == [created.id]
+    assert any(
+        loop.text.startswith("The hierophant's unfinished demand")
+        for loop in memory.open_loops
+    )
+
+
+def test_service_npc_updater_creates_npc_and_persists_memory(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = NPC(
+            name="Brother Vahagn",
+            role="Bell-ringer hiding a blood debt",
+            disposition="guarded",
+        )
+        state.npcs.append(created)
+        return (created.id,)
+
+    updater = FakeNpcUpdater(mutate=mutate)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        npc_updater=updater,
+    )
+
+    state = service.submit_player_action("I ask the bell-ringer why he watches me.")
+    memory = store.load_memory()
+
+    created = next(npc for npc in state.npcs if npc.name == "Brother Vahagn")
+    assert updater.calls == [
+        (
+            "I ask the bell-ringer why he watches me.",
+            state.oracle_history[-1].summary,
+        ),
+    ]
+    assert state.oracle_history[-1].referenced_npc_id == created.id
+    assert state.oracle_history[-1].referenced_npc_ids == [created.id]
+    assert any(card.npc_id == created.id for card in memory.npc_memory)
+
+
+def test_service_load_state_repairs_legacy_npc_roster_once(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    legacy = sample_state()
+    legacy.npc_roster_version = 1
+    store.save(legacy, create_checkpoint=False)
+    existing_id = legacy.npcs[0].id
+    repair = LegacyNPCRosterRepairResult(
+        introduced_npcs=(
+            NPC(
+                id=existing_id,
+                name="Generated NPC One",
+                role="Witness finally met in person",
+                disposition="fearful",
+            ),
+        ),
+        hidden_npcs=(
+            NPC(
+                name="The Hierophant",
+                role="Face-thief patriarch",
+                disposition="patient malice",
+            ),
+        ),
+    )
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        npc_updater=FakeNpcUpdater(repair=repair),
+    )
+
+    state = service.load_state()
+    reloaded = store.load()
+
+    assert state.npc_roster_version == 2
+    assert [npc.name for npc in state.npcs] == ["Generated NPC One"]
+    assert [npc.name for npc in state.hidden_npcs] == ["The Hierophant"]
+    assert state.npcs[0].id == existing_id
+    assert reloaded.npc_roster_version == 2
+
+
+def test_service_reveals_hidden_npc_named_in_narration(tmp_path: Path) -> None:
+    class RevealingNarrative(FakeNarrative):
+        def generate(  # noqa: PLR0913
+            self,
+            state: GameState,
+            outcome: OracleOutcome,
+            player_input: str,
+            *,
+            execution_context: str | None = None,
+            memory_context: str | None = None,
+            cancel_token: CancellationToken | None = None,
+        ) -> str:
+            del state, outcome, player_input, execution_context, memory_context, cancel_token
+            return "The Hierophant steps from the ash-dark arch and finally speaks."
+
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=RevealingNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    state = service.load_state()
+    state.hidden_npcs.append(
+        NPC(
+            name="The Hierophant",
+            role="Face-thief patriarch",
+            disposition="patient malice",
+        ),
+    )
+    state.npcs = []
+    store.save(state, create_checkpoint=False)
+
+    updated = service.submit_player_action("I wait in terrified silence.")
+
+    assert [npc.name for npc in updated.npcs] == ["The Hierophant"]
+    assert updated.hidden_npcs == []
+    assert updated.oracle_history[-1].referenced_npc_id == updated.npcs[0].id
+    assert updated.oracle_history[-1].referenced_npc_ids == [updated.npcs[0].id]
+
+
+def test_service_update_directives_persists_without_action_log_event(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    state = service.update_directives(
+        world_guidance="Keep miracles subtle and costly.",
+        play_guidance="The hierophant cannot speak first.",
+    )
+    reloaded = store.load()
+
+    assert state.directives.world_guidance == "Keep miracles subtle and costly."
+    assert reloaded.directives.play_guidance == "The hierophant cannot speak first."
+    assert all(event.title != "Campaign directives updated" for event in state.action_log)
+
+
+def test_streamed_turn_thread_updater_can_resolve_thread(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        state.threads[0].status = ThreadStatus.RESOLVED
+        return (state.threads[0].id,)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=FakeThreadUpdater(mutate=mutate),
+    )
+
+    stream = service.stream_submit_player_action("I burn the old ledger and walk away.")
+    for _ in stream:
+        pass
+    state = store.load()
+    memory = store.load_memory()
+
+    assert state.threads[0].status == ThreadStatus.RESOLVED
+    assert state.oracle_history[-1].referenced_thread_id == state.threads[0].id
+    assert state.oracle_history[-1].referenced_thread_ids == [state.threads[0].id]
+    assert all(
+        not loop.text.startswith(state.threads[0].title)
+        for loop in memory.open_loops
+    )
+    resolved_card = next(
+        card for card in memory.thread_memory if card.thread_id == state.threads[0].id
+    )
+    assert resolved_card.status == ThreadStatus.RESOLVED
+
+
+def test_streamed_turn_npc_updater_can_retire_npc(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        state.npcs[0].status = NPCStatus.RETIRED
+        state.npcs[0].disposition = "gone to ground"
+        return (state.npcs[0].id,)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        npc_updater=FakeNpcUpdater(mutate=mutate),
+    )
+
+    stream = service.stream_submit_player_action("I pay the witness to disappear before dawn.")
+    for _ in stream:
+        pass
+    state = store.load()
+    memory = store.load_memory()
+
+    assert state.npcs[0].status == NPCStatus.RETIRED
+    assert state.oracle_history[-1].referenced_npc_id == state.npcs[0].id
+    assert state.oracle_history[-1].referenced_npc_ids == [state.npcs[0].id]
+    retired_card = next(card for card in memory.npc_memory if card.npc_id == state.npcs[0].id)
+    assert retired_card.status == NPCStatus.RETIRED
+    assert retired_card.disposition == "gone to ground"
 
 
 def test_stream_cancel_discards_inflight_turn_state(tmp_path: Path) -> None:

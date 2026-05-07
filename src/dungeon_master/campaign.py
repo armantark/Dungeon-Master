@@ -49,7 +49,7 @@ Return only valid JSON. The application will persist your JSON as structured sta
 
 Creative direction:
 - {SETTING_DIRECTION}
-- Characters must be archetypal to this setting: scarred pilgrims, failed squires,
+- Characters must be archetypal to this setting: including but not limited to scarred pilgrims, failed squires,
   gutter mystics, plague-haunted hunters, relic smugglers, deserters, grave-robbers,
   and other desperate medieval survivors.
 - Make them playable, pressured, and specific without deciding any future actions.
@@ -130,8 +130,8 @@ Setting:
 
 Question constraints:
 - Every question must serve the player's stated character concept.
-- Questions are short, pointed, and answerable in one sentence.
-- Cover the body / condition, what was lost or done, what is carried,
+- Questions are short and answerable in one sentence.
+- Ideas: The body / condition, what was lost or done, what is carried,
   who or what is hunting them, and what sin they keep committing.
   Do not ask about combat stats, classes, or skill points.
 - Each question gets 3-5 multiple-choice options. Each option is a
@@ -238,7 +238,7 @@ CAMPAIGN_USER_PROMPT_TEMPLATE = """Create a fresh campaign opening as JSON with 
 The finalized player character is:
 <<CHARACTER_JSON>>
 
-Return exactly 3 threads and exactly 2 NPCs.
+Return 1-3 threads and as many NPCs to fit the story as needed.
 """
 
 
@@ -355,12 +355,13 @@ class GeneratedCampaignWorld(StrictModel):
             current_scene=self.current_scene,
             setting_notes=self.setting_notes,
             player_notes=character.backstory,
+            npc_roster_version=2,
             character=character,
             campaign_status=CampaignStatus.ACTIVE,
             threads=[
                 GameThread(title=thread.title, stakes=thread.stakes) for thread in self.threads
             ],
-            npcs=[
+            hidden_npcs=[
                 NPC(name=npc.name, role=npc.role, disposition=npc.disposition)
                 for npc in self.npcs
             ],
@@ -699,6 +700,7 @@ def _setup_state(*, configured: bool) -> GameState:
         current_scene="Character creation stands before the first scene.",
         setting_notes=setting,
         player_notes="No finalized character yet.",
+        npc_roster_version=2,
         campaign_status=CampaignStatus.CHARACTER_CREATION,
         character=CharacterSheet(
             name="Unnamed wanderer",
@@ -1413,6 +1415,7 @@ class CampaignGenerator:
             current_scene="The world has not finished taking shape around the chosen character.",
             setting_notes=note,
             player_notes=character.backstory,
+            npc_roster_version=2,
             character=character,
             campaign_status=CampaignStatus.ACTIVE,
             threads=[
@@ -1429,7 +1432,7 @@ class CampaignGenerator:
                     stakes="Events will feel thin until the generated word banks arrive.",
                 ),
             ],
-            npcs=[
+            hidden_npcs=[
                 NPC(
                     name="Unfinished World",
                     role="Placeholder witness",

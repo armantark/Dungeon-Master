@@ -2,10 +2,16 @@
 @component
 ChatMessage — one entry in the chat feed.
 
-Three speakers:
+Four speakers:
   dm        — narrative voice (Cormorant), parchment-tinted left rail
   player    — first-person action, plain
   system    — engine voice (Alagard pixel), subdued
+  ooc       — Archivist / out-of-character rules explainer (F-10).
+              Same Alagard pixel voice as `system` but with a
+              verdigris rail + an "OOC" speaker tag so the player
+              can tell at a glance that the bubble is non-canonical.
+              When `question` is set, it renders above the answer
+              as a `Q:` row to keep the exchange visually paired.
 
 DM messages produced by an oracle outcome carry a collapsible
 MechanicalReceipt so the player can verify the dice on demand.
@@ -18,7 +24,7 @@ MechanicalReceipt so the player can verify the dice on demand.
 
   type Props = {
     eventId: string;
-    speaker: "dm" | "player" | "system";
+    speaker: "dm" | "player" | "system" | "ooc";
     text: string;
     timestamp?: string | null;
     outcome?: OracleOutcome | null;
@@ -32,6 +38,11 @@ MechanicalReceipt so the player can verify the dice on demand.
     // uses this for the synthetic provisional DM bubble; persisted
     // messages always render with `streaming = false`.
     streaming?: boolean;
+    // F-10 OOC explainer: the player's verbatim question, rendered
+    // as a `Q:` row above the answer. Only consulted when speaker is
+    // `ooc`; ignored otherwise so callers can leave it null without
+    // changing other layouts.
+    question?: string | null;
   };
   const {
     eventId,
@@ -42,6 +53,7 @@ MechanicalReceipt so the player can verify the dice on demand.
     canRegenerate = false,
     thinking = null,
     streaming = false,
+    question = null,
   }: Props = $props();
 
   function relative(iso: string | null): string | null {
@@ -59,6 +71,7 @@ MechanicalReceipt so the player can verify the dice on demand.
     <span class="speaker">
       {#if speaker === "dm"}DM
       {:else if speaker === "player"}You
+      {:else if speaker === "ooc"}OOC · Archivist
       {:else}Engine{/if}
     </span>
     {#if streaming}
@@ -68,12 +81,35 @@ MechanicalReceipt so the player can verify the dice on demand.
     {/if}
   </div>
 
-  {#if speaker === "dm"}
+  {#if speaker === "dm" || speaker === "ooc"}
+    <!--
+      OOC bubbles also surface the model's reasoning trace via the
+      collapsed-thinking block. The explainer is OOC anyway, so
+      letting the player peek at the trace is consistent with how
+      DM bubbles already expose thinking; it doesn't break the
+      no-mutation contract because the trace is ephemeral and never
+      enters action_log.
+    -->
     <CollapsedThinking
       text={thinking ?? ""}
       streaming={streaming && (thinking ?? "") !== ""}
       hideWhenEmpty={!streaming}
     />
+  {/if}
+
+  {#if speaker === "ooc" && question !== null && question !== ""}
+    <!--
+      We render the question as a `Q:` row up-front so the OOC card
+      reads as a self-contained Q+A pair even after the page is
+      reloaded (well, until reload clears the ephemeral note, at
+      which point the whole exchange is gone — but during a session
+      the player can still scan back through the log without
+      having to remember which question fired which answer).
+    -->
+    <div class="ooc-question pixel">
+      <span class="ooc-question-label">Q</span>
+      <span class="ooc-question-body">{question}</span>
+    </div>
   {/if}
 
   <div class="body">
@@ -191,5 +227,53 @@ MechanicalReceipt so the player can verify the dice on demand.
   }
   .msg--system .meta .speaker {
     color: color-mix(in oklab, var(--rust-iron) 70%, var(--paper-stained));
+  }
+
+  /*
+   * F-10 OOC Archivist voice. Verdigris rail (greenish-blue) sets it
+   * apart from DM/player/system at a glance — the player is a
+   * pattern-matcher and rail color is the cheapest cue. Body type is
+   * a slightly more legible Cormorant than `system` because OOC
+   * answers can run several paragraphs and pixel font at length is
+   * fatiguing. We still keep the OOC tag pixelated so the
+   * "engine voice" connotation lands.
+   */
+  .msg--ooc {
+    border-left: 2px solid color-mix(in oklab, var(--verdigris, #4a7c74) 70%, var(--gold-tarnished));
+    padding-left: 1rem;
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--verdigris, #4a7c74) 6%, transparent),
+      transparent 65%
+    );
+  }
+  .msg--ooc .meta .speaker {
+    color: color-mix(in oklab, var(--verdigris, #4a7c74) 70%, var(--paper-bone));
+    letter-spacing: 0.06em;
+  }
+  .msg--ooc .body p {
+    color: color-mix(in oklab, var(--paper-bone) 95%, transparent);
+    font-family: var(--font-prose, var(--font-serif, serif));
+    font-size: 0.98rem;
+    line-height: 1.6;
+  }
+  .ooc-question {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.25rem 0;
+    color: color-mix(in oklab, var(--paper-shadow) 95%, transparent);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .ooc-question-label {
+    flex: 0 0 auto;
+    color: color-mix(in oklab, var(--verdigris, #4a7c74) 75%, var(--paper-bone));
+    letter-spacing: 0.08em;
+  }
+  .ooc-question-body {
+    flex: 1 1 auto;
+    color: color-mix(in oklab, var(--paper-bone) 80%, transparent);
+    font-style: italic;
   }
 </style>

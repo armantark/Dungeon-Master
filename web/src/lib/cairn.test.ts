@@ -7,9 +7,11 @@ import {
   defaultCairnItemState,
   formatAbility,
   formatBurden,
+  formatCombatInitiator,
   formatRestKind,
   formatStance,
   hasCairnMechanics,
+  isAmbushOpener,
   itemTagLabel,
   itemTagLabels,
 } from "./cairn";
@@ -45,7 +47,9 @@ function makeOutcome(
     event_tone: null,
     event_subject: null,
     referenced_thread_id: null,
+    referenced_thread_ids: [],
     referenced_npc_id: null,
+    referenced_npc_ids: [],
     scene_status: null,
     cairn,
   };
@@ -359,5 +363,119 @@ describe("cairnHeadline", () => {
       const headline = cairnHeadline(outcome);
       expect(headline?.startsWith("Recovery · ")).toBe(true);
     }
+  });
+
+  it("rewrites the harm headline as 'Ambush · …' when the foe opened the fight", () => {
+    // F-05: when the backend's CairnResolution carries
+    // `combat_started=true` together with `combat_initiator='enemy'`,
+    // the receipt strip should read "Ambush · 2 · HP 4" instead of
+    // "Harm · 2 · HP 4". Anything weaker than both signals together
+    // (e.g. only `combat_started`, or `initiator='player'`) keeps the
+    // generic "Harm · …" prefix because the player chose the fight.
+    const opener = makeOutcome("harm", {
+      ...emptyCairnResolution(),
+      damage_after_armor: 2,
+      hp_after: 4,
+      combat_started: true,
+      combat_initiator: "enemy",
+    });
+    expect(cairnHeadline(opener)).toBe("Ambush · 2 · HP 4");
+
+    const playerStartedFight = makeOutcome("harm", {
+      ...emptyCairnResolution(),
+      damage_after_armor: 2,
+      hp_after: 4,
+      combat_started: true,
+      combat_initiator: "player",
+    });
+    expect(cairnHeadline(playerStartedFight)).toBe("Harm · 2 · HP 4");
+
+    const ongoingFight = makeOutcome("harm", {
+      ...emptyCairnResolution(),
+      damage_after_armor: 2,
+      hp_after: 4,
+      combat_started: false,
+      combat_initiator: "enemy",
+    });
+    expect(cairnHeadline(ongoingFight)).toBe("Harm · 2 · HP 4");
+  });
+});
+
+describe("formatCombatInitiator", () => {
+  it("labels each known initiator with a player-facing string", () => {
+    expect(formatCombatInitiator("player")).toBe("Player struck first");
+    expect(formatCombatInitiator("enemy")).toBe("Foe seized initiative");
+  });
+
+  it("returns null for an absent initiator (out-of-combat harm or legacy outcome)", () => {
+    // The receipt uses null as the "skip the row" signal. We test
+    // both null and undefined because the wire shape declares the
+    // field optional and older outcomes simply omit it.
+    expect(formatCombatInitiator(null)).toBeNull();
+    expect(formatCombatInitiator(undefined)).toBeNull();
+  });
+});
+
+describe("isAmbushOpener", () => {
+  it("requires both combat_started and an enemy initiator", () => {
+    // Both signals are necessary because a player attack that
+    // opened combat also flips combat_started=true. Only the
+    // enemy-opener path is the "you got jumped" case.
+    expect(
+      isAmbushOpener(
+        makeOutcome("harm", {
+          ...emptyCairnResolution(),
+          combat_started: true,
+          combat_initiator: "enemy",
+        }),
+      ),
+    ).toBe(true);
+
+    expect(
+      isAmbushOpener(
+        makeOutcome("harm", {
+          ...emptyCairnResolution(),
+          combat_started: true,
+          combat_initiator: "player",
+        }),
+      ),
+    ).toBe(false);
+
+    expect(
+      isAmbushOpener(
+        makeOutcome("harm", {
+          ...emptyCairnResolution(),
+          combat_started: false,
+          combat_initiator: "enemy",
+        }),
+      ),
+    ).toBe(false);
+
+    // A harm outcome with no Cairn block at all (defensive — the
+    // backend always produces one for harm, but the type is
+    // nullable) must never read as an ambush.
+    expect(isAmbushOpener(makeOutcome("harm"))).toBe(false);
+
+    // Non-harm Cairn kinds also shouldn't latch true even if a
+    // future regression fills both fields — initiative carries
+    // into the receipt only via `formatCombatInitiator`, never via
+    // the ambush flag.
+    expect(
+      isAmbushOpener(
+        makeOutcome("attack", {
+          ...emptyCairnResolution(),
+          combat_started: true,
+          combat_initiator: "enemy",
+        }),
+      ),
+    ).toBe(true);
+    // ^ Note: the predicate is structural ("did this outcome open a
+    // fight as an ambush?") rather than kind-gated, so an attack
+    // outcome with both signals would also count. The receipt
+    // component only consults this for harm rows in practice
+    // because the strip tag swap is keyed off `outcome.kind === "harm"`
+    // implicitly via `formatHarmHeadline`. We still pin the
+    // structural behavior here so a future change to the receipt
+    // can rely on the predicate consistently.
   });
 });

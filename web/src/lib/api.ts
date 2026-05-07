@@ -13,13 +13,16 @@ import {
 } from "./streaming";
 import type { StreamEvent } from "./streaming-types";
 import type {
+  CampaignEndReason,
   CharacterDraftResponse,
   CharacterQuizAnswer,
   CharacterQuizResponse,
   CharacterSheet,
   CharacterTemplatesResponse,
+  ExplanationResponse,
   GameState,
   Likelihood,
+  SaveLibraryBootstrapResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -68,6 +71,35 @@ async function request<T>(
 
 export const api = {
   health: (signal?: AbortSignal): Promise<{ status: string }> => request("/health", { signal }),
+
+  // F-12 Save Library --------------------------------------------------------
+  //
+  // The library endpoints are intentionally split out from `getState`. A
+  // bootstrap call describes "which save, if any, is active and what's
+  // the rest of the shelf?" before we know whether `getState` can even be
+  // called — and on a fresh install, calling `/state` prematurely would
+  // return a 409 ("No active save selected.") that we'd have to suppress.
+  // Routing through `bootstrapLibrary` first keeps the empty-library
+  // splash screen reachable without a noisy 409 in the network panel.
+  bootstrapLibrary: (signal?: AbortSignal): Promise<SaveLibraryBootstrapResponse> =>
+    request("/library/bootstrap", { signal }),
+
+  // `select` defaults to true — the common case for both the empty-shelf
+  // splash and the "Begin a new campaign" CTA in the system menu is
+  // "create + immediately switch to it". Tests pass `select: false` when
+  // they want to assert the create path doesn't accidentally rebind the
+  // active service.
+  createSave: (
+    select: boolean = true,
+    signal?: AbortSignal,
+  ): Promise<SaveLibraryBootstrapResponse> =>
+    request("/library/saves", { method: "POST", signal, json: { select } }),
+
+  selectSave: (
+    save_id: string,
+    signal?: AbortSignal,
+  ): Promise<SaveLibraryBootstrapResponse> =>
+    request("/library/select", { method: "POST", signal, json: { save_id } }),
 
   getState: (signal?: AbortSignal): Promise<GameState> => request("/state", { signal }),
 
@@ -118,6 +150,23 @@ export const api = {
   startCampaign: (signal?: AbortSignal): Promise<GameState> =>
     request("/campaign/start", { method: "POST", signal }),
 
+  // F-06 explicit terminal close. The backend rejects any non-DEATH
+  // reason while an encounter is still active, and rejects DEATH while
+  // the character is alive — we surface those 409s as errors via the
+  // store so the player sees why the close was refused. Auto-deaths
+  // don't go through this endpoint; they fold into the regular turn
+  // pipeline server-side. See memory-bank/featureKanban.md F-06.
+  endCampaign: (
+    reason: CampaignEndReason,
+    summary: string | null,
+    signal?: AbortSignal,
+  ): Promise<GameState> =>
+    request("/campaign/end", {
+      method: "POST",
+      signal,
+      json: { reason, summary },
+    }),
+
   reset: (signal?: AbortSignal): Promise<GameState> =>
     request("/state/reset", { method: "POST", signal }),
 
@@ -133,6 +182,25 @@ export const api = {
       method: "POST",
       signal,
       json: { setting_notes, player_notes },
+    }),
+
+  // B-02 Campaign directives. Distinct endpoint from `updateNotes`
+  // because the two surfaces have different meanings server-side:
+  // `setting_notes`/`player_notes` are the *canonical* campaign /
+  // backstory canon, while directives are persistent OOC steering
+  // that explicitly does *not* land in the action log. We keep
+  // empty strings legal on the wire so "clear my guidance" stays a
+  // single round-trip — the backend treats "" as "no guidance" and
+  // simply skips the directives prompt block.
+  updateDirectives: (
+    world_guidance: string,
+    play_guidance: string,
+    signal?: AbortSignal,
+  ): Promise<GameState> =>
+    request("/state/directives", {
+      method: "POST",
+      signal,
+      json: { world_guidance, play_guidance },
     }),
 
   askYesNo: (
@@ -161,6 +229,17 @@ export const api = {
 
   submitTurn: (text: string, signal?: AbortSignal): Promise<GameState> =>
     request("/turn", { method: "POST", signal, json: { text } }),
+
+  // F-10 OOC rules explainer. Returns a non-canonical `ExplanationResponse`
+  // (answer + thinking trace) and does *not* mutate `GameState` — see
+  // `service.py::_load_state_readonly`. We expose the unary endpoint here
+  // even though the streaming variant below is what the store actually
+  // calls in practice; the unary endpoint exists as the fallback when
+  // the streaming route 404s during the backend transition window, and
+  // because exercising it directly is the simplest no-mutation guarantee
+  // to assert in tests.
+  explain: (question: string, signal?: AbortSignal): Promise<ExplanationResponse> =>
+    request("/explain", { method: "POST", signal, json: { question } }),
 
   regenerateMessage: (eventId: string, signal?: AbortSignal): Promise<GameState> =>
     request(`/messages/${eventId}/regenerate`, { method: "POST", signal }),
@@ -259,6 +338,22 @@ export const api = {
     consumeStream(`${BASE}/character/draft/stream`, handlers, {
       signal,
       json: { mode, prompt, template },
+    }),
+
+  // F-10 streaming variant of the OOC explainer. Mirrors the
+  // quiz/draft pattern (`final_payload` + endpoint-specific
+  // discriminator) rather than `final_state` because the explainer
+  // never mutates canonical state. The store consumes the answer
+  // through #runStreamingPayload and persists it as an ephemeral
+  // ClientNote — never as a canonical action_log entry.
+  streamExplain: (
+    question: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(`${BASE}/explain/stream`, handlers, {
+      signal,
+      json: { question },
     }),
 
   streamQuizzedCharacterDraft: (

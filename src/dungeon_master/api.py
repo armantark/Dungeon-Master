@@ -28,6 +28,7 @@ from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
+    CampaignEndReason,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterSheet,
@@ -35,6 +36,7 @@ from dungeon_master.models import (
     Likelihood,
 )
 from dungeon_master.narrative import CompletionDelta
+from dungeon_master.save_library import SaveLibrary, SaveSummary
 from dungeon_master.service import GameService
 from dungeon_master.settings import state_path_from_env
 from dungeon_master.state_store import StateStore
@@ -55,6 +57,11 @@ class NotesRequest(BaseModel):
     player_notes: str = Field(min_length=1)
 
 
+class DirectivesRequest(BaseModel):
+    world_guidance: str = ""
+    play_guidance: str = ""
+
+
 class YesNoRequest(BaseModel):
     question: str = Field(min_length=1)
     likelihood: Likelihood
@@ -70,6 +77,10 @@ class PlayerActionRequest(BaseModel):
 
 class PlayerTurnRequest(BaseModel):
     text: str = Field(min_length=1)
+
+
+class ExplainRequest(BaseModel):
+    question: str = Field(min_length=1)
 
 
 class CairnSaveRequest(BaseModel):
@@ -99,6 +110,10 @@ class CairnRetreatRequest(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class CairnAcquireRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
 class CairnEquipRequest(BaseModel):
     item_id: str = Field(min_length=1)
     equipped: bool = True
@@ -112,6 +127,11 @@ class CharacterDraftRequest(BaseModel):
 
 class CharacterFinalizeRequest(BaseModel):
     character: CharacterSheet
+
+
+class CampaignEndRequest(BaseModel):
+    reason: CampaignEndReason
+    summary: str | None = Field(default=None, min_length=1)
 
 
 class CharacterTemplatesResponse(BaseModel):
@@ -131,6 +151,24 @@ class CharacterQuizRequest(BaseModel):
 class CharacterQuizResponse(BaseModel):
     quiz: CharacterQuiz
     thinking: str = ""
+
+
+class ExplanationResponse(BaseModel):
+    answer: str
+    thinking: str = ""
+
+
+class CreateSaveRequest(BaseModel):
+    select: bool = True
+
+
+class SelectSaveRequest(BaseModel):
+    save_id: str = Field(min_length=1)
+
+
+class SaveLibraryBootstrapResponse(BaseModel):
+    active_save_id: str | None
+    saves: list[SaveSummary]
 
 
 class CharacterQuizzedDraftRequest(BaseModel):
@@ -157,6 +195,11 @@ def build_service(state_path: Path | None = None) -> GameService:
     return GameService(store=StateStore(path))
 
 
+def build_save_library(legacy_state_path: Path | None = None) -> SaveLibrary:
+    path = legacy_state_path or state_path_from_env()
+    return SaveLibrary(path)
+
+
 def get_service(request: Request) -> GameService:
     """FastAPI dependency that pulls the live `GameService` off app state.
 
@@ -166,8 +209,21 @@ def get_service(request: Request) -> GameService:
     """
     service = getattr(request.app.state, "service", None)
     if not isinstance(service, GameService):
+        library = getattr(request.app.state, "save_library", None)
+        if isinstance(library, SaveLibrary) and library.active_save_id() is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No active save selected.",
+            )
         raise ServiceUnavailableError
     return service
+
+
+def get_save_library(request: Request) -> SaveLibrary:
+    library = getattr(request.app.state, "save_library", None)
+    if not isinstance(library, SaveLibrary):
+        raise ServiceUnavailableError
+    return library
 
 
 def get_cancellation_registry(request: Request) -> CancellationRegistry:
@@ -178,7 +234,48 @@ def get_cancellation_registry(request: Request) -> CancellationRegistry:
 
 
 ServiceDep = Annotated[GameService, Depends(get_service)]
+LibraryDep = Annotated[SaveLibrary, Depends(get_save_library)]
 RegistryDep = Annotated[CancellationRegistry, Depends(get_cancellation_registry)]
+
+
+def _service_seed(app: FastAPI) -> GameService | None:
+    seeded = getattr(app.state, "service_template", None)
+    if isinstance(seeded, GameService):
+        return seeded
+    live = getattr(app.state, "service", None)
+    if isinstance(live, GameService):
+        return live
+    return None
+
+
+def _bind_service_to_active_save(app: FastAPI, save_id: str) -> GameService:
+    library = getattr(app.state, "save_library", None)
+    if not isinstance(library, SaveLibrary):
+        raise ServiceUnavailableError
+    state_path = library.state_path_for(save_id)
+    seed = _service_seed(app)
+    if seed is not None:
+        seed.bind_store(StateStore(state_path))
+        app.state.service = seed
+        return seed
+
+    service = build_service(state_path)
+    app.state.service = service
+    return service
+
+
+def _guard_save_library_idle(registry: CancellationRegistry) -> None:
+    # F-12 keeps the backend single-active-save for v1. Switching the bound
+    # store while a streamed request is still registered would let one request
+    # start against save A and commit against save B. We therefore force the
+    # conservative invariant: no save creation/selection that changes the
+    # active slot while any streamed request is still alive in the registry.
+    if registry.has_active_requests():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot switch saves while a request is still in flight.",
+        )
+
 
 router = APIRouter(prefix="/api")
 
@@ -321,8 +418,8 @@ def _latest_event_thinking(state: GameState) -> str:
 def _stream_setup_payload(  # noqa: PLR0913
     service_generator: Generator[CompletionDelta, None, object],
     *,
-    route: Literal["character_quiz", "character_draft", "character_templates"],
-    payload_kind: Literal["character_quiz", "character_draft"],
+    route: Literal["character_quiz", "character_draft", "character_templates", "explanation"],
+    payload_kind: Literal["character_quiz", "character_draft", "explanation"],
     serialize: object,
     request_id: str,
     cancellation_registry: CancellationRegistry,
@@ -385,6 +482,49 @@ def cancel_request(
     return CancelRequestResponse(cancelled=registry.cancel(request_id))
 
 
+@router.get("/library/bootstrap", response_model=SaveLibraryBootstrapResponse)
+def library_bootstrap(library: LibraryDep) -> SaveLibraryBootstrapResponse:
+    active_save_id, saves = library.bootstrap_payload()
+    return SaveLibraryBootstrapResponse(active_save_id=active_save_id, saves=saves)
+
+
+@router.post("/library/saves", response_model=SaveLibraryBootstrapResponse)
+def create_save(
+    request: Request,
+    library: LibraryDep,
+    registry: RegistryDep,
+    payload: Annotated[CreateSaveRequest, Body()] | None = None,
+) -> SaveLibraryBootstrapResponse:
+    if payload is None:
+        payload = CreateSaveRequest()
+    if payload.select:
+        _guard_save_library_idle(registry)
+    seed = _service_seed(request.app)
+    create_state = seed.new_setup_state() if seed is not None else build_service().new_setup_state()
+    save_id = library.create_save(create_state=create_state, select=payload.select)
+    if payload.select:
+        _bind_service_to_active_save(request.app, save_id)
+    active_save_id, saves = library.bootstrap_payload()
+    return SaveLibraryBootstrapResponse(active_save_id=active_save_id, saves=saves)
+
+
+@router.post("/library/select", response_model=SaveLibraryBootstrapResponse)
+def select_save(
+    request: Request,
+    library: LibraryDep,
+    registry: RegistryDep,
+    payload: Annotated[SelectSaveRequest, Body()],
+) -> SaveLibraryBootstrapResponse:
+    _guard_save_library_idle(registry)
+    try:
+        library.select_active(payload.save_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    _bind_service_to_active_save(request.app, payload.save_id)
+    active_save_id, saves = library.bootstrap_payload()
+    return SaveLibraryBootstrapResponse(active_save_id=active_save_id, saves=saves)
+
+
 @router.get("/state", response_model=GameState)
 def read_state(svc: ServiceDep) -> GameState:
     try:
@@ -413,6 +553,17 @@ def update_notes(svc: ServiceDep, payload: Annotated[NotesRequest, Body()]) -> G
         return svc.update_notes(
             setting_notes=payload.setting_notes,
             player_notes=payload.player_notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/state/directives", response_model=GameState)
+def update_directives(svc: ServiceDep, payload: Annotated[DirectivesRequest, Body()]) -> GameState:
+    try:
+        return svc.update_directives(
+            world_guidance=payload.world_guidance,
+            play_guidance=payload.play_guidance,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -506,6 +657,36 @@ def submit_turn_stream(
     )
 
 
+@router.post("/explain", response_model=ExplanationResponse)
+def explain(
+    svc: ServiceDep,
+    payload: Annotated[ExplainRequest, Body()],
+) -> ExplanationResponse:
+    try:
+        result = svc.explain(payload.question)
+        return ExplanationResponse(answer=result.answer, thinking=result.thinking)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/explain/stream")
+def explain_stream(
+    svc: ServiceDep,
+    registry: RegistryDep,
+    payload: Annotated[ExplainRequest, Body()],
+) -> StreamingResponse:
+    request_id = _new_request_id()
+    token = registry.register(request_id)
+    return _stream_setup_payload(
+        svc.stream_explain(payload.question, cancel_token=token),
+        route="explanation",
+        payload_kind="explanation",
+        serialize=lambda result: {"answer": result.answer},
+        request_id=request_id,
+        cancellation_registry=registry,
+    )
+
+
 @router.post("/cairn/save", response_model=GameState)
 def cairn_save(
     svc: ServiceDep,
@@ -567,6 +748,17 @@ def cairn_retreat(
 ) -> GameState:
     try:
         return svc.retreat_from_encounter(payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/cairn/acquire", response_model=GameState)
+def cairn_acquire(
+    svc: ServiceDep,
+    payload: Annotated[CairnAcquireRequest, Body()],
+) -> GameState:
+    try:
+        return svc.acquire_inventory(payload.text)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
@@ -722,6 +914,17 @@ def start_campaign(svc: ServiceDep) -> GameState:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.post("/campaign/end", response_model=GameState)
+def end_campaign(
+    svc: ServiceDep,
+    payload: Annotated[CampaignEndRequest, Body()],
+) -> GameState:
+    try:
+        return svc.end_campaign(reason=payload.reason, summary=payload.summary)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 @router.post("/campaign/start/stream")
 def start_campaign_stream(
     svc: ServiceDep,
@@ -776,16 +979,40 @@ def regenerate_message_stream(
     )
 
 
-def create_app(service: GameService | None = None) -> FastAPI:
+def create_app(
+    service: GameService | None = None,
+    save_library: SaveLibrary | None = None,
+) -> FastAPI:
     """Create the FastAPI application.
 
-    Pass an explicit `service` from tests; otherwise the lifespan
-    constructs one from environment configuration.
+    Pass an explicit `service` from tests to preserve the old single-save
+    behavior. In production, the app now boots through a save library that
+    resolves one active save slot (or none, if the user has not created one
+    yet) and binds the gameplay service to that slot.
     """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.service = service or build_service()
+        library = save_library
+        if library is None and service is None:
+            library = build_save_library()
+
+        app.state.save_library = library
+        app.state.service_template = service
+
+        if library is not None:
+            library.ensure_initialized()
+            active_state_path = library.active_state_path()
+            if active_state_path is not None:
+                if service is not None:
+                    service.bind_store(StateStore(active_state_path))
+                    app.state.service = service
+                else:
+                    app.state.service = build_service(active_state_path)
+            else:
+                app.state.service = None
+        else:
+            app.state.service = service or build_service()
         app.state.cancellation_registry = CancellationRegistry()
         try:
             yield
@@ -794,6 +1021,8 @@ def create_app(service: GameService | None = None) -> FastAPI:
             # is no flush phase. We keep the hook so future async resources
             # (db pools, websockets) have a single place to wind down.
             app.state.service = None
+            app.state.service_template = None
+            app.state.save_library = None
             app.state.cancellation_registry = None
 
     app = FastAPI(

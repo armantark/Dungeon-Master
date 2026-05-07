@@ -60,7 +60,13 @@ export type StreamRoute =
   | "campaign_start"
   | "character_quiz"
   | "character_draft"
-  | "regenerate";
+  | "regenerate"
+  // F-10 OOC rules explainer. Lives next to gameplay routes because
+  // it streams through the same NDJSON transport, but the route is
+  // semantically *out-of-character* — the chat surface renders the
+  // payload as an ephemeral OOC note rather than a canonical DM
+  // bubble, and the backend never persists state.
+  | "explanation";
 
 // `mechanics_ready` is the deterministic resolution. It carries the
 // final OracleOutcome shape so the UI can pin the dice / damage /
@@ -111,7 +117,14 @@ export interface StreamFinalState {
 // and `payload` carries the endpoint-specific JSON.
 export interface StreamFinalPayload {
   type: "final_payload";
-  kind: "character_quiz" | "character_draft";
+  // F-10: `explanation` joins quiz/draft as a non-state payload so
+  // the OOC explainer can stream through the same NDJSON contract
+  // without being routed onto state-mutating handlers. The frontend
+  // dispatches on this discriminator to decide which typed extractor
+  // to run, and a misroute (e.g. `character_quiz` arriving for an
+  // `/explain` request) surfaces as an explicit error rather than
+  // silently coercing.
+  kind: "character_quiz" | "character_draft" | "explanation";
   payload: unknown;
   thinking: string | null;
 }

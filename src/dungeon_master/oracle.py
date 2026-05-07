@@ -7,6 +7,7 @@ from dungeon_master.models import (
     NPC,
     GameState,
     Likelihood,
+    NPCStatus,
     OracleKind,
     OracleOutcome,
     Roll,
@@ -80,7 +81,9 @@ class OracleEngine:
             event_tone=tone,
             event_subject=subject,
             referenced_thread_id=thread_id,
+            referenced_thread_ids=[] if thread_id is None else [thread_id],
             referenced_npc_id=npc_id,
+            referenced_npc_ids=[] if npc_id is None else [npc_id],
         )
 
     def check_scene(self, state: GameState, expected_scene: str) -> OracleOutcome:
@@ -127,4 +130,6 @@ class OracleEngine:
     def _pick_npc_id(self, npcs: list[NPC], focus: str) -> str | None:
         if "npc" not in focus.lower() or not npcs:
             return None
-        return npcs[self._rng.randrange(len(npcs))].id
+        active_npcs = [npc for npc in npcs if npc.status == NPCStatus.ACTIVE]
+        candidates = active_npcs or npcs
+        return candidates[self._rng.randrange(len(candidates))].id

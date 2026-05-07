@@ -14,6 +14,8 @@
 // All formatting helpers in this module are strictly presentational.
 // They never infer state, never mutate state, and never roll dice.
 
+import type { EncounterInitiator } from "./types";
+
 // `dead` and `fled` exist as separate flags because Cairn distinguishes
 // "removed from the encounter by lethal damage" from "broke and ran on
 // a morale check" — both end participation but they read very
@@ -63,6 +65,13 @@ export interface CombatEncounterState {
   // strip ("First round — DEX save to act").
   player_ready: boolean;
   morale_triggered: boolean;
+  // F-05: who started the fight. `enemy` means the encounter was
+  // opened by an ambush / hostile opener and the tracker should
+  // label that explicitly so the player's first read of the rail is
+  // "you got jumped" rather than "you swung first". `null` for
+  // older state blobs that pre-date the field — we treat the absence
+  // as "unknown initiator" and degrade gracefully (no ambush flag).
+  initiator: EncounterInitiator | null;
   // Tracked hostile combatants. The list is the source of truth — the
   // backend should not also publish a flat `combatants` field on
   // GameState. Empty when the encounter is brewing or already cleared.
@@ -108,6 +117,11 @@ interface BackendEncounterState {
   active: boolean;
   round_number: number;
   first_round_dex_gate_pending: boolean;
+  // F-05: backend started publishing `initiator` on every encounter.
+  // Optional here so older state blobs that pre-date the field still
+  // adapt cleanly (we map missing → null, and the UI degrades to the
+  // pre-F-05 behavior of "no ambush cue").
+  initiator?: EncounterInitiator | null;
   casualty_morale_checked: boolean;
   half_force_morale_checked: boolean;
   combatants: BackendEnemyCombatant[];
@@ -147,6 +161,10 @@ export function combatFromState(state: object): CombatStateSlot {
     player_ready: !candidate.first_round_dex_gate_pending,
     morale_triggered:
       candidate.casualty_morale_checked || candidate.half_force_morale_checked,
+    // Default missing → null so older state blobs don't accidentally
+    // light up the ambush cue. The UI checks `=== "enemy"` everywhere
+    // and treats null as "no signal".
+    initiator: candidate.initiator ?? null,
     combatants,
     summary: candidate.notes && candidate.notes.trim() !== "" ? candidate.notes : null,
   };
@@ -222,8 +240,25 @@ export function combatantStatusLabel(status: CombatantStatus): string | null {
   }
 }
 
-// "Round 1 · DEX save to act" / "Round 3" / "Encounter cleared".
-// Returns null when no encounter is tracked.
+// True when the encounter was opened by a hostile foe rather than the
+// player's swing. F-05: backend's `EncounterInitiator.ENEMY`. Returns
+// false for any null / unknown initiator so older state blobs keep
+// rendering as before.
+export function enemyInitiated(state: CombatStateSlot): boolean {
+  return state !== null && state.initiator === "enemy";
+}
+
+// "Round 1 · DEX save to act" / "Round 3" / "Encounter cleared" /
+// "Ambush · Round 2". Returns null when no encounter is tracked.
+//
+// We label enemy-opened fights with a leading "Ambush · " prefix only
+// while the encounter is still active — once the foes are down, the
+// tracker switches to the cleared-summary branch and the ambush prefix
+// would just clutter the strip. We also drop the prefix on the
+// first-round DEX gate branch because that path already has its own
+// loud label and doubling up reads cluttered. The combat badge in the
+// status strip uses a separate hint so the player still gets an
+// at-a-glance ambush cue even on round 1.
 export function encounterHeadline(state: CombatStateSlot): string | null {
   if (state === null) return null;
   if (!state.active) return state.summary ?? "Encounter cleared";
@@ -231,7 +266,8 @@ export function encounterHeadline(state: CombatStateSlot): string | null {
   if (state.round === 1 && !state.player_ready) {
     return "Round 1 · DEX save to act";
   }
-  return `Round ${state.round}`;
+  const base = `Round ${state.round}`;
+  return enemyInitiated(state) ? `Ambush · ${base}` : base;
 }
 
 // True when the player still owes a first-round DEX save before they

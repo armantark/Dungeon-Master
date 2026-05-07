@@ -16,11 +16,14 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.explainer import ExplainerEngine, ExplanationResult
 from dungeon_master.memory import CommittedTurnMemory, MemoryManager, MemoryState
 from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
+    CampaignDirectives,
+    CampaignEndReason,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
@@ -32,11 +35,21 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     SceneStatus,
+    utc_now,
 )
-from dungeon_master.narrative import CompletionDelta, NarrativeEngine, NarrativeResult
+from dungeon_master.narrative import (
+    CompletionDelta,
+    NarrativeConfig,
+    NarrativeEngine,
+    NarrativeResult,
+)
+from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdater, NPCUpdateResult
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.state_store import StateStore, TurnCheckpointRecord
+from dungeon_master.thread_updater import ThreadUpdater, ThreadUpdateResult
 from dungeon_master.turn_router import PlannedTurnOpKind, TurnPlan, TurnRouter
+
+CURRENT_NPC_ROSTER_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -112,6 +125,16 @@ class CairnPort(Protocol):
     ) -> OracleOutcome:
         raise NotImplementedError
 
+    def resolve_enemy_opener(
+        self,
+        state: GameState,
+        *,
+        source: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        raise NotImplementedError
+
     def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
         raise NotImplementedError
 
@@ -119,6 +142,15 @@ class CairnPort(Protocol):
         raise NotImplementedError
 
     def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+        raise NotImplementedError
+
+    def acquire_items(
+        self,
+        state: GameState,
+        *,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
         raise NotImplementedError
 
     def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
@@ -216,6 +248,66 @@ class CharacterPort(Protocol):
         raise NotImplementedError
 
 
+class ExplainerPort(Protocol):
+    def generate_result(
+        self,
+        state: GameState,
+        question: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ExplanationResult:
+        raise NotImplementedError
+
+    def iter_stream(
+        self,
+        state: GameState,
+        question: str,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, ExplanationResult]:
+        raise NotImplementedError
+
+
+class ThreadUpdaterPort(Protocol):
+    def update_threads(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> ThreadUpdateResult:
+        raise NotImplementedError
+
+
+class NPCUpdaterPort(Protocol):
+    def update_npcs(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> NPCUpdateResult:
+        raise NotImplementedError
+
+    def reseed_legacy_roster(
+        self,
+        state: GameState,
+        *,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+        use_model: bool = False,
+    ) -> LegacyNPCRosterRepairResult:
+        raise NotImplementedError
+
+
 class GameService:
     def __init__(  # noqa: PLR0913
         self,
@@ -224,18 +316,59 @@ class GameService:
         narrative: NarrativePort | None = None,
         campaign_generator: CampaignPort | None = None,
         character_generator: CharacterPort | None = None,
+        explainer: ExplainerPort | None = None,
         cairn_engine: CairnPort | None = None,
         turn_router: TurnRouter | None = None,
         memory_manager: MemoryManager | None = None,
+        thread_updater: ThreadUpdaterPort | None = None,
+        npc_updater: NPCUpdaterPort | None = None,
     ) -> None:
         self._store = store
         self._oracle = oracle or OracleEngine()
         self._narrative = narrative or NarrativeEngine()
         self._campaign_generator = campaign_generator or CampaignGenerator.from_env()
         self._character_generator = character_generator or CharacterGenerator.from_env()
+        default_narrative_config = getattr(self._narrative, "_config", None)
+        self._explainer = explainer or ExplainerEngine(
+            config=(
+                default_narrative_config
+                if isinstance(default_narrative_config, NarrativeConfig)
+                else None
+            ),
+        )
         self._cairn = cairn_engine or CairnEngine()
         self._turn_router = turn_router or TurnRouter()
         self._memory = memory_manager or MemoryManager()
+        self._thread_updater = thread_updater or ThreadUpdater(
+            config=(
+                default_narrative_config
+                if isinstance(default_narrative_config, NarrativeConfig)
+                else None
+            ),
+        )
+        self._npc_updater = npc_updater or NPCUpdater(
+            config=(
+                default_narrative_config
+                if isinstance(default_narrative_config, NarrativeConfig)
+                else None
+            ),
+        )
+
+    def bind_store(self, store: StateStore) -> None:
+        """Rebind the service to a different save slot's StateStore.
+
+        F-12 keeps the gameplay API single-active-save for v1: the FastAPI app
+        swaps which local save directory is considered "current" instead of
+        threading `save_id` through every gameplay route. Rebinding the store is
+        safe because `GameService` caches no state derived from the store beyond
+        the `_store` reference itself; canonical state is always reloaded on
+        demand per request.
+        """
+        self._store = store
+
+    def new_setup_state(self) -> GameState:
+        """Return a fresh setup-state skeleton for a brand-new save slot."""
+        return self._new_setup_state()
 
     def load_state(self, *, cancel_token: CancellationToken | None = None) -> GameState:
         state = self._store.load_or_create(self._new_setup_state)
@@ -244,8 +377,32 @@ class GameService:
             allow_backfill=state.campaign_status == CampaignStatus.ACTIVE,
             cancel_token=cancel_token,
         )
+        changed = self._repair_npc_roster_on_load(
+            state,
+            cancel_token=cancel_token,
+        ) or changed
+        changed = self._sync_terminal_state_on_load(state) or changed
         if changed:
             self._store.save(state, create_checkpoint=False)
+            self._store.save_memory(self._memory_for_state(state, force_rebuild=True))
+        return state
+
+    def _load_state_readonly(
+        self,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> GameState:
+        state = self._store.load() if self._store.exists() else self._new_setup_state()
+        self._cairn.ensure_character_state(
+            state,
+            allow_backfill=state.campaign_status == CampaignStatus.ACTIVE,
+            cancel_token=cancel_token,
+        )
+        self._repair_npc_roster_on_load(
+            state,
+            cancel_token=cancel_token,
+        )
+        self._sync_terminal_state_on_load(state)
         return state
 
     def reset(self) -> GameState:
@@ -375,6 +532,12 @@ class GameService:
 
     def finalize_character(self, character: CharacterSheet) -> GameState:
         state = self.load_state()
+        if state.campaign_status == CampaignStatus.ACTIVE:
+            message = "Campaign already started. Reset to create a new character."
+            raise ValueError(message)
+        if state.campaign_status == CampaignStatus.ENDED:
+            message = self._campaign_end_conflict_message(state)
+            raise ValueError(message)
         state.character = character.model_copy(deep=True)
         self._cairn.ensure_character_state(state, allow_backfill=False)
         state.player_notes = character.backstory
@@ -397,6 +560,9 @@ class GameService:
         state = self.load_state()
         if state.campaign_status == CampaignStatus.ACTIVE:
             return CampaignWorldResult(state=state)
+        if state.campaign_status == CampaignStatus.ENDED:
+            message = self._campaign_end_conflict_message(state)
+            raise ValueError(message)
         if state.campaign_status != CampaignStatus.READY_TO_START:
             message = "Finalize a character before starting the campaign."
             raise ValueError(message)
@@ -430,6 +596,9 @@ class GameService:
                 return result
 
             return _active()
+        if state.campaign_status == CampaignStatus.ENDED:
+            message = self._campaign_end_conflict_message(state)
+            raise ValueError(message)
         if state.campaign_status != CampaignStatus.READY_TO_START:
             message = "Finalize a character before starting the campaign."
             raise ValueError(message)
@@ -468,6 +637,54 @@ class GameService:
             return CampaignWorldResult(state=next_state, thinking=generated.thinking)
 
         return _wrapped()
+
+    def end_campaign(
+        self,
+        *,
+        reason: CampaignEndReason,
+        summary: str | None = None,
+    ) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        if reason == CampaignEndReason.DEATH and not state.character.cairn.dead:
+            message = "Cannot end the campaign as death while the character is still alive."
+            raise ValueError(message)
+        if reason != CampaignEndReason.DEATH and state.encounter.active:
+            message = "Cannot retire or declare victory while an encounter is still active."
+            raise ValueError(message)
+
+        self._mark_campaign_ended(state, reason=reason, summary=summary)
+        self._record_event(
+            state,
+            self._campaign_end_event(state),
+        )
+        self._save_state_commit(state, create_checkpoint=True)
+        return state
+
+    def explain(self, question: str) -> ExplanationResult:
+        state, memory_context = self._load_state_and_memory_context_for_explainer(question)
+        return self._explainer.generate_result(
+            state,
+            question,
+            memory_context=memory_context,
+        )
+
+    def stream_explain(
+        self,
+        question: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, ExplanationResult]:
+        state, memory_context = self._load_state_and_memory_context_for_explainer(
+            question,
+            cancel_token=cancel_token,
+        )
+        return self._explainer.iter_stream(
+            state,
+            question,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
 
     def resolve_cairn_save(self, ability: CairnAbility, reason: str) -> GameState:
         state = self.load_state()
@@ -572,6 +789,34 @@ class GameService:
         self._save_state_commit(state, create_checkpoint=True)
         return state
 
+    def acquire_inventory(self, text: str) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        summary = self._cairn.acquire_items(state, text=text)
+        self._record_event(
+            state,
+            GameEvent(
+                event_type=EventType.SYSTEM,
+                title="Inventory acquired",
+                content=summary,
+            ),
+        )
+        outcome = OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=summary,
+            question=text,
+            chaos_factor=state.chaos_factor,
+        )
+        execution_context = self._format_execution_context([summary])
+        self._commit_oracle_turn(
+            state=state,
+            player_input=text,
+            outcome=outcome,
+            oracle_title=None,
+            execution_context=execution_context,
+        )
+        return state
+
     def set_chaos_factor(self, value: int) -> GameState:
         state = self.load_state()
         self._ensure_active(state)
@@ -600,6 +845,24 @@ class GameService:
                 content="Setting and player notes were updated.",
             ),
         )
+        self._save_state_commit(state, create_checkpoint=True)
+        return state
+
+    def update_directives(
+        self,
+        *,
+        world_guidance: str,
+        play_guidance: str,
+    ) -> GameState:
+        state = self.load_state()
+        self._ensure_active(state)
+        state.directives = CampaignDirectives(
+            world_guidance=world_guidance,
+            play_guidance=play_guidance,
+        )
+        # Directives are durable OOC steering, not in-fiction transcript
+        # events. Persist the state change, but do not append a visible
+        # system message to the action log.
         self._save_state_commit(state, create_checkpoint=True)
         return state
 
@@ -656,41 +919,11 @@ class GameService:
             state,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=action),
         )
-        state.oracle_history.append(outcome)
-        self._store.write_turn_checkpoint(
-            turn_id=outcome.id,
-            oracle_outcome_id=outcome.id,
-            player_input=action,
+        self._commit_oracle_turn(
             state=state,
-        )
-        narration = self._generate_narrative(
-            state,
-            outcome,
-            action,
-            memory_context=self._memory_context_for_narrator(
-                state,
-                player_input=action,
-                outcome=outcome,
-            ),
-        )
-        self._record_event(
-            state,
-            GameEvent(
-                event_type=EventType.NARRATIVE,
-                title="Narrative response",
-                content=narration.content,
-                thinking=narration.thinking,
-                oracle_outcome_id=outcome.id,
-            ),
-        )
-        self._save_state_commit(
-            state,
-            create_checkpoint=True,
-            committed_turn=CommittedTurnMemory(
-                player_input=action,
-                outcome=outcome,
-                narrative_text=narration.content,
-            ),
+            player_input=action,
+            outcome=outcome,
+            oracle_title=None,
         )
         return state
 
@@ -822,49 +1055,16 @@ class GameService:
             queued_events,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=action),
         )
-        state.oracle_history.append(outcome)
-        turn_checkpoint = TurnCheckpointRecord(
-            turn_id=outcome.id,
-            oracle_outcome_id=outcome.id,
-            player_input=action,
-            state=state.model_copy(deep=True),
-        )
-        memory_context = self._memory_context_for_narrator(
-            state,
-            player_input=action,
-            outcome=outcome,
-        )
-        self._raise_if_cancelled(cancel_token)
-        narration = yield from self._iter_stream_narrative(
-            state,
-            outcome,
-            action,
-            memory_context=memory_context,
-            cancel_token=cancel_token,
-        )
-        self._queue_event(
-            state,
-            queued_events,
-            GameEvent(
-                event_type=EventType.NARRATIVE,
-                title="Narrative response",
-                content=narration.content,
-                thinking=narration.thinking,
-                oracle_outcome_id=outcome.id,
-            ),
-        )
-        self._persist_streamed_state(
-            state,
-            queued_events,
-            turn_checkpoint=turn_checkpoint,
-            cancel_token=cancel_token,
-            committed_turn=CommittedTurnMemory(
+        return (
+            yield from self._stream_oracle_turn(
+                state=state,
                 player_input=action,
                 outcome=outcome,
-                narrative_text=narration.content,
-            ),
+                oracle_title=None,
+                queued_events=queued_events,
+                cancel_token=cancel_token,
+            )
         )
-        return state
 
     def stream_submit_player_turn(
         self,
@@ -1004,6 +1204,16 @@ class GameService:
                 step_summaries.append(self._search_scene_summary(op.text))
                 continue
 
+            if op.kind == PlannedTurnOpKind.ACQUIRE_ITEM:
+                step_summaries.append(
+                    self._cairn.acquire_items(
+                        state,
+                        text=op.text,
+                        cancel_token=cancel_token,
+                    ),
+                )
+                continue
+
             if op.kind == PlannedTurnOpKind.USE_ITEM and op.item_name is not None:
                 item_id = self._require_item_id_from_name(state.character, op.item_name)
                 step_summaries.append(
@@ -1080,6 +1290,17 @@ class GameService:
                 step_summaries.append(f"Harm resolved: {primary_outcome.summary}")
                 continue
 
+            if op.kind == PlannedTurnOpKind.ENEMY_OPENER:
+                primary_outcome = self._cairn.resolve_enemy_opener(
+                    state,
+                    source=op.harm_source or op.target_name or op.text,
+                    text=op.text,
+                    cancel_token=cancel_token,
+                )
+                oracle_title = "Ambush resolution"
+                step_summaries.append(f"Ambush resolved: {primary_outcome.summary}")
+                continue
+
             if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is not None:
                 primary_outcome = self._cairn.recover(state, op.rest_kind)
                 oracle_title = "Recovery"
@@ -1139,6 +1360,19 @@ class GameService:
         execution_context: str | None = None,
     ) -> None:
         state.oracle_history.append(outcome)
+        self._update_threads_for_turn(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+        )
+        self._update_npcs_for_turn(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+        )
+        terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
             self._record_event(
                 state,
@@ -1178,6 +1412,13 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
+        revealed_npc_ids = self._reveal_hidden_npcs_from_text(state, narration.content)
+        if revealed_npc_ids:
+            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
+            outcome.referenced_npc_ids = merged_npcs
+            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        if terminal_event is not None:
+            self._record_event(state, terminal_event)
         self._save_state_commit(
             state,
             create_checkpoint=True,
@@ -1201,6 +1442,21 @@ class GameService:
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
         state.oracle_history.append(outcome)
+        self._update_threads_for_turn(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            cancel_token=cancel_token,
+        )
+        self._update_npcs_for_turn(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            cancel_token=cancel_token,
+        )
+        terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
             self._queue_event(
                 state,
@@ -1244,6 +1500,13 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
+        revealed_npc_ids = self._reveal_hidden_npcs_from_text(state, narration.content)
+        if revealed_npc_ids:
+            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
+            outcome.referenced_npc_ids = merged_npcs
+            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        if terminal_event is not None:
+            self._queue_event(state, queued_events, terminal_event)
         self._persist_streamed_state(
             state,
             queued_events,
@@ -1294,9 +1557,100 @@ class GameService:
         )
 
     def _ensure_active(self, state: GameState) -> None:
+        if state.campaign_status == CampaignStatus.ENDED:
+            message = self._campaign_end_conflict_message(state)
+            raise ValueError(message)
         if state.campaign_status != CampaignStatus.ACTIVE:
             message = "Campaign has not started. Finalize a character and start the campaign."
             raise ValueError(message)
+
+    def _sync_terminal_state_on_load(self, state: GameState) -> bool:
+        if (
+            state.campaign_status == CampaignStatus.ACTIVE
+            and state.character.cairn.dead
+        ):
+            return self._mark_campaign_ended(state, reason=CampaignEndReason.DEATH)
+        return False
+
+    def _auto_end_campaign_if_needed(
+        self,
+        state: GameState,
+        *,
+        outcome: OracleOutcome,
+    ) -> GameEvent | None:
+        if (
+            state.campaign_status != CampaignStatus.ACTIVE
+            or not state.character.cairn.dead
+        ):
+            return None
+        summary = (
+            self._default_campaign_end_summary(state, reason=CampaignEndReason.DEATH)
+            + f" Final turn: {outcome.summary}"
+        )
+        self._mark_campaign_ended(
+            state,
+            reason=CampaignEndReason.DEATH,
+            summary=summary,
+        )
+        return self._campaign_end_event(state)
+
+    def _mark_campaign_ended(
+        self,
+        state: GameState,
+        *,
+        reason: CampaignEndReason,
+        summary: str | None = None,
+    ) -> bool:
+        normalized_summary = (
+            summary.strip()
+            if summary is not None and summary.strip() != ""
+            else self._default_campaign_end_summary(state, reason=reason)
+        )
+        changed = False
+        if state.campaign_status != CampaignStatus.ENDED:
+            state.campaign_status = CampaignStatus.ENDED
+            changed = True
+        if state.campaign_end_reason != reason:
+            state.campaign_end_reason = reason
+            changed = True
+        if state.campaign_ended_at is None:
+            state.campaign_ended_at = utc_now()
+            changed = True
+        if state.campaign_end_summary != normalized_summary:
+            state.campaign_end_summary = normalized_summary
+            changed = True
+        return changed
+
+    def _default_campaign_end_summary(
+        self,
+        state: GameState,
+        *,
+        reason: CampaignEndReason,
+    ) -> str:
+        name = state.character.name.strip() or "The wanderer"
+        if reason == CampaignEndReason.DEATH:
+            return f"{name}'s campaign ended in death."
+        if reason == CampaignEndReason.RETIREMENT:
+            return f"{name} retired from the campaign."
+        return f"{name} achieved a final victory."
+
+    def _campaign_end_event(self, state: GameState) -> GameEvent:
+        summary = state.campaign_end_summary or "The campaign has ended."
+        return GameEvent(
+            event_type=EventType.SYSTEM,
+            title="Campaign ended",
+            content=summary,
+        )
+
+    def _campaign_end_conflict_message(self, state: GameState) -> str:
+        reason = state.campaign_end_reason
+        if reason == CampaignEndReason.DEATH:
+            return "Campaign has ended in death. Reset to start a new run."
+        if reason == CampaignEndReason.RETIREMENT:
+            return "Campaign has ended in retirement. Reset to start a new run."
+        if reason == CampaignEndReason.VICTORY:
+            return "Campaign has already ended in victory. Reset to start a new run."
+        return "Campaign has already ended. Reset to start a new run."
 
     def _scene_text(self, expected_scene: str, status: SceneStatus) -> str:
         if status == SceneStatus.EXPECTED:
@@ -1400,6 +1754,30 @@ class GameService:
         self._raise_if_cancelled(cancel_token)
         return plan, state
 
+    def _load_state_and_memory_context_for_explainer(
+        self,
+        question: str,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> tuple[GameState, str | None]:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            memory_future = executor.submit(self._store.load_memory_or_none)
+            state = self._load_state_readonly(cancel_token=cancel_token)
+            existing_memory = memory_future.result()
+        memory = self._memory_for_state(state, existing_memory=existing_memory)
+        latest_outcome = state.oracle_history[-1] if state.oracle_history else None
+        if latest_outcome is None:
+            context = self._memory.retrieve_for_planner(state, memory, question).render()
+        else:
+            context = self._memory.retrieve_for_narrator(
+                state,
+                memory,
+                question,
+                latest_outcome,
+            ).render()
+        self._raise_if_cancelled(cancel_token)
+        return state, (context or None)
+
     def _memory_context_for_narrator(
         self,
         state: GameState,
@@ -1415,6 +1793,167 @@ class GameService:
             outcome,
         ).render()
         return context or None
+
+    def _memory_context_for_thread_updater(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+    ) -> str | None:
+        existing_memory = self._store.load_memory_or_none()
+        context = self._memory.retrieve_for_thread_updater(
+            state,
+            self._memory_for_state(state, existing_memory=existing_memory),
+            player_input,
+            outcome,
+        ).render()
+        return context or None
+
+    def _memory_context_for_npc_updater(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+    ) -> str | None:
+        existing_memory = self._store.load_memory_or_none()
+        context = self._memory.retrieve_for_npc_updater(
+            state,
+            self._memory_for_state(state, existing_memory=existing_memory),
+            player_input,
+            outcome,
+        ).render()
+        return context or None
+
+    def _update_threads_for_turn(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> None:
+        thread_result = self._thread_updater.update_threads(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=self._memory_context_for_thread_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+            ),
+            cancel_token=cancel_token,
+        )
+        merged = self._merged_thread_ids(outcome, thread_result.touched_thread_ids)
+        outcome.referenced_thread_ids = merged
+        outcome.referenced_thread_id = merged[0] if merged else None
+
+    def _update_npcs_for_turn(
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> None:
+        npc_result = self._npc_updater.update_npcs(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=self._memory_context_for_npc_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+            ),
+            cancel_token=cancel_token,
+        )
+        merged = self._merged_npc_ids(outcome, npc_result.touched_npc_ids)
+        outcome.referenced_npc_ids = merged
+        outcome.referenced_npc_id = merged[0] if merged else None
+
+    def _repair_npc_roster_on_load(
+        self,
+        state: GameState,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> bool:
+        if state.npc_roster_version >= CURRENT_NPC_ROSTER_VERSION:
+            return False
+        repaired = self._npc_updater.reseed_legacy_roster(
+            state,
+            memory_context=self._memory_context_for_legacy_npc_repair(state),
+            cancel_token=cancel_token,
+        )
+        state.npcs = [npc.model_copy(deep=True) for npc in repaired.introduced_npcs]
+        state.hidden_npcs = [npc.model_copy(deep=True) for npc in repaired.hidden_npcs]
+        state.npc_roster_version = CURRENT_NPC_ROSTER_VERSION
+        return True
+
+    def _memory_context_for_legacy_npc_repair(self, state: GameState) -> str | None:
+        existing_memory = self._store.load_memory_or_none()
+        context = self._memory.retrieve_for_planner(
+            state,
+            self._memory_for_state(state, existing_memory=existing_memory),
+            state.current_scene,
+        ).render()
+        return context or None
+
+    def _reveal_hidden_npcs_from_text(
+        self,
+        state: GameState,
+        text: str,
+    ) -> tuple[str, ...]:
+        lowered = text.lower()
+        revealed: list[str] = []
+        still_hidden = []
+        for npc in state.hidden_npcs:
+            if self._npc_name_appears_in_text(lowered, npc.name):
+                state.npcs.append(npc)
+                revealed.append(npc.id)
+            else:
+                still_hidden.append(npc)
+        state.hidden_npcs = still_hidden
+        return tuple(revealed)
+
+    def _npc_name_appears_in_text(self, lowered_text: str, npc_name: str) -> bool:
+        return " ".join(npc_name.lower().split()) in lowered_text
+
+    def _merged_thread_ids(
+        self,
+        outcome: OracleOutcome,
+        touched_thread_ids: tuple[str, ...],
+    ) -> list[str]:
+        merged: list[str] = []
+        if outcome.referenced_thread_id is not None:
+            merged.append(outcome.referenced_thread_id)
+        for thread_id in outcome.referenced_thread_ids:
+            if thread_id not in merged:
+                merged.append(thread_id)
+        for thread_id in touched_thread_ids:
+            if thread_id not in merged:
+                merged.append(thread_id)
+        return merged
+
+    def _merged_npc_ids(
+        self,
+        outcome: OracleOutcome,
+        touched_npc_ids: tuple[str, ...],
+    ) -> list[str]:
+        merged: list[str] = []
+        if outcome.referenced_npc_id is not None:
+            merged.append(outcome.referenced_npc_id)
+        for npc_id in outcome.referenced_npc_ids:
+            if npc_id not in merged:
+                merged.append(npc_id)
+        for npc_id in touched_npc_ids:
+            if npc_id not in merged:
+                merged.append(npc_id)
+        return merged
 
     def _save_state_commit(
         self,
