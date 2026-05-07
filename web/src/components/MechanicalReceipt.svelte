@@ -24,10 +24,27 @@ and add a Cairn-specific dl block with the resolution snapshot.
     formatStance,
     isAmbushOpener,
   } from "../lib/cairn";
-  import type { OracleOutcome } from "../lib/types";
+  import {
+    npcDisplayLabel,
+    npcKnownByDescriptor,
+    referencedNpcsForOutcome,
+  } from "../lib/npcs";
+  import { game } from "../lib/store.svelte";
+  import { referencedThreadsForOutcome } from "../lib/threads";
+  import type { GameThread, NPC, OracleOutcome } from "../lib/types";
 
-  type Props = { outcome: OracleOutcome; defaultOpen?: boolean };
-  const { outcome, defaultOpen = false }: Props = $props();
+  type Props = {
+    outcome: OracleOutcome;
+    threads?: readonly GameThread[];
+    npcs?: readonly NPC[];
+    defaultOpen?: boolean;
+  };
+  const {
+    outcome,
+    threads = [],
+    npcs = [],
+    defaultOpen = false,
+  }: Props = $props();
 
   let open: boolean = $state(untrack(() => defaultOpen));
 
@@ -99,6 +116,16 @@ and add a Cairn-specific dl block with the resolution snapshot.
   const initiatorLabel = $derived(
     cairn === null ? null : formatCombatInitiator(cairn.combat_initiator),
   );
+  const referencedThreads = $derived(referencedThreadsForOutcome(threads, outcome));
+  const referencedNpcs = $derived(referencedNpcsForOutcome(npcs, outcome));
+
+  function focusThread(threadId: string): void {
+    game.requestInspectorFocus("threads", threadId);
+  }
+
+  function focusNpc(npcId: string): void {
+    game.requestInspectorFocus("npcs", npcId);
+  }
 </script>
 
 <div class="receipt" class:open class:ambush>
@@ -155,6 +182,56 @@ and add a Cairn-specific dl block with the resolution snapshot.
         <dt>Summary</dt>
         <dd class="muted">{outcome.summary}</dd>
       </dl>
+
+      {#if referencedThreads.length > 0 || referencedNpcs.length > 0}
+        <!--
+          H-02: receipts are no longer only "trust the dice" surfaces.
+          They also surface the continuity objects this turn touched and
+          deep-link into the inspector's canonical read-only panels.
+          Thread/NPC links stay compact by design — navigation help, not
+          a second quest log.
+        -->
+        <div class="references">
+          {#if referencedThreads.length > 0}
+            <div class="reference-group">
+              <span class="reference-label kicker">Threads</span>
+              <div class="reference-pills">
+                {#each referencedThreads as thread (thread.id)}
+                  <button
+                    type="button"
+                    class="reference-pill pixel"
+                    onclick={() => focusThread(thread.id)}
+                    title="Open this thread in the Inspector"
+                  >
+                    {thread.title}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if referencedNpcs.length > 0}
+            <div class="reference-group">
+              <span class="reference-label kicker">Figures</span>
+              <div class="reference-pills">
+                {#each referencedNpcs as npc (npc.id)}
+                  <button
+                    type="button"
+                    class="reference-pill pixel"
+                    class:reference-pill--descriptor={npcKnownByDescriptor(npc)}
+                    onclick={() => focusNpc(npc.id)}
+                    title={npcKnownByDescriptor(npc)
+                      ? "Open this known-by-sign figure in the Inspector"
+                      : "Open this NPC in the Inspector"}
+                  >
+                    {npcDisplayLabel(npc)}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       {#if isCairnKind && cairn !== null}
         <dl class="cairn">
@@ -300,6 +377,50 @@ and add a Cairn-specific dl block with the resolution snapshot.
     background: rgba(0, 0, 0, 0.32);
     display: grid;
     gap: 0.6rem;
+  }
+  .references {
+    display: grid;
+    gap: 0.45rem;
+    border-top: 1px dashed color-mix(in oklab, var(--gold-tarnished) 28%, transparent);
+    padding-top: 0.55rem;
+  }
+  .reference-group {
+    display: grid;
+    gap: 0.28rem;
+  }
+  .reference-label {
+    margin: 0;
+  }
+  .reference-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .reference-pill {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--paper-bone);
+    background: color-mix(in oklab, var(--ink-black) 90%, transparent);
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+  }
+  .reference-pill:hover {
+    border-color: var(--gold-bright);
+    color: var(--gold-bright);
+    background: color-mix(in oklab, var(--ink-black) 76%, transparent);
+  }
+  .reference-pill:focus-visible {
+    outline: 2px solid var(--gold-bright);
+    outline-offset: 1px;
+  }
+  .reference-pill--descriptor {
+    border-color: color-mix(in oklab, var(--gold-bright) 28%, var(--paper-shadow));
+    color: color-mix(in oklab, var(--paper-bone) 86%, var(--gold-bright));
+    font-style: italic;
   }
   .rolls {
     list-style: none;

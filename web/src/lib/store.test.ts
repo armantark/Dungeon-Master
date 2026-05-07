@@ -23,6 +23,7 @@ describe("GameStore setup streaming", () => {
     game.notes = [];
     game.inspectorOpen = false;
     game.scrollRequest = null;
+    game.inspectorFocusRequest = null;
   });
 
   it("requestScrollTo bumps a unique seq for repeat calls so the feed re-fires", () => {
@@ -51,6 +52,25 @@ describe("GameStore setup streaming", () => {
     expect(game.scrollRequest).not.toBeNull();
     game.consumeScrollRequest();
     expect(game.scrollRequest).toBeNull();
+  });
+
+  it("requestInspectorFocus opens the inspector and bumps a unique seq for repeat clicks", () => {
+    game.inspectorOpen = false;
+
+    game.requestInspectorFocus("npcs", "npc_ash");
+    const first = game.inspectorFocusRequest;
+
+    expect(game.inspectorOpen).toBe(true);
+    expect(first?.section).toBe("npcs");
+    expect(first?.entityId).toBe("npc_ash");
+    expect(first?.seq).toBeGreaterThan(0);
+
+    game.requestInspectorFocus("npcs", "npc_ash");
+    const second = game.inspectorFocusRequest;
+
+    expect(second?.section).toBe("npcs");
+    expect(second?.entityId).toBe("npc_ash");
+    expect(second?.seq).toBe((first?.seq ?? 0) + 1);
   });
 
   it("translates /retreat into a free-text turn so the planner runs", async () => {

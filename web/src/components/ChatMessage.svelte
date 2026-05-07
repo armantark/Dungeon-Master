@@ -20,7 +20,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   import CollapsedThinking from "./CollapsedThinking.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import MessageActions from "./MessageActions.svelte";
-  import type { OracleOutcome } from "../lib/types";
+  import type { GameThread, NPC, OracleOutcome } from "../lib/types";
 
   type Props = {
     eventId: string;
@@ -43,6 +43,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     // `ooc`; ignored otherwise so callers can leave it null without
     // changing other layouts.
     question?: string | null;
+    threads?: readonly GameThread[];
+    npcs?: readonly NPC[];
   };
   const {
     eventId,
@@ -54,6 +56,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     thinking = null,
     streaming = false,
     question = null,
+    threads = [],
+    npcs = [],
   }: Props = $props();
 
   function relative(iso: string | null): string | null {
@@ -121,7 +125,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   </div>
 
   {#if outcome}
-    <MechanicalReceipt {outcome} defaultOpen={streaming} />
+    <MechanicalReceipt {outcome} {threads} {npcs} defaultOpen={streaming} />
   {/if}
 
   <MessageActions eventId={eventId} visible={!streaming && speaker === "dm" && canRegenerate} />

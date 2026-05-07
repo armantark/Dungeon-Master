@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_NPC_LOOKBACK,
+  npcDisplayLabel,
+  npcKnownByDescriptor,
   recentlyTouchedNpcIds,
+  referencedNpcsForOutcome,
   sortNpcsForDisplay,
 } from "./npcs";
 import type {
   GameState,
   NPC,
+  NPCPlayerLabelKind,
   NPCStatus,
   OracleOutcome,
   OracleTables,
@@ -47,10 +51,17 @@ function outcome(overrides: Partial<OracleOutcome>): OracleOutcome {
   };
 }
 
-function npc(id: string, status: NPCStatus = "active"): NPC {
+function npc(
+  id: string,
+  status: NPCStatus = "active",
+  playerLabel: string = `npc-${id}`,
+  labelKind: NPCPlayerLabelKind = "proper_name",
+): NPC {
   return {
     id,
     name: `npc-${id}`,
+    player_label: playerLabel,
+    player_label_kind: labelKind,
     role: "",
     disposition: "",
     status,
@@ -144,6 +155,54 @@ describe("recentlyTouchedNpcIds", () => {
 
   it("returns an empty set for an empty oracle history", () => {
     expect(recentlyTouchedNpcIds(state({}))).toEqual(new Set());
+  });
+});
+
+describe("npcDisplayLabel", () => {
+  it("prefers the safe player-facing label over the canonical backend name", () => {
+    expect(
+      npcDisplayLabel(
+        npc("a", "active", "the ash-veiled bellringer", "descriptor"),
+      ),
+    ).toBe("the ash-veiled bellringer");
+  });
+
+  it("falls back to the canonical name when the player-facing label is blank", () => {
+    expect(npcDisplayLabel(npc("a", "active", "   "))).toBe("npc-a");
+  });
+});
+
+describe("npcKnownByDescriptor", () => {
+  it("is true only for descriptor-visible NPCs", () => {
+    expect(
+      npcKnownByDescriptor(
+        npc("a", "active", "the split-reliquary woman", "descriptor"),
+      ),
+    ).toBe(true);
+    expect(npcKnownByDescriptor(npc("b"))).toBe(false);
+  });
+});
+
+describe("referencedNpcsForOutcome", () => {
+  it("returns visible NPCs in outcome order and drops stale ids", () => {
+    const visible = [
+      npc("a", "active", "the ash-veiled bellringer", "descriptor"),
+      npc("b"),
+    ];
+
+    const resolved = referencedNpcsForOutcome(
+      visible,
+      outcome({
+        referenced_npc_ids: ["b", "missing", "a"],
+        referenced_npc_id: "a",
+      }),
+    );
+
+    expect(resolved.map((entry) => entry.id)).toEqual(["b", "a"]);
+    expect(resolved.map((entry) => npcDisplayLabel(entry))).toEqual([
+      "npc-b",
+      "the ash-veiled bellringer",
+    ]);
   });
 });
 

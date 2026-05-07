@@ -52,6 +52,12 @@ export type ThreadStatus = "active" | "resolved";
 // driving play. See F-04 in memory-bank/featureKanban.md.
 export type NPCStatus = "active" | "retired";
 
+// H-01 mirrors the backend split between a canonical true name and the
+// player-facing label the fiction has actually granted. `proper_name`
+// means the player may know the figure's real name; `descriptor` means
+// the roster should render the safer "known by sign" label instead.
+export type NPCPlayerLabelKind = "proper_name" | "descriptor";
+
 export type SceneStatus = "expected" | "altered" | "interrupted";
 
 // `ended` is the F-06 terminal state. Once the campaign reaches it, the
@@ -155,6 +161,8 @@ export interface GameThread {
 export interface NPC {
   id: string;
   name: string;
+  player_label: string;
+  player_label_kind: NPCPlayerLabelKind;
   role: string;
   disposition: string;
   // F-04: dynamic NPC updates can retire an NPC instead of deleting it.

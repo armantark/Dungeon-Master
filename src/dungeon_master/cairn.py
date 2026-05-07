@@ -1082,7 +1082,10 @@ class CairnEngine:
             .replace("<<CURRENT_SCENE>>", state.current_scene)
             .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
             .replace("<<THREAD_TITLES>>", ", ".join(thread.title for thread in state.threads) or "(none)")
-            .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
+            .replace(
+                "<<NPC_NAMES>>",
+                ", ".join(npc.display_label() for npc in state.npcs) or "(none)",
+            )
         )
 
     def _complete_json(self, request: CompletionRequest) -> str:
@@ -1235,7 +1238,10 @@ class CairnEngine:
         return (
             CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
             .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
-            .replace("<<NPC_NAMES>>", ", ".join(npc.name for npc in state.npcs) or "(none)")
+            .replace(
+                "<<NPC_NAMES>>",
+                ", ".join(npc.display_label() for npc in state.npcs) or "(none)",
+            )
             .replace("<<CHARACTER_JSON>>", state.character.model_dump_json(indent=2))
             .replace("<<PLAYER_INPUT>>", player_input)
             .replace("<<ENCOUNTER_INITIATOR>>", initiator.value)

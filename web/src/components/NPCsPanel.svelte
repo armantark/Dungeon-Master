@@ -32,7 +32,12 @@ panel will pick them up via the normal `recentlyTouchedIds` flow.
 Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
 -->
 <script lang="ts">
-  import { sortNpcsForDisplay } from "../lib/npcs";
+  import { onDestroy, tick } from "svelte";
+  import {
+    npcDisplayLabel,
+    npcKnownByDescriptor,
+    sortNpcsForDisplay,
+  } from "../lib/npcs";
   import type { NPC } from "../lib/types";
 
   type Props = {
@@ -43,10 +48,48 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
      * The Inspector derives this from `recentlyTouchedNpcIds`.
      */
     recentlyTouchedIds?: ReadonlySet<string>;
+    focusedId?: string | null;
+    focusSeq?: number;
   };
-  const { npcs, recentlyTouchedIds = new Set<string>() }: Props = $props();
+  const {
+    npcs,
+    recentlyTouchedIds = new Set<string>(),
+    focusedId = null,
+    focusSeq = 0,
+  }: Props = $props();
 
   const ordered = $derived(sortNpcsForDisplay(npcs, recentlyTouchedIds));
+
+  let listEl: HTMLUListElement | undefined = $state();
+  let flashingId: string | null = $state(null);
+  let lastFocusSeq: number = $state(-1);
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function revealFocusedNpc(npcId: string): Promise<void> {
+    await tick();
+    const target = listEl?.querySelector<HTMLElement>(
+      `[data-npc-id="${CSS.escape(npcId)}"]`,
+    );
+    if (target === undefined || target === null) return;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    flashingId = npcId;
+    if (focusTimer !== null) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      flashingId = null;
+      focusTimer = null;
+    }, 1700);
+  }
+
+  $effect(() => {
+    if (focusedId === null) return;
+    if (focusSeq === lastFocusSeq) return;
+    lastFocusSeq = focusSeq;
+    void revealFocusedNpc(focusedId);
+  });
+
+  onDestroy(() => {
+    if (focusTimer !== null) clearTimeout(focusTimer);
+  });
 </script>
 
 {#if npcs.length === 0}
@@ -60,16 +103,27 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
   -->
   <p class="muted">No known recurring figures yet.</p>
 {:else}
-  <ul>
+  <ul bind:this={listEl}>
     {#each ordered as npc (npc.id)}
       {@const justTouched = recentlyTouchedIds.has(npc.id)}
       {@const isRetired = npc.status === "retired"}
+      {@const knownByDescriptor = npcKnownByDescriptor(npc)}
       <li
+        data-npc-id={npc.id}
         class:retired={isRetired}
         class:advanced={justTouched}
+        class:focused={flashingId === npc.id}
       >
         <div class="row">
-          <h4>{npc.name}</h4>
+          <h4 class:descriptor={knownByDescriptor}>{npcDisplayLabel(npc)}</h4>
+          {#if knownByDescriptor}
+            <span
+              class="status mono descriptor-pip"
+              title="The player knows this recurring figure by sign, not by a granted proper name."
+            >
+              known by sign
+            </span>
+          {/if}
           {#if isRetired}
             <span class="status mono" data-status="retired">retired</span>
           {/if}
@@ -151,6 +205,11 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
   li.advanced:not(.retired) {
     animation: npc-pulse 1.6s ease-out 1;
   }
+  li.focused {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--gold-bright) 55%, transparent) inset,
+      0 0 0 6px color-mix(in oklab, var(--gold-bright) 16%, transparent);
+  }
   @keyframes npc-pulse {
     0% {
       box-shadow: 0 0 0 0 color-mix(in oklab, var(--gold-bright) 55%, transparent);
@@ -176,6 +235,9 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
     margin: 0;
     color: var(--paper-warm);
   }
+  h4.descriptor {
+    font-style: italic;
+  }
   .status {
     font-size: 0.65rem;
     letter-spacing: 0.18em;
@@ -187,6 +249,9 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
   }
   .advanced-pip {
     color: var(--gold-bright);
+  }
+  .descriptor-pip {
+    color: color-mix(in oklab, var(--gold-bright) 72%, var(--paper-bone));
   }
   .meta {
     margin: 0.15rem 0 0;

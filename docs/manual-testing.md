@@ -1,5 +1,46 @@
 # Manual Testing
 
+## Fixture Library Harness
+
+Use this when you need representative browser data for continuity-heavy UI
+branches without touching your real campaign.
+
+1. Seed an isolated fixture library:
+
+```shell
+uv run dungeon-master-fixtures \
+  --state-path "/tmp/dungeon-master-fixtures/game_state.json" \
+  --force
+```
+
+1. Start an isolated backend against the fixture root on a spare port:
+
+```shell
+DUNGEON_MASTER_STATE_PATH="/tmp/dungeon-master-fixtures/game_state.json" \
+uv run dungeon-master --port 8001
+```
+
+1. Start a second frontend dev server that proxies `/api` to that backend:
+
+```shell
+cd web
+VITE_API_PROXY_TARGET="http://127.0.0.1:8001" npm run dev -- --port 5174
+```
+
+1. Open `http://localhost:5174`.
+1. Confirm the app auto-loads the `Fixture Bellringer` save.
+1. In chat, expand the latest mechanical receipt. Confirm it shows both `Threads`
+   and `Figures` pills.
+1. Click the thread pills and confirm the Inspector opens to `Threads`, scrolls
+   the right card into view, and flashes it.
+1. Click the NPC pills and confirm the Inspector opens to `NPCs`, scrolls the
+   right card into view, and flashes it.
+1. In `NPCs`, confirm `The ash-veiled bellringer` is rendered with the `known by
+   sign` cue and that the hidden abbot is not shown anywhere player-facing.
+1. Open the save shelf and switch to `Fixture Archive`. Confirm the shelf marks
+    it as ended and that the archived campaign loads without mutating the active
+    continuity fixture.
+
 ## Browser Smoke Test
 
 Walk through this from a clean state (delete `data/game_state.json` if you want a fresh campaign).
@@ -109,7 +150,7 @@ DUNGEON_MASTER_STATE_PATH="/tmp/dm-memory-fallback/game_state.json" \
 uv run dungeon-master --port 8002
 ```
 
-2. In a second terminal, seed a temporary active save:
+1. In a second terminal, seed a temporary active save:
 
 ```shell
 uv run python - <<'PY'
@@ -130,7 +171,7 @@ StateStore(Path("/tmp/dm-memory-fallback/game_state.json")).save(
 PY
 ```
 
-3. Commit a deterministic oracle turn:
+1. Commit a deterministic oracle turn:
 
 ```shell
 curl -s -X POST http://127.0.0.1:8002/api/oracle/yes-no \
@@ -139,13 +180,13 @@ curl -s -X POST http://127.0.0.1:8002/api/oracle/yes-no \
   | python3 -m json.tool
 ```
 
-4. Confirm `/tmp/dm-memory-fallback/memory.json` now exists and contains:
+1. Confirm `/tmp/dm-memory-fallback/memory.json` now exists and contains:
    - `turn_count: 1`
    - a `recent_turn_summaries` entry for the new oracle turn
    - a non-empty `current_scene_summary`
    - populated `thread_memory` / `npc_memory` / `location_memory` / `open_loops`
 
-5. In the live browser app, submit a turn and then click `Stop response` while the stream is active. Confirm the UI returns to idle cleanly. Then verify that cancelling did **not** contaminate the next committed memory state (cancelled turns should not appear in `data/memory.json`).
+1. In the live browser app, submit a turn and then click `Stop response` while the stream is active. Confirm the UI returns to idle cleanly. Then verify that cancelling did **not** contaminate the next committed memory state (cancelled turns should not appear in `data/memory.json`).
 
 ## Developer Knobs (`.env`)
 

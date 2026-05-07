@@ -36,6 +36,7 @@ from dungeon_master.models import (
     GameThread,
     InventoryItem,
     Likelihood,
+    NPCPlayerLabelKind,
     NPCStatus,
     OracleKind,
     OracleOutcome,
@@ -1602,6 +1603,84 @@ def test_service_reveals_hidden_npc_named_in_narration(tmp_path: Path) -> None:
     assert updated.hidden_npcs == []
     assert updated.oracle_history[-1].referenced_npc_id == updated.npcs[0].id
     assert updated.oracle_history[-1].referenced_npc_ids == [updated.npcs[0].id]
+
+
+def test_service_promotes_visible_descriptor_npc_when_true_name_is_narrated(
+    tmp_path: Path,
+) -> None:
+    class NameGrantingNarrative(FakeNarrative):
+        def generate(  # noqa: PLR0913
+            self,
+            state: GameState,
+            outcome: OracleOutcome,
+            player_input: str,
+            *,
+            execution_context: str | None = None,
+            memory_context: str | None = None,
+            cancel_token: CancellationToken | None = None,
+        ) -> str:
+            del state, outcome, player_input, execution_context, memory_context, cancel_token
+            return "The Hierophant lifts the ash veil and finally offers his true name."
+
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=NameGrantingNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    state = service.load_state()
+    state.npcs = [
+        NPC(
+            name="The Hierophant",
+            role="Face-thief patriarch",
+            disposition="patient malice",
+            player_label="The ash-veiled bellringer",
+            player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+        ),
+    ]
+    state.hidden_npcs = []
+    store.save(state, create_checkpoint=False)
+
+    updated = service.submit_player_action("I demand the bellringer name himself.")
+
+    assert updated.npcs[0].player_label == "The Hierophant"
+    assert updated.npcs[0].player_label_kind == NPCPlayerLabelKind.PROPER_NAME
+    assert updated.oracle_history[-1].referenced_npc_ids == [updated.npcs[0].id]
+
+
+def test_service_only_persists_visible_npc_ids_on_outcomes(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        hidden = NPC(
+            name="The Hierophant",
+            role="Face-thief patriarch",
+            disposition="patient malice",
+            player_label="The ash-veiled bellringer",
+            player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+        )
+        state.hidden_npcs.append(hidden)
+        return (hidden.id,)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        npc_updater=FakeNpcUpdater(mutate=mutate),
+    )
+
+    updated = service.submit_player_action("I wait for the watcher to reveal himself.")
+
+    assert [npc.name for npc in updated.hidden_npcs] == ["The Hierophant"]
+    assert updated.oracle_history[-1].referenced_npc_id is None
+    assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
 def test_service_update_directives_persists_without_action_log_event(tmp_path: Path) -> None:

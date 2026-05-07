@@ -17,8 +17,14 @@ from dungeon_master.campaign import (
 )
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
-from dungeon_master.memory import CommittedTurnMemory, MemoryManager, MemoryState
+from dungeon_master.memory import (
+    CURRENT_MEMORY_SCHEMA_VERSION,
+    CommittedTurnMemory,
+    MemoryManager,
+    MemoryState,
+)
 from dungeon_master.models import (
+    NPC,
     AttackStance,
     CairnAbility,
     CairnRestKind,
@@ -32,6 +38,7 @@ from dungeon_master.models import (
     GameEvent,
     GameState,
     Likelihood,
+    NPCPlayerLabelKind,
     OracleKind,
     OracleOutcome,
     SceneStatus,
@@ -57,6 +64,24 @@ class ExecutedTurn:
     outcome: OracleOutcome
     oracle_title: str | None
     execution_context: str | None = None
+
+
+@dataclass(frozen=True)
+class SaveBackfillReport:
+    applied: bool
+    state_changed: bool
+    character_backfilled: bool
+    npc_roster_repaired: bool
+    terminal_state_synced: bool
+    memory_rebuilt: bool
+    checkpoint_written: bool
+    campaign_status_before: CampaignStatus
+    campaign_status_after: CampaignStatus
+    visible_npc_count_before: int
+    visible_npc_count_after: int
+    hidden_npc_count_before: int
+    hidden_npc_count_after: int
+    visible_name_warnings: tuple[str, ...] = ()
 
 
 class NarrativePort(Protocol):
@@ -369,6 +394,85 @@ class GameService:
     def new_setup_state(self) -> GameState:
         """Return a fresh setup-state skeleton for a brand-new save slot."""
         return self._new_setup_state()
+
+    def backfill_current_save(
+        self,
+        *,
+        apply: bool,
+        create_checkpoint: bool = True,
+        cancel_token: CancellationToken | None = None,
+    ) -> SaveBackfillReport:
+        """Audit/backfill one existing save against current core features.
+
+        This is intentionally *not* a campaign reseed. The goal is to bring an
+        older save forward so it carries the canonical state newer features now
+        expect (character Cairn backfill, visible/hidden NPC split, terminal
+        status sync, rebuilt `memory.json`) without regenerating the campaign's
+        world or rewriting cast canon.
+
+        `apply=False` performs a dry run and reports what would change without
+        touching disk. `apply=True` persists canonical state only when the state
+        itself changed, and rebuilds/saves the memory sidecar when needed.
+        """
+        if not self._store.exists():
+            message = "No save state exists to backfill."
+            raise ValueError(message)
+
+        before_state = self._store.load()
+        before_memory = self._store.load_memory_or_none()
+        working = before_state.model_copy(deep=True)
+
+        character_backfilled = self._cairn.ensure_character_state(
+            working,
+            allow_backfill=working.campaign_status == CampaignStatus.ACTIVE,
+            cancel_token=cancel_token,
+        )
+        npc_roster_repaired = self._repair_npc_roster_on_load(
+            working,
+            cancel_token=cancel_token,
+        )
+        terminal_state_synced = self._sync_terminal_state_on_load(working)
+        state_changed = (
+            character_backfilled
+            or npc_roster_repaired
+            or terminal_state_synced
+        )
+
+        rebuilt_memory = self._memory_for_state(
+            working,
+            existing_memory=before_memory,
+            force_rebuild=True,
+        )
+        memory_rebuilt = (
+            before_memory is None
+            or rebuilt_memory.model_dump(mode="json") != before_memory.model_dump(mode="json")
+        )
+        visible_name_warnings = self._audit_visible_npc_name_support(working)
+
+        checkpoint_written = False
+        if apply:
+            if state_changed:
+                self._store.save(working, create_checkpoint=create_checkpoint)
+                checkpoint_written = create_checkpoint
+            if memory_rebuilt:
+                self._store.save_memory(rebuilt_memory)
+
+        return SaveBackfillReport(
+            applied=apply,
+            state_changed=state_changed,
+            character_backfilled=character_backfilled,
+            npc_roster_repaired=npc_roster_repaired,
+            terminal_state_synced=terminal_state_synced,
+            memory_rebuilt=memory_rebuilt,
+            checkpoint_written=checkpoint_written,
+            campaign_status_before=before_state.campaign_status,
+            campaign_status_after=working.campaign_status,
+            visible_npc_count_before=len(before_state.npcs),
+            visible_npc_count_after=len(working.npcs),
+            hidden_npc_count_before=len(before_state.hidden_npcs),
+            hidden_npc_count_after=len(working.hidden_npcs),
+            visible_name_warnings=visible_name_warnings,
+        )
 
     def load_state(self, *, cancel_token: CancellationToken | None = None) -> GameState:
         state = self._store.load_or_create(self._new_setup_state)
@@ -1412,7 +1516,7 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
-        revealed_npc_ids = self._reveal_hidden_npcs_from_text(state, narration.content)
+        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
         if revealed_npc_ids:
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
@@ -1500,7 +1604,7 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
-        revealed_npc_ids = self._reveal_hidden_npcs_from_text(state, narration.content)
+        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
         if revealed_npc_ids:
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
@@ -1571,6 +1675,39 @@ class GameService:
         ):
             return self._mark_campaign_ended(state, reason=CampaignEndReason.DEATH)
         return False
+
+    def _audit_visible_npc_name_support(self, state: GameState) -> tuple[str, ...]:
+        """Warn when a visible NPC label lacks explicit textual support.
+
+        This is an audit signal for one-time save repair, not an automatic
+        demotion rule. The user clarified that backend continuity is allowed to
+        know a true name before the player does, and that a name should only be
+        player-visible once the fiction explicitly grants it (dialogue, clues,
+        divination, etc.). Descriptor-visible figures follow the same rule: the
+        player-facing label should be grounded in committed text somewhere. We
+        conservatively approximate that by checking whether the visible label
+        appears anywhere in the committed current scene or transcript. A miss
+        does *not* prove the label is wrong — it may have been granted
+        indirectly — so the script reports rather than mutates.
+        """
+        lowered = self._audit_name_support_text(state).lower()
+        return tuple(
+            "Visible NPC label lacks explicit text support: "
+            f"{npc.display_label()}"
+            for npc in state.npcs
+            if not self._npc_label_has_text_support(lowered, npc)
+        )
+
+    def _audit_name_support_text(self, state: GameState) -> str:
+        chunks: list[str] = [
+            state.current_scene,
+            state.player_notes,
+        ]
+        if state.campaign_end_summary is not None:
+            chunks.append(state.campaign_end_summary)
+        chunks.extend(event.content for event in state.action_log)
+        chunks.extend(outcome.summary for outcome in state.oracle_history)
+        return "\n".join(chunk for chunk in chunks if chunk.strip())
 
     def _auto_end_campaign_if_needed(
         self,
@@ -1872,7 +2009,10 @@ class GameService:
             ),
             cancel_token=cancel_token,
         )
-        merged = self._merged_npc_ids(outcome, npc_result.touched_npc_ids)
+        merged = self._visible_npc_ids(
+            state,
+            self._merged_npc_ids(outcome, npc_result.touched_npc_ids),
+        )
         outcome.referenced_npc_ids = merged
         outcome.referenced_npc_id = merged[0] if merged else None
 
@@ -1903,16 +2043,28 @@ class GameService:
         ).render()
         return context or None
 
-    def _reveal_hidden_npcs_from_text(
+    def _disclose_npcs_from_text(
         self,
         state: GameState,
         text: str,
     ) -> tuple[str, ...]:
         lowered = text.lower()
-        revealed: list[str] = []
+        revealed = [
+            npc.id
+            for npc in state.npcs
+            if self._maybe_promote_visible_npc_label_from_text(npc, lowered)
+        ]
         still_hidden = []
         for npc in state.hidden_npcs:
             if self._npc_name_appears_in_text(lowered, npc.name):
+                npc.player_label = npc.name
+                npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
+                state.npcs.append(npc)
+                revealed.append(npc.id)
+            elif (
+                npc.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR
+                and self._npc_label_appears_in_text(lowered, npc.display_label())
+            ):
                 state.npcs.append(npc)
                 revealed.append(npc.id)
             else:
@@ -1920,8 +2072,27 @@ class GameService:
         state.hidden_npcs = still_hidden
         return tuple(revealed)
 
+    def _npc_label_has_text_support(self, lowered_text: str, npc: NPC) -> bool:
+        return self._npc_label_appears_in_text(lowered_text, npc.display_label())
+
+    def _maybe_promote_visible_npc_label_from_text(
+        self,
+        npc: NPC,
+        lowered_text: str,
+    ) -> bool:
+        if npc.player_label_kind == NPCPlayerLabelKind.PROPER_NAME:
+            return False
+        if not self._npc_name_appears_in_text(lowered_text, npc.name):
+            return False
+        npc.player_label = npc.name
+        npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
+        return True
+
     def _npc_name_appears_in_text(self, lowered_text: str, npc_name: str) -> bool:
-        return " ".join(npc_name.lower().split()) in lowered_text
+        return self._npc_label_appears_in_text(lowered_text, npc_name)
+
+    def _npc_label_appears_in_text(self, lowered_text: str, label: str) -> bool:
+        return " ".join(label.lower().split()) in lowered_text
 
     def _merged_thread_ids(
         self,
@@ -1955,6 +2126,10 @@ class GameService:
                 merged.append(npc_id)
         return merged
 
+    def _visible_npc_ids(self, state: GameState, npc_ids: list[str]) -> list[str]:
+        visible_ids = {npc.id for npc in state.npcs}
+        return [npc_id for npc_id in npc_ids if npc_id in visible_ids]
+
     def _save_state_commit(
         self,
         state: GameState,
@@ -1984,6 +2159,7 @@ class GameService:
         return (
             memory.state_id != state.id
             or memory.turn_count != len(state.oracle_history)
+            or memory.schema_version != CURRENT_MEMORY_SCHEMA_VERSION
         )
 
     def _committed_turns_for_state(self, state: GameState) -> list[CommittedTurnMemory]:

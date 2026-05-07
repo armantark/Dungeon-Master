@@ -70,7 +70,7 @@
 
 - Whether to keep or replace the original oracle tables (model-generated word banks may be enough).
 - Whether to add a formal graph/orchestration framework later.
-- Optional UI field for user-authored campaign seed prompts before generation.
+- Optional UI field for user-authored campaign seed prompts before generation. This remains valid as `F-15`, but is intentionally deferred until the user actually wants to start a *new* campaign; it is not a retrofit target for the live Vrtanes save.
 - Optional in-app controls for model/provider switching.
 - Checkpoint browse + rollback UI.
 - Thread and NPC editing UI.
@@ -79,6 +79,8 @@
 - How to present the now-available streamed reasoning/thinking in the frontend without overwhelming the chat-first UX (collapsed transcript block, side panel, inline disclosure, etc.).
 - Whether the current bounded `data/memory.json` retrieval is sufficient over long campaigns or should be upgraded to a richer semantic reranker / vector-backed layer later.
 - Whether to TOON-encode prompt-input slices of `GameState` (inventory, NPCs, threads, oracle banks, encounter combatants) as a token-savings layer in front of the LLM. Earmarked, not adopted. Decision criteria are recorded under "Open" in `activeContext.md`.
+- If the live Vrtanes save needs a one-time cleanup, the desired shape is now clear: a **backfill/audit script** that checks the save against missing core features and preserves canon, not a wholesale reseed. One more guardrail is explicit after the F-16 discussion: backend-hidden NPC names must not surface in the player-visible roster unless the fiction has directly granted that name (dialogue, clues, divination, etc.).
+- That one-time backend tool now exists. `src/dungeon_master/service.py` exposes `backfill_current_save(apply: bool, ...) -> SaveBackfillReport`, which loads one existing save and runs the current core migrations deliberately instead of only implicitly on page-load: Cairn character-state backfill when needed, legacy visible/hidden NPC roster repair, terminal-state sync, forced `memory.json` rebuild, plus an audit warning when a visible NPC name lacks explicit textual support in the committed scene/transcript. `src/dungeon_master/backfill_cli.py` wraps that as `dungeon-master-backfill`, resolving either the active save or an explicit `--save-id`, defaulting to dry-run, and supporting `--apply` and `--json`. The Vrtanes live dry-run currently reports no canonical state changes are needed (`state_changed=false`, `visible=0`, `hidden=2`), but that the memory sidecar would be rebuilt — exactly the kind of one-time audit result the user asked for instead of a reseed.
 
 ## Suggested Implementation Milestones
 
@@ -423,6 +425,26 @@ Frontend file changes for `F-16 + B-02`:
 - New: `web/src/components/DirectivesEditor.svelte` (B-02 OOC steering editor with archived / read-mode / edit-mode branches, OOC framing copy, per-field hint copy).
 - Deleted: `web/src/components/NotesEditor.svelte` (B-02 conceptual replacement; the old setting/player notes editor is no longer surfaced).
 - Modified: `web/src/lib/types.ts` (mirrors `CampaignDirectives`, `GameState.directives`, `GameState.hidden_npcs`, `GameState.npc_roster_version`); `web/src/lib/api.ts` (`updateDirectives` against `POST /api/state/directives`); `web/src/lib/store.svelte.ts` (`game.updateDirectives(world, play)` action); `web/src/components/Inspector.svelte` (swap `Notes` drawer for `Directives`, drop the now-unused `notes-archive` / `notes-body` CSS); `web/src/components/NPCsPanel.svelte` (updated component doc spelling out the introduced-only contract; empty-state copy now reads `"No known recurring figures yet."`); test factories in `web/src/lib/{history,threads,npcs,end-campaign}.test.ts` (widened to include the new required GameState fields); `web/src/lib/store.test.ts` (new `updateDirectives` test).
+
+Verification completed for the backend save-backfill tool:
+
+- `uv run pytest tests/test_backfill_cli.py -q` (4 passing — apply path persists state/memory/checkpoint, dry-run leaves disk untouched, visible-name warning audit works, CLI resolves the active save and emits JSON)
+- `uv run mypy src tests` (strict type-check green)
+- `uv run ruff check src/dungeon_master/service.py src/dungeon_master/npc_updater.py src/dungeon_master/backfill_cli.py tests/test_backfill_cli.py` (clean)
+- `uv run dungeon-master-backfill --json` against the live Vrtanes save returned:
+  - `save_id: save_d1f2c1ffa6ee`
+  - `state_changed: false`
+  - `character_backfilled: false`
+  - `npc_roster_repaired: false`
+  - `terminal_state_synced: false`
+  - `memory_rebuilt: true`
+  - `visible_npc_count_before/after: 0`
+  - `hidden_npc_count_before/after: 2`
+  - `visible_name_warnings: []`
+- Prompt hardening landed in `src/dungeon_master/npc_updater.py`: both the live updater prompt and the legacy roster-repair prompt now explicitly forbid inventing or surfacing a proper name unless the supplied context has granted that name to the player (direct introduction, being told, clues, divination/fortunetelling, etc.). Recurring unnamed figures should remain unnamed role/disposition entries instead of leaking backend-only true names.
+- `H-01 / H-02` is now fully shipped end-to-end. Backend: `src/dungeon_master/models.py` extends `NPC` with `player_label` plus `player_label_kind` (`proper_name | descriptor`), `src/dungeon_master/npc_updater.py`, `src/dungeon_master/memory.py`, `src/dungeon_master/service.py`, and `src/dungeon_master/cairn.py` use `npc.display_label()` anywhere the player-facing label matters, visible descriptor NPCs promote in-place to proper-name labels when committed narration grants the true name, and `GameService` filters persisted `OracleOutcome.referenced_npc_ids` down to the visible roster before save/receipt time. Frontend: `web/src/lib/types.ts` mirrors the new NPC label fields, `web/src/lib/npcs.ts` adds `npcDisplayLabel()` / `npcKnownByDescriptor()` plus safe outcome lookup, `NPCsPanel.svelte` renders descriptor-visible figures by their player label with a `known by sign` pip, and `MechanicalReceipt.svelte` now renders compact thread / visible-figure continuity pills that deep-link into the Inspector through a new store-level `requestInspectorFocus(...)` signal and drawer/panel focus tokens.
+- Verification completed for the combined backend+frontend pass: `uv run ruff check src tests`, `uv run mypy src tests`, `uv run pytest -q`, `cd web && npm run check`, `cd web && npm test -- --run`, and `cd web && npm run build` all pass. Frontend coverage now also asserts the new safe label helpers, outcome→thread/NPC resolution helpers, and the Inspector-focus store signal. Manual browser smoke against the live Vrtanes save confirmed the updated receipt body renders cleanly and does not regress the current UI, but that save currently has no visible NPCs and no historical `referenced_thread_ids` / `referenced_npc_ids`, so the newly linked descriptor/continuity branches were not naturally present to exercise without mutating canon for test data.
+- The dev-only continuity fixture harness is now landed. New backend CLI `dungeon-master-fixtures` (`src/dungeon_master/fixture_cli.py`) seeds an isolated save library with `Fixture Bellringer` and `Fixture Archive`, using the same canonical `SaveLibrary` / `StateStore` on-disk shape as real saves. The fixture states explicitly set `npc_roster_version=2` so load-time legacy-roster repair does not rewrite them on first load. Frontend dev tooling now honors `VITE_API_PROXY_TARGET` in `web/vite.config.ts`, letting a second Vite server point at a second backend for safe browser smoke. `docs/manual-testing.md` now includes a dedicated fixture-harness walkthrough. Verification: `uv run ruff check src/dungeon_master/fixture_cli.py tests/test_fixture_cli.py`, `uv run pytest tests/test_fixture_cli.py -q`, `uv run pytest -q`, `uv run mypy src tests`, `cd web && npm run check`, `cd web && npm test -- --run`, and `cd web && npm run build` all pass. Manual fixture-stack browser smoke confirmed the latest receipt shows both Threads and Figures pills, receipt-pill navigation opens/highlights Inspector targets, the visible NPC roster shows `The ash-veiled bellringer` with the `known by sign` cue, `Brother Sava` is visible, the hidden abbot stays absent from the visible roster, and switching to `Fixture Archive` cleanly loads an ended save.
 
 Two scope calls that show up in code as "missing" features:
 

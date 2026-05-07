@@ -3,6 +3,7 @@ from dungeon_master.models import (
     NPC,
     EventType,
     GameEvent,
+    NPCPlayerLabelKind,
     NPCStatus,
     OracleKind,
     OracleOutcome,
@@ -58,7 +59,7 @@ def test_memory_manager_bootstraps_existing_history() -> None:
         summary="Yes: The abbey gate is watched.",
         chaos_factor=state.chaos_factor,
     )
-    state.oracle_history.append(outcome)
+    state.oracle_history = [*state.oracle_history, outcome]
     state.action_log = [
         GameEvent(
             event_type=EventType.PLAYER,
@@ -174,15 +175,51 @@ def test_npc_updater_memory_context_prefers_direct_and_matching_npcs() -> None:
     assert any("Generated NPC Two (retired)" in line for line in context.active_npcs)
 
 
+def test_memory_manager_uses_descriptor_labels_for_visible_npcs() -> None:
+    state = sample_state()
+    state.npcs[0].name = "The Hierophant"
+    state.npcs[0].player_label = "The ash-veiled bellringer"
+    state.npcs[0].player_label_kind = NPCPlayerLabelKind.DESCRIPTOR
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The ash-veiled bellringer leaves a reliquary token in your path.",
+        chaos_factor=state.chaos_factor,
+        referenced_npc_id=state.npcs[0].id,
+        referenced_npc_ids=[state.npcs[0].id],
+    )
+    manager = MemoryManager()
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="I track the ash-veiled bellringer through the cloister fog.",
+            outcome=outcome,
+            narrative_text="The bellringer never lets you see more than the ash-white veil.",
+        ),
+    )
+
+    planner = manager.retrieve_for_planner(state, memory, "I call after the bellringer.")
+    npc_context = manager.retrieve_for_npc_updater(
+        state,
+        memory,
+        "I call after the bellringer.",
+        outcome,
+    )
+
+    assert any("The ash-veiled bellringer (descriptor)" in line for line in planner.relevant_memory)
+    assert any("The ash-veiled bellringer (descriptor)" in line for line in npc_context.active_npcs)
+    assert all("The Hierophant" not in line for line in planner.relevant_memory)
+
+
 def test_memory_manager_does_not_surface_hidden_npcs_in_player_facing_contexts() -> None:
     state = sample_state()
-    state.hidden_npcs.append(
+    state.hidden_npcs = [
+        *state.hidden_npcs,
         NPC(
             name="The Hierophant",
             role="Face-thief patriarch",
             disposition="patient malice",
         ),
-    )
+    ]
     manager = MemoryManager()
     memory = manager.bootstrap_from_state(state)
     outcome = OracleOutcome(

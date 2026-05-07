@@ -50,6 +50,23 @@ export function recentlyTouchedThreadIds(
 }
 
 /**
+ * Threads referenced by an outcome, in receipt order.
+ *
+ * We resolve ids against the current thread list rather than trusting the
+ * outcome payload blindly so older/stale ids quietly disappear instead of
+ * leaving dead navigation pills behind.
+ */
+export function referencedThreadsForOutcome(
+  threads: readonly GameThread[],
+  outcome: OracleOutcome,
+): GameThread[] {
+  const byId = new Map(threads.map((thread) => [thread.id, thread] as const));
+  return referencedThreadIds(outcome)
+    .map((id) => byId.get(id) ?? null)
+    .filter((thread): thread is GameThread => thread !== null);
+}
+
+/**
  * Sort threads for display in the Threads panel.
  *
  * Layout invariant:
@@ -96,4 +113,10 @@ function addOutcomeThreadIds(outcome: OracleOutcome, target: Set<string>): void 
   if (outcome.referenced_thread_id !== null && outcome.referenced_thread_id !== "") {
     target.add(outcome.referenced_thread_id);
   }
+}
+
+function referencedThreadIds(outcome: OracleOutcome): string[] {
+  const ids = new Set<string>();
+  addOutcomeThreadIds(outcome, ids);
+  return [...ids];
 }

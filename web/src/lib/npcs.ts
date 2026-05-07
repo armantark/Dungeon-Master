@@ -28,6 +28,28 @@ import type { GameState, NPC, OracleOutcome } from "./types";
 export const DEFAULT_NPC_LOOKBACK = 1;
 
 /**
+ * Player-facing label for a visible NPC.
+ *
+ * H-01 makes the backend keep two identities at once: canonical `name`
+ * for continuity, safe `player_label` for anything the player can see.
+ * The roster and receipt surfaces must always prefer the safe label so a
+ * recurring figure can remain "the ash-veiled bellringer" until the
+ * fiction explicitly grants their true name.
+ */
+export function npcDisplayLabel(npc: NPC): string {
+  const label = npc.player_label.trim();
+  return label === "" ? npc.name : label;
+}
+
+/**
+ * True when the player currently knows this figure by descriptor/sign
+ * rather than by proper name.
+ */
+export function npcKnownByDescriptor(npc: NPC): boolean {
+  return npc.player_label_kind === "descriptor";
+}
+
+/**
  * Collect the set of NPC ids touched by the latest `lookback` oracle
  * outcomes.
  *
@@ -50,6 +72,24 @@ export function recentlyTouchedNpcIds(
     addOutcomeNpcIds(outcome, ids);
   }
   return ids;
+}
+
+/**
+ * Visible NPCs referenced by an outcome, in receipt order.
+ *
+ * The backend already filters `referenced_npc_ids` down to the visible
+ * roster (H-02), but we still resolve through the live `npcs` array so
+ * stale ids or legacy singular-only outcomes safely collapse away in the
+ * UI instead of rendering dead pills.
+ */
+export function referencedNpcsForOutcome(
+  npcs: readonly NPC[],
+  outcome: OracleOutcome,
+): NPC[] {
+  const byId = new Map(npcs.map((npc) => [npc.id, npc] as const));
+  return referencedNpcIds(outcome)
+    .map((id) => byId.get(id) ?? null)
+    .filter((npc): npc is NPC => npc !== null);
 }
 
 /**
@@ -101,4 +141,10 @@ function addOutcomeNpcIds(outcome: OracleOutcome, target: Set<string>): void {
   if (outcome.referenced_npc_id !== null && outcome.referenced_npc_id !== "") {
     target.add(outcome.referenced_npc_id);
   }
+}
+
+function referencedNpcIds(outcome: OracleOutcome): string[] {
+  const ids = new Set<string>();
+  addOutcomeNpcIds(outcome, ids);
+  return [...ids];
 }

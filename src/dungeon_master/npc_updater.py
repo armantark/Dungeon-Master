@@ -8,7 +8,14 @@ from enum import StrEnum
 from pydantic import Field, ValidationError
 
 from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import NPC, GameState, NPCStatus, OracleOutcome, StrictModel
+from dungeon_master.models import (
+    NPC,
+    GameState,
+    NPCPlayerLabelKind,
+    NPCStatus,
+    OracleOutcome,
+    StrictModel,
+)
 from dungeon_master.narrative import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionFunction,
@@ -29,6 +36,15 @@ Hard rules:
 - NPC ops may only be: create, update, retire.
 - Only create an NPC when the turn introduces or clarifies a recurring person
   who should remain in the campaign cast beyond the immediate beat.
+- `name` is the backend canonical identity. It may stay hidden from the player.
+- `player_label` is the safe player-facing label if the NPC is visible.
+- `player_label_kind` must be `proper_name` or `descriptor`.
+- Do NOT reveal or invent a proper-name `player_label` unless the supplied
+  context explicitly grants that name to the player (direct introduction,
+  being told, a clue, divination/fortunetelling, etc.).
+- If the player should know the figure only by signs, office, clothing, scars,
+  or some other non-name identifier, set `player_label_kind="descriptor"` and
+  use that descriptor as `player_label`.
 - Prefer updating an existing NPC over creating a near-duplicate.
 - Retire an NPC only when the supplied outcome + executed steps make them leave
   the active cast, become irrelevant to the current recurring roster, or die in
@@ -52,7 +68,9 @@ NPC_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
     {
       "kind": "create | update | retire",
       "npc_id": "existing id or null",
-      "name": "npc name",
+      "name": "backend canonical npc identity",
+      "player_label": "safe player-facing label or null to keep the current one",
+      "player_label_kind": "proper_name | descriptor | null to keep the current kind",
       "role": "short role or function",
       "disposition": "short disposition toward the player or current situation",
       "player_visible": true
@@ -99,6 +117,12 @@ Hard rules:
 - Prefer reusing existing seeded NPC names when they still fit.
 - You may replace bad opener-seed NPCs if the committed context clearly points
   at better recurring figures.
+- `name` is canonical backend identity; `player_label` is what the player sees.
+- Do NOT surface a proper-name `player_label` in `introduced` unless the
+  committed context explicitly grants that name to the player. If the recurring
+  figure is clearly important but still unnamed in canon, prefer a descriptor
+  `player_label` and mark `player_label_kind="descriptor"` rather than leaking
+  a backend-only true name.
 - Do not output duplicate names across the two lists.
 - If no recurring introduced figure is justified yet, `introduced` may be empty.
 """
@@ -106,10 +130,22 @@ Hard rules:
 LEGACY_NPC_REPAIR_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
 {
   "introduced": [
-    {"name": "npc name", "role": "role", "disposition": "disposition"}
+    {
+      "name": "backend canonical name",
+      "player_label": "safe player-facing label",
+      "player_label_kind": "proper_name | descriptor",
+      "role": "role",
+      "disposition": "disposition"
+    }
   ],
   "hidden": [
-    {"name": "npc name", "role": "role", "disposition": "disposition"}
+    {
+      "name": "backend canonical name",
+      "player_label": "optional future-facing label or null",
+      "player_label_kind": "proper_name | descriptor | null",
+      "role": "role",
+      "disposition": "disposition"
+    }
   ]
 }
 
@@ -146,6 +182,8 @@ class GeneratedNPCUpdateOp(StrictModel):
     kind: NPCUpdateKind
     npc_id: str | None = None
     name: str = Field(min_length=1, max_length=160)
+    player_label: str | None = Field(default=None, max_length=160)
+    player_label_kind: NPCPlayerLabelKind | None = None
     role: str = Field(default="", max_length=160)
     disposition: str = Field(default="", max_length=160)
     player_visible: bool = True
@@ -157,6 +195,8 @@ class GeneratedNPCUpdateBatch(StrictModel):
 
 class GeneratedLegacyRosterNPC(StrictModel):
     name: str = Field(min_length=1, max_length=160)
+    player_label: str | None = Field(default=None, max_length=160)
+    player_label_kind: NPCPlayerLabelKind | None = None
     role: str = Field(default="", max_length=160)
     disposition: str = Field(default="", max_length=160)
 
@@ -302,6 +342,8 @@ class NPCUpdater:
                 {
                     "id": npc.id,
                     "name": npc.name,
+                    "player_label": npc.display_label(),
+                    "player_label_kind": npc.player_label_kind.value,
                     "role": npc.role,
                     "disposition": npc.disposition,
                     "status": npc.status.value,
@@ -328,9 +370,10 @@ class NPCUpdater:
         *,
         memory_context: str | None,
     ) -> str:
+        visible_ids = {npc.id for npc in state.npcs}
         existing_npcs = "\n".join(
-            f"- {npc.name} ({npc.role or 'no role'}): {npc.disposition}"
-            for npc in state.npcs
+            _legacy_roster_line(npc, player_visible=npc.id in visible_ids)
+            for npc in state.all_npcs()
         ) or "(none)"
         return (
             LEGACY_NPC_REPAIR_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
@@ -388,10 +431,33 @@ class NPCUpdater:
                         existing.role = role
                     if disposition:
                         existing.disposition = disposition
+                    (
+                        existing.player_label,
+                        existing.player_label_kind,
+                    ) = self._resolved_player_identity(
+                        current=existing,
+                        canonical_name=existing.name,
+                        proposed_player_label=op.player_label,
+                        proposed_player_label_kind=op.player_label_kind,
+                        role=role,
+                    )
                     self._place_npc(state, existing, player_visible=op.player_visible)
                     touched_ids.append(existing_id)
                     continue
-                created = NPC(name=name, role=role, disposition=disposition or "unknown")
+                player_label, player_label_kind = self._resolved_player_identity(
+                    current=None,
+                    canonical_name=name,
+                    proposed_player_label=op.player_label,
+                    proposed_player_label_kind=op.player_label_kind,
+                    role=role,
+                )
+                created = NPC(
+                    name=name,
+                    role=role,
+                    disposition=disposition or "unknown",
+                    player_label=player_label,
+                    player_label_kind=player_label_kind,
+                )
                 self._place_npc(state, created, player_visible=op.player_visible)
                 npcs_by_id[created.id] = created
                 name_index[_name_key(created.name)] = created.id
@@ -415,6 +481,16 @@ class NPCUpdater:
                 npc.role = role
             if disposition:
                 npc.disposition = disposition
+            (
+                npc.player_label,
+                npc.player_label_kind,
+            ) = self._resolved_player_identity(
+                current=npc,
+                canonical_name=resolved_name,
+                proposed_player_label=op.player_label,
+                proposed_player_label_kind=op.player_label_kind,
+                role=role,
+            )
             if prior_key != _name_key(npc.name):
                 name_index.pop(prior_key, None)
                 name_index[_name_key(npc.name)] = npc.id
@@ -448,6 +524,13 @@ class NPCUpdater:
             npc.name = candidate.name.strip()
             npc.role = candidate.role.strip()
             npc.disposition = candidate.disposition.strip() or "unknown"
+            npc.player_label, npc.player_label_kind = self._resolved_player_identity(
+                current=npc,
+                canonical_name=npc.name,
+                proposed_player_label=candidate.player_label,
+                proposed_player_label_kind=candidate.player_label_kind,
+                role=npc.role,
+            )
             introduced.append(npc)
         for candidate in generated.hidden:
             key = _name_key(candidate.name)
@@ -458,6 +541,13 @@ class NPCUpdater:
             npc.name = candidate.name.strip()
             npc.role = candidate.role.strip()
             npc.disposition = candidate.disposition.strip() or "unknown"
+            npc.player_label, npc.player_label_kind = self._resolved_player_identity(
+                current=npc,
+                canonical_name=npc.name,
+                proposed_player_label=candidate.player_label,
+                proposed_player_label_kind=candidate.player_label_kind,
+                role=npc.role,
+            )
             hidden.append(npc)
         return LegacyNPCRosterRepairResult(
             introduced_npcs=tuple(introduced),
@@ -519,6 +609,32 @@ class NPCUpdater:
             return current.name
         return proposed
 
+    def _resolved_player_identity(
+        self,
+        *,
+        current: NPC | None,
+        canonical_name: str,
+        proposed_player_label: str | None,
+        proposed_player_label_kind: NPCPlayerLabelKind | None,
+        role: str,
+    ) -> tuple[str, NPCPlayerLabelKind]:
+        label_kind = proposed_player_label_kind or (
+            current.player_label_kind if current is not None else NPCPlayerLabelKind.PROPER_NAME
+        )
+        cleaned_label = _clean_optional_text(proposed_player_label)
+        if cleaned_label is not None:
+            return cleaned_label, label_kind
+        if label_kind == NPCPlayerLabelKind.PROPER_NAME:
+            return canonical_name, label_kind
+        if current is not None and current.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR:
+            existing_label = _clean_optional_text(current.player_label)
+            if existing_label is not None:
+                return existing_label, label_kind
+        fallback_label = _clean_optional_text(role)
+        if fallback_label is not None:
+            return fallback_label, label_kind
+        return "Unnamed recurring figure", label_kind
+
     def _openrouter_headers(self) -> dict[str, str] | None:
         if not self._config.model.startswith("openrouter/"):
             return None
@@ -532,6 +648,22 @@ class NPCUpdater:
 
 def _name_key(name: str) -> str:
     return " ".join(name.lower().split())
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _legacy_roster_line(npc: NPC, *, player_visible: bool) -> str:
+    visibility = "visible" if player_visible else "hidden"
+    return (
+        f"- canonical: {npc.name}; player label: {npc.display_label()}"
+        f" ({npc.player_label_kind.value}); visibility: {visibility}; "
+        f"role: {npc.role or 'no role'}; disposition: {npc.disposition}"
+    )
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

@@ -10,6 +10,7 @@ from dungeon_master.models import (
     EventType,
     GameState,
     GameThread,
+    NPCPlayerLabelKind,
     NPCStatus,
     OracleKind,
     OracleOutcome,
@@ -27,6 +28,7 @@ MAX_REVEALED_FACTS: Final[int] = 24
 MAX_OPEN_LOOPS: Final[int] = 10
 MAX_CALLBACKS: Final[int] = 8
 SALIENT_CALLBACK_THRESHOLD: Final[int] = 4
+CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 2
 
 
 class TurnMemory(StrictModel):
@@ -70,6 +72,7 @@ class ThreadMemory(StrictModel):
 class NPCMemory(StrictModel):
     npc_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    label_kind: NPCPlayerLabelKind = NPCPlayerLabelKind.PROPER_NAME
     role: str = ""
     disposition: str = ""
     status: NPCStatus = NPCStatus.ACTIVE
@@ -121,6 +124,7 @@ class CallbackCandidate(StrictModel):
 
 
 class MemoryState(StrictModel):
+    schema_version: int = Field(default=1, ge=1)
     state_id: str = ""
     updated_at: datetime = Field(default_factory=utc_now)
     turn_count: int = Field(default=0, ge=0)
@@ -425,7 +429,7 @@ class MemoryManager:
             )
         ]
         active_npcs = [
-            f"{npc.name} ({npc.status.value})"
+            f"{_npc_memory_label(npc)} ({npc.status.value})"
             + (
                 f" - {npc.role}; {npc.disposition}: {npc.summary}"
                 if npc.role or npc.disposition
@@ -485,6 +489,7 @@ class MemoryManager:
         memory.scene_summaries = memory.scene_summaries[-MAX_SCENE_SUMMARIES:]
 
     def _sync_canonical(self, memory: MemoryState, state: GameState) -> None:
+        memory.schema_version = CURRENT_MEMORY_SCHEMA_VERSION
         memory.state_id = state.id
         memory.current_scene_key = state.current_scene
         memory.active_location_key = state.current_scene
@@ -574,7 +579,8 @@ class MemoryManager:
                 memory.npc_memory.append(
                     NPCMemory(
                         npc_id=npc.id,
-                        name=npc.name,
+                        name=npc.display_label(),
+                        label_kind=npc.player_label_kind,
                         role=npc.role,
                         disposition=npc.disposition,
                         status=npc.status,
@@ -584,7 +590,8 @@ class MemoryManager:
                     ),
                 )
                 continue
-            card.name = npc.name
+            card.name = npc.display_label()
+            card.label_kind = npc.player_label_kind
             card.role = npc.role
             card.disposition = npc.disposition
             card.status = npc.status
@@ -682,7 +689,8 @@ class MemoryManager:
             memory.npc_memory.append(
                 NPCMemory(
                     npc_id=npc.id,
-                    name=npc.name,
+                    name=npc.display_label(),
+                    label_kind=npc.player_label_kind,
                     role=npc.role,
                     disposition=npc.disposition,
                     status=npc.status,
@@ -765,7 +773,7 @@ class MemoryManager:
                 continue
             candidates.append(
                 CallbackCandidate(
-                    text=f"Bring back NPC: {npc.name}",
+                    text=f"Bring back NPC: {_npc_memory_label(npc)}",
                     reason=npc.summary,
                     priority=3,
                     last_touched_turn=npc.last_touched_turn,
@@ -844,7 +852,7 @@ class MemoryManager:
             )
         ]
         lines.extend(
-            f"NPC - {npc.name}: {npc.summary}"
+            f"NPC - {_npc_memory_label(npc)}: {npc.summary}"
             for npc in [*matched_npcs[:2], *fallback_npcs[:1]]
         )
         return lines[:5]
@@ -901,9 +909,9 @@ class MemoryManager:
                 None,
             )
             if npc is not None:
-                lines.append(f"NPC - {npc.name}: {npc.summary}")
+                lines.append(f"NPC - {_npc_memory_label(npc)}: {npc.summary}")
         lines.extend(
-            f"NPC - {npc.name}: {npc.summary}"
+            f"NPC - {_npc_memory_label(npc)}: {npc.summary}"
             for npc in memory.npc_memory
             if (
                 npc.status == NPCStatus.ACTIVE
@@ -1047,7 +1055,9 @@ def _thread_summary(thread: GameThread, development: str) -> str:
 
 
 def _npc_summary(npc: NPC, development: str) -> str:
-    parts = [npc.name]
+    parts = [npc.display_label()]
+    if npc.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR:
+        parts.append("Known to the player only by descriptor.")
     if npc.status != NPCStatus.ACTIVE:
         parts.append(f"Status: {npc.status.value}.")
     if npc.role:
@@ -1101,3 +1111,9 @@ def _dedupe_strings(values: list[str]) -> list[str]:
         seen.add(key)
         deduped.append(value)
     return deduped
+
+
+def _npc_memory_label(npc: NPCMemory) -> str:
+    if npc.label_kind == NPCPlayerLabelKind.DESCRIPTOR:
+        return f"{npc.name} (descriptor)"
+    return npc.name

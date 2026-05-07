@@ -21,6 +21,7 @@ not user-edited, so any "edit" affordance would be a regression
 against the working rules in the kanban.
 -->
 <script lang="ts">
+  import { onDestroy, tick } from "svelte";
   import { sortThreadsForDisplay } from "../lib/threads";
   import type { GameThread } from "../lib/types";
 
@@ -32,21 +33,61 @@ against the working rules in the kanban.
      * The Inspector derives this from `recentlyTouchedThreadIds`.
      */
     recentlyTouchedIds?: ReadonlySet<string>;
+    focusedId?: string | null;
+    focusSeq?: number;
   };
-  const { threads, recentlyTouchedIds = new Set<string>() }: Props = $props();
+  const {
+    threads,
+    recentlyTouchedIds = new Set<string>(),
+    focusedId = null,
+    focusSeq = 0,
+  }: Props = $props();
 
   const ordered = $derived(sortThreadsForDisplay(threads, recentlyTouchedIds));
+
+  let listEl: HTMLUListElement | undefined = $state();
+  let flashingId: string | null = $state(null);
+  let lastFocusSeq: number = $state(-1);
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function revealFocusedThread(threadId: string): Promise<void> {
+    await tick();
+    const target = listEl?.querySelector<HTMLElement>(
+      `[data-thread-id="${CSS.escape(threadId)}"]`,
+    );
+    if (target === undefined || target === null) return;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    flashingId = threadId;
+    if (focusTimer !== null) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      flashingId = null;
+      focusTimer = null;
+    }, 1700);
+  }
+
+  $effect(() => {
+    if (focusedId === null) return;
+    if (focusSeq === lastFocusSeq) return;
+    lastFocusSeq = focusSeq;
+    void revealFocusedThread(focusedId);
+  });
+
+  onDestroy(() => {
+    if (focusTimer !== null) clearTimeout(focusTimer);
+  });
 </script>
 
 {#if threads.length === 0}
   <p class="muted">No active threads.</p>
 {:else}
-  <ul>
+  <ul bind:this={listEl}>
     {#each ordered as thread (thread.id)}
       {@const justTouched = recentlyTouchedIds.has(thread.id)}
       <li
+        data-thread-id={thread.id}
         class:resolved={thread.status === "resolved"}
         class:advanced={justTouched}
+        class:focused={flashingId === thread.id}
       >
         <div class="row">
           <span class="status mono" data-status={thread.status}>{thread.status}</span>
@@ -105,6 +146,11 @@ against the working rules in the kanban.
   }
   li.advanced:not(.resolved) {
     animation: thread-pulse 1.6s ease-out 1;
+  }
+  li.focused {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--gold-bright) 55%, transparent) inset,
+      0 0 0 6px color-mix(in oklab, var(--gold-bright) 16%, transparent);
   }
   @keyframes thread-pulse {
     0% {

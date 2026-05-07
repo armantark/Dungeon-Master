@@ -14,6 +14,8 @@ dependencies = [
 
 [project.scripts]
 dungeon-master = "dungeon_master.cli:main"
+dungeon-master-backfill = "dungeon_master.backfill_cli:main"
+dungeon-master-fixtures = "dungeon_master.fixture_cli:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0"]

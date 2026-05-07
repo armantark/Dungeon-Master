@@ -60,6 +60,11 @@ class NPCStatus(StrEnum):
     RETIRED = "retired"
 
 
+class NPCPlayerLabelKind(StrEnum):
+    PROPER_NAME = "proper_name"
+    DESCRIPTOR = "descriptor"
+
+
 class SceneStatus(StrEnum):
     EXPECTED = "expected"
     ALTERED = "altered"
@@ -157,6 +162,26 @@ class NPC(StrictModel):
     role: str = ""
     disposition: str = "unknown"
     status: NPCStatus = NPCStatus.ACTIVE
+    player_label: str | None = None
+    player_label_kind: NPCPlayerLabelKind = NPCPlayerLabelKind.PROPER_NAME
+
+    @model_validator(mode="after")
+    def normalize_player_label(self) -> NPC:
+        cleaned_label = (self.player_label or "").strip()
+        if cleaned_label == "":
+            if self.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR:
+                message = "Descriptor-visible NPCs must provide a player label."
+                raise ValueError(message)
+            cleaned_label = self.name
+        object.__setattr__(self, "player_label", cleaned_label)
+        return self
+
+    def display_label(self) -> str:
+        label = (self.player_label or "").strip()
+        return label or self.name
+
+    def player_knows_proper_name(self) -> bool:
+        return self.player_label_kind == NPCPlayerLabelKind.PROPER_NAME
 
 
 class EnemyCombatant(StrictModel):

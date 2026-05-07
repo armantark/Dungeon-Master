@@ -11,14 +11,26 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
     title: string;
     open?: boolean;
     maxHeight?: string;
+    reopenToken?: number;
     children: Snippet;
   };
-  const { title, open = true, maxHeight = "none", children }: Props = $props();
+  const { title, open = true, maxHeight = "none", reopenToken = 0, children }: Props = $props();
 
   // The prop is intentionally one-shot: the parent specifies the initial
   // openness, then the user toggles it locally. `untrack` makes that
   // contract explicit (and silences the static-analysis warning).
   let isOpen: boolean = $state(untrack(() => open));
+  let lastReopenToken: number = $state(untrack(() => reopenToken));
+
+  // H-02 inspector-focus requests need a way to reopen a closed drawer
+  // without taking ownership of its open/closed state away from the user.
+  // `reopenToken` is a one-shot nudge: when it changes, we open the
+  // drawer, then local toggling resumes as normal.
+  $effect(() => {
+    if (reopenToken === lastReopenToken) return;
+    lastReopenToken = reopenToken;
+    isOpen = true;
+  });
 </script>
 
 <section class="drawer iron" data-open={isOpen}>

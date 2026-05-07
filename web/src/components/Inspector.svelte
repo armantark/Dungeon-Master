@@ -14,6 +14,7 @@ chaos value mid-conversation is a deliberate, infrequent act; pulling
 it into a drawer keeps that ceremony.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { hasCairnMechanics } from "../lib/cairn";
   import { combatFromState } from "../lib/combat";
   import {
@@ -205,6 +206,43 @@ it into a drawer keeps that ceremony.
   // cards instead of deleting them.
   const touchedNpcIds = $derived(recentlyTouchedNpcIds(gs));
 
+  // H-02 receipt-link navigation. A receipt pill can ask the inspector to
+  // open one section and spotlight one entity. We keep the request local
+  // once consumed so the store stays a one-shot signal bus, not a second
+  // persistent UI-state source of truth.
+  let threadsDrawerEl: HTMLDivElement | undefined;
+  let npcsDrawerEl: HTMLDivElement | undefined;
+  let focusedThreadId: string | null = $state(null);
+  let focusedNpcId: string | null = $state(null);
+  let threadFocusSeq: number = $state(0);
+  let npcFocusSeq: number = $state(0);
+  let consumedInspectorFocusSeq: number = $state(-1);
+
+  async function applyInspectorFocus(
+    request: NonNullable<typeof game.inspectorFocusRequest>,
+  ): Promise<void> {
+    if (request.section === "threads") {
+      focusedThreadId = request.entityId;
+      threadFocusSeq = request.seq;
+      await tick();
+      threadsDrawerEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
+    focusedNpcId = request.entityId;
+    npcFocusSeq = request.seq;
+    await tick();
+    npcsDrawerEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  $effect(() => {
+    const request = game.inspectorFocusRequest;
+    if (request === null) return;
+    if (request.seq === consumedInspectorFocusSeq) return;
+    consumedInspectorFocusSeq = request.seq;
+    void applyInspectorFocus(request);
+    game.consumeInspectorFocusRequest();
+  });
+
   // The build-notes drawer surfaces the LLM-authored Cairn backfill
   // rationale (`character.cairn.notes`). The folio rail intentionally
   // doesn't show this — it would crowd the always-visible surface — so
@@ -304,13 +342,27 @@ it into a drawer keeps that ceremony.
       </Drawer>
     {/if}
 
-    <Drawer title="Threads" open={false} maxHeight="11rem">
-      <ThreadsPanel threads={gs.threads} recentlyTouchedIds={touchedThreadIds} />
-    </Drawer>
+    <div bind:this={threadsDrawerEl}>
+      <Drawer title="Threads" open={false} maxHeight="11rem" reopenToken={threadFocusSeq}>
+        <ThreadsPanel
+          threads={gs.threads}
+          recentlyTouchedIds={touchedThreadIds}
+          focusedId={focusedThreadId}
+          focusSeq={threadFocusSeq}
+        />
+      </Drawer>
+    </div>
 
-    <Drawer title="NPCs" open={false} maxHeight="10rem">
-      <NPCsPanel npcs={gs.npcs} recentlyTouchedIds={touchedNpcIds} />
-    </Drawer>
+    <div bind:this={npcsDrawerEl}>
+      <Drawer title="NPCs" open={false} maxHeight="10rem" reopenToken={npcFocusSeq}>
+        <NPCsPanel
+          npcs={gs.npcs}
+          recentlyTouchedIds={touchedNpcIds}
+          focusedId={focusedNpcId}
+          focusSeq={npcFocusSeq}
+        />
+      </Drawer>
+    </div>
 
     <!--
       B-02: the old "Notes" drawer conflated two unrelated surfaces:
@@ -460,7 +512,12 @@ it into a drawer keeps that ceremony.
         <ul class="history">
           {#each filteredHistory as outcome (outcome.id)}
             <li class="history__row">
-              <MechanicalReceipt {outcome} defaultOpen={false} />
+              <MechanicalReceipt
+                {outcome}
+                threads={gs.threads}
+                npcs={gs.npcs}
+                defaultOpen={false}
+              />
               {#if findNarrativeEventForOracle(gs, outcome.id) !== null}
                 <button
                   type="button"

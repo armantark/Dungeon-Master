@@ -1,6 +1,6 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import NPCStatus, OracleKind, OracleOutcome
+from dungeon_master.models import NPCPlayerLabelKind, NPCStatus, OracleKind, OracleOutcome
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from dungeon_master.npc_updater import NPCUpdater
 from tests.factories import sample_state
@@ -198,6 +198,46 @@ def test_npc_updater_can_create_hidden_npc_without_visible_roster_leak() -> None
     assert all(npc.name != "The Hierophant" for npc in state.npcs)
     assert hidden.role == "Face-thief patriarch"
     assert hidden.status == NPCStatus.ACTIVE
+
+
+def test_npc_updater_can_create_visible_descriptor_without_leaking_true_name() -> None:
+    state = sample_state()
+    state.npcs = []
+    updater = _updater(
+        """
+        {
+          "ops": [
+            {
+              "kind": "create",
+              "npc_id": null,
+              "name": "The Hierophant",
+              "player_label": "The ash-veiled bellringer",
+              "player_label_kind": "descriptor",
+              "role": "Face-thief patriarch",
+              "disposition": "patient malice",
+              "player_visible": true
+            }
+          ]
+        }
+        """,
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The bellringer leaves another reliquary token on the sill.",
+        chaos_factor=state.chaos_factor,
+    )
+
+    result = updater.update_npcs(
+        state,
+        player_input="I follow the ash-veiled bellringer through the cloister fog.",
+        outcome=outcome,
+    )
+
+    created = next(npc for npc in state.npcs if npc.name == "The Hierophant")
+    assert result.touched_npc_ids == (created.id,)
+    assert created.display_label() == "The ash-veiled bellringer"
+    assert created.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR
+    assert created.player_knows_proper_name() is False
 
 
 def test_npc_updater_can_reseed_legacy_roster() -> None:

@@ -379,6 +379,8 @@ F-09 browsing behavior:
           outcome={message.outcome ?? null}
           thinking={message.thinking ?? null}
           question={message.question ?? null}
+          threads={gs.threads}
+          npcs={gs.npcs}
           canRegenerate={canRegenerateMessage(message.kind, message.id, latestNarrativeId)}
         />
       </div>
@@ -393,6 +395,8 @@ F-09 browsing behavior:
           outcome={provisional.outcome ?? null}
           thinking={provisional.thinking ?? null}
           question={provisional.question ?? null}
+          threads={gs.threads}
+          npcs={gs.npcs}
           streaming={true}
           canRegenerate={false}
         />

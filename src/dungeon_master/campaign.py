@@ -49,7 +49,8 @@ Return only valid JSON. The application will persist your JSON as structured sta
 
 Creative direction:
 - {SETTING_DIRECTION}
-- Characters must be archetypal to this setting: including but not limited to scarred pilgrims, failed squires,
+- Characters must be archetypal to this setting: including but not limited to
+  scarred pilgrims, failed squires,
   gutter mystics, plague-haunted hunters, relic smugglers, deserters, grave-robbers,
   and other desperate medieval survivors.
 - Make them playable, pressured, and specific without deciding any future actions.

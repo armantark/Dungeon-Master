@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_THREAD_LOOKBACK,
   recentlyTouchedThreadIds,
+  referencedThreadsForOutcome,
   sortThreadsForDisplay,
 } from "./threads";
 import type {
@@ -137,6 +138,22 @@ describe("recentlyTouchedThreadIds", () => {
 
   it("returns an empty set for an empty oracle history", () => {
     expect(recentlyTouchedThreadIds(state({}))).toEqual(new Set());
+  });
+});
+
+describe("referencedThreadsForOutcome", () => {
+  it("returns threads in outcome order and drops stale ids", () => {
+    const visible = [thread("a"), thread("b")];
+
+    const resolved = referencedThreadsForOutcome(
+      visible,
+      outcome({
+        referenced_thread_ids: ["b", "missing", "a"],
+        referenced_thread_id: "a",
+      }),
+    );
+
+    expect(resolved.map((entry) => entry.id)).toEqual(["b", "a"]);
   });
 });
 

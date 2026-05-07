@@ -154,6 +154,18 @@ export interface ScrollRequest {
   seq: number;
 }
 
+export type InspectorSection = "threads" | "npcs";
+
+// H-02 cross-surface continuity jump. A receipt pill can ask the
+// inspector to open a specific section and focus one referenced entity.
+// The rotating seq mirrors ScrollRequest so repeated clicks on the same
+// pill still re-trigger the drawer-open / highlight effect.
+export interface InspectorFocusRequest {
+  section: InspectorSection;
+  entityId: string | null;
+  seq: number;
+}
+
 // Note: never write `$state<T>(...)` with explicit type arguments. Svelte 5
 // silently initializes the rune to `undefined` in that case (the type-arg
 // syntax is treated as an untyped call). Use a separate annotation on the
@@ -190,6 +202,8 @@ class GameStore {
   // effect — see the ScrollRequest type doc.
   scrollRequest: ScrollRequest | null = $state(null);
   #scrollSeq = 0;
+  inspectorFocusRequest: InspectorFocusRequest | null = $state(null);
+  #inspectorFocusSeq = 0;
   #abortController: AbortController | null = null;
   #cancelRequested = false;
 
@@ -689,6 +703,26 @@ class GameStore {
     this.scrollRequest = null;
   }
 
+  /**
+   * H-02 receipt-link navigation. Opens the Inspector and asks it to
+   * reveal a specific section/entity. This intentionally stays parallel
+   * to `requestScrollTo` instead of overloading it — the chat feed and
+   * the inspector solve different navigation problems.
+   */
+  requestInspectorFocus(section: InspectorSection, entityId: string | null = null): void {
+    this.#inspectorFocusSeq += 1;
+    this.inspectorOpen = true;
+    this.inspectorFocusRequest = {
+      section,
+      entityId,
+      seq: this.#inspectorFocusSeq,
+    };
+  }
+
+  consumeInspectorFocusRequest(): void {
+    this.inspectorFocusRequest = null;
+  }
+
   dismissNote(id: string): void {
     this.notes = this.notes.filter((n) => n.id !== id);
   }
@@ -768,6 +802,7 @@ class GameStore {
     this.notes = [];
     this.error = null;
     this.scrollRequest = null;
+    this.inspectorFocusRequest = null;
     this.streaming = emptyStreamingState();
     this.pendingOracle = null;
     this.rollPhase = "idle";
