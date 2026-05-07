@@ -4,14 +4,17 @@ Composer — sticky bottom input for free-text actions and slash commands.
 
 Slash commands are documented in `lib/slash.ts`. The placeholder rotates
 through suggestions so first-time users discover them organically.
-Cmd / Ctrl + Enter sends; bare Enter inserts a newline (mirroring chat
-tools the user already has muscle memory for).
+Enter sends; Shift + Enter inserts a newline (mirroring Discord, Slack,
+and most modern chat surfaces). Cmd / Ctrl + Enter is preserved as a
+secondary submit shortcut for muscle-memory holdouts.
 
 Slash suggestion menu: when the textarea begins with `/` and no
 argument has been typed yet, a small dropdown surfaces matching
 commands. Up/Down navigates, Tab/Enter completes, Esc dismisses. We
 prefer Tab/Enter for completion so a fast typist can fall through the
-menu without breaking flow.
+menu without breaking flow. Shift + Enter never completes — it always
+falls through to the textarea so a multi-line slash argument can be
+authored without dismissing the menu first.
 -->
 <script lang="ts">
   import { combatFromState } from "../lib/combat";
@@ -108,7 +111,18 @@ menu without breaking flow.
           (suggestionIndex - 1 + suggestions.length) % suggestions.length;
         return;
       }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.metaKey && !event.ctrlKey)) {
+      // Tab always completes. Enter completes only when no modifiers
+      // are held — Shift+Enter must fall through to the textarea so a
+      // player can author a multi-line slash argument without first
+      // dismissing the menu, and Cmd/Ctrl+Enter falls through to the
+      // submit branch below.
+      if (
+        event.key === "Tab"
+        || (event.key === "Enter"
+          && !event.shiftKey
+          && !event.metaKey
+          && !event.ctrlKey)
+      ) {
         const cmd = suggestions[suggestionIndex];
         if (cmd) {
           event.preventDefault();
@@ -123,10 +137,19 @@ menu without breaking flow.
       }
     }
 
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      void send();
-    }
+    // Modern chat-app convention: Enter sends, Shift+Enter inserts a
+    // newline. We keep Cmd/Ctrl+Enter as a secondary submit shortcut
+    // for the muscle memory of users who learned the previous binding.
+    //
+    // `event.isComposing` guards IME input — pressing Enter to commit
+    // a Japanese/Chinese composition shouldn't fire `send()`. That
+    // also covers `keyCode === 229`, which some older browsers used
+    // for the same condition.
+    if (event.key !== "Enter") return;
+    if (event.isComposing) return;
+    if (event.shiftKey) return;
+    event.preventDefault();
+    void send();
   }
 
   const PLACEHOLDERS = [
@@ -263,9 +286,9 @@ menu without breaking flow.
   <div class="row">
     <span class="hint pixel">
       {#if inActiveCombat}
-        Cmd/Ctrl + Enter to send · /retreat to disengage
+        Enter to send · Shift + Enter for newline · /retreat to disengage
       {:else}
-        Cmd/Ctrl + Enter to send · / for commands · /help
+        Enter to send · Shift + Enter for newline · / for commands · /help
       {/if}
     </span>
     <div class="actions">

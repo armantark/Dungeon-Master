@@ -9,6 +9,7 @@
 //   same state object as the persisted state.
 
 import { api, ApiError, StreamTransportError } from "./api";
+import { loadOocNotes, saveOocNotes } from "./ooc-storage";
 import { parseTurn, SLASH_HELP, type AcquireVerb } from "./slash";
 import type { StreamHandlers, StreamResult } from "./streaming";
 import type { StreamRoute } from "./streaming-types";
@@ -264,6 +265,7 @@ class GameStore {
         return;
       }
       await this.#run((signal) => api.getState(signal));
+      this.#hydrateOocNotes();
       this.libraryStatus = "ready";
     } catch (exc) {
       this.libraryStatus = "empty";
@@ -299,6 +301,7 @@ class GameStore {
       if (select) {
         this.#resetEphemera();
         await this.#run((signal) => api.getState(signal));
+        this.#hydrateOocNotes();
         this.libraryStatus = "ready";
       }
       return created?.save_id ?? null;
@@ -334,6 +337,7 @@ class GameStore {
       this.activeSaveId = response.active_save_id;
       this.#resetEphemera();
       await this.#run((signal) => api.getState(signal));
+      this.#hydrateOocNotes();
       this.libraryStatus = "ready";
     } catch (exc) {
       this.libraryError = this.#formatError(exc);
@@ -724,7 +728,16 @@ class GameStore {
   }
 
   dismissNote(id: string): void {
+    const wasExplanation = this.notes.some(
+      (n) => n.id === id && n.kind === "explanation",
+    );
     this.notes = this.notes.filter((n) => n.id !== id);
+    // OOC notes survive reloads (see ooc-storage.ts), so a dismissal
+    // has to write through to localStorage as well — otherwise the
+    // dismissed entry would re-appear on next bootstrap.
+    if (wasExplanation) {
+      saveOocNotes(this.activeSaveId, this.notes);
+    }
   }
 
   cancelCurrentRequest(): void {
@@ -825,6 +838,10 @@ class GameStore {
   // that would mean every other call site has to remember to leave
   // the question undefined; a focused helper keeps the OOC shape
   // self-documenting at the call site.
+  //
+  // We persist explanation notes to localStorage (per-save) so the
+  // OOC scrollback survives a reload. The action_log still never
+  // sees them — see ooc-storage.ts for the rationale.
   #explanationNote(question: string, answer: string): void {
     this.notes = [
       ...this.notes,
@@ -836,6 +853,30 @@ class GameStore {
         created_at: new Date().toISOString(),
       },
     ];
+    saveOocNotes(this.activeSaveId, this.notes);
+  }
+
+  // Pull the per-save OOC scrollback off localStorage and merge it
+  // into the in-memory notes list. Called after every save bind
+  // (`bootstrap`, `createSave(select=true)`, `selectSave`) once
+  // `activeSaveId` is the new save's id and `#resetEphemera` has
+  // already cleared the old in-memory log.
+  //
+  // We append rather than replace so a stream that completed *before*
+  // hydration finished (vanishingly unlikely, but possible if the
+  // bootstrap getState is slow and the player hits /explain
+  // immediately) doesn't get clobbered by the persisted history. The
+  // dedup-by-id guards against the same flow if hydration is racy.
+  #hydrateOocNotes(): void {
+    const persisted = loadOocNotes(this.activeSaveId);
+    if (persisted.length === 0) return;
+    const seen = new Set(this.notes.map((n) => n.id));
+    const merged = [
+      ...persisted.filter((n) => !seen.has(n.id)),
+      ...this.notes,
+    ];
+    merged.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    this.notes = merged;
   }
 
   async #run(
