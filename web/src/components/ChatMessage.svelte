@@ -20,6 +20,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   import CollapsedThinking from "./CollapsedThinking.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import MessageActions from "./MessageActions.svelte";
+  import { liveTime } from "../lib/live-time.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import type { GameThread, NPC, OracleOutcome } from "../lib/types";
 
@@ -61,14 +62,24 @@ MechanicalReceipt so the player can verify the dice on demand.
     npcs = [],
   }: Props = $props();
 
-  function relative(iso: string | null): string | null {
-    if (!iso) return null;
-    const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  // Reactive relative-time label. We read `liveTime.now` (the shared
+  // 5s tick) inside a $derived so every ChatMessage re-derives its
+  // label as the clock advances — without each row spinning up its
+  // own setInterval. Reading `timestamp` *and* `liveTime.now` inside
+  // a derived is what makes the label live; if we kept the old
+  // `function relative(iso)` the value would be frozen at first
+  // render even though the underlying state changes.
+  const relativeLabel = $derived.by<string | null>(() => {
+    if (!timestamp) return null;
+    const seconds = Math.max(
+      0,
+      (liveTime.now - new Date(timestamp).getTime()) / 1000,
+    );
     if (seconds < 60) return `${Math.round(seconds)}s ago`;
     if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-    return new Date(iso).toLocaleString();
-  }
+    return new Date(timestamp).toLocaleString();
+  });
 
   // Model-authored bubbles render as markdown (DM narration, OOC
   // explainer answers, and system event prose). Player-typed messages
@@ -91,8 +102,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     </span>
     {#if streaming}
       <span class="streaming-tag">streaming…</span>
-    {:else if timestamp}
-      <span class="time">{relative(timestamp)}</span>
+    {:else if relativeLabel}
+      <span class="time">{relativeLabel}</span>
     {/if}
   </div>
 
