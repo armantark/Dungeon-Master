@@ -20,6 +20,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   import CollapsedThinking from "./CollapsedThinking.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import MessageActions from "./MessageActions.svelte";
+  import { renderMarkdown } from "../lib/markdown";
   import type { GameThread, NPC, OracleOutcome } from "../lib/types";
 
   type Props = {
@@ -68,6 +69,16 @@ MechanicalReceipt so the player can verify the dice on demand.
     if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
     return new Date(iso).toLocaleString();
   }
+
+  // Model-authored bubbles render as markdown (DM narration, OOC
+  // explainer answers, and system event prose). Player-typed messages
+  // stay literal so a stray underscore in a character name doesn't
+  // accidentally flip into italics. The renderer is sync + sanitized;
+  // see lib/markdown.ts for the rationale.
+  const isMarkdownSpeaker = $derived(
+    speaker === "dm" || speaker === "ooc" || speaker === "system",
+  );
+  const renderedHtml = $derived(isMarkdownSpeaker ? renderMarkdown(text) : "");
 </script>
 
 <article class="msg msg--{speaker}" class:streaming>
@@ -119,6 +130,14 @@ MechanicalReceipt so the player can verify the dice on demand.
   <div class="body">
     {#if text === "" && streaming}
       <p class="muted pixel awaiting">Awaiting first token…</p>
+    {:else if isMarkdownSpeaker}
+      <!--
+        We render model-authored prose through the markdown pipeline
+        so emphasis/lists/code land as real structure, then append
+        the streaming caret outside the parsed HTML so it doesn't
+        get swallowed by an unclosed inline mark mid-stream.
+      -->
+      <div class="prose">{@html renderedHtml}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}</div>
     {:else}
       <p>{text}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}</p>
     {/if}
@@ -196,11 +215,135 @@ MechanicalReceipt so the player can verify the dice on demand.
     white-space: pre-wrap;
   }
 
+  /*
+   * Markdown surface. The renderer produces standard block elements
+   * (p, ul, ol, blockquote, h1-h6, code, pre, table) and we tune
+   * each so the parchment voice is preserved across DM/OOC/system.
+   * Per-speaker color/family/size overrides live further down — we
+   * keep the structural rules here so they don't have to be repeated
+   * three times.
+   */
+  .body .prose {
+    display: block;
+  }
+  .body .prose > :global(*:first-child) {
+    margin-top: 0;
+  }
+  .body .prose > :global(*:last-child) {
+    margin-bottom: 0;
+  }
+  .body .prose :global(p) {
+    margin: 0 0 0.6em;
+    line-height: inherit;
+  }
+  .body .prose :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .body .prose :global(ul),
+  .body .prose :global(ol) {
+    margin: 0.2em 0 0.6em;
+    padding-left: 1.4em;
+  }
+  .body .prose :global(li) {
+    margin: 0.1em 0;
+  }
+  .body .prose :global(li > p) {
+    margin: 0;
+  }
+  .body .prose :global(strong) {
+    color: var(--gold-bright);
+    font-weight: 600;
+  }
+  .body .prose :global(em) {
+    font-style: italic;
+  }
+  .body .prose :global(blockquote) {
+    margin: 0.4em 0;
+    padding: 0.1em 0.9em;
+    border-left: 2px solid color-mix(in oklab, var(--gold-tarnished) 65%, transparent);
+    color: color-mix(in oklab, var(--paper-bone) 80%, transparent);
+    font-style: italic;
+  }
+  .body .prose :global(code) {
+    /*
+     * Inline code: the model often quotes JSON keys or short symbols
+     * (`"active": false`) in the OOC voice — a monospace tint lets
+     * those read as machine voice without breaking the parchment.
+     */
+    padding: 0.05em 0.35em;
+    border-radius: 2px;
+    background: color-mix(in oklab, var(--ink-deep) 80%, transparent);
+    color: color-mix(in oklab, var(--paper-bone) 92%, transparent);
+    font-family: var(--font-pixel, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.92em;
+  }
+  .body .prose :global(pre) {
+    margin: 0.4em 0;
+    padding: 0.6em 0.8em;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+    border-radius: 3px;
+    background: color-mix(in oklab, var(--ink-deep) 92%, transparent);
+    overflow-x: auto;
+  }
+  .body .prose :global(pre code) {
+    padding: 0;
+    background: transparent;
+    font-size: 0.88em;
+    line-height: 1.45;
+  }
+  .body .prose :global(h1),
+  .body .prose :global(h2),
+  .body .prose :global(h3),
+  .body .prose :global(h4),
+  .body .prose :global(h5),
+  .body .prose :global(h6) {
+    margin: 0.4em 0 0.3em;
+    font-family: var(--font-display, var(--font-serif, serif));
+    color: var(--gold-bright);
+    letter-spacing: 0.02em;
+    line-height: 1.25;
+  }
+  .body .prose :global(h1) { font-size: 1.35em; }
+  .body .prose :global(h2) { font-size: 1.22em; }
+  .body .prose :global(h3) { font-size: 1.1em; }
+  .body .prose :global(h4),
+  .body .prose :global(h5),
+  .body .prose :global(h6) { font-size: 1em; }
+  .body .prose :global(hr) {
+    margin: 0.7em 0;
+    border: 0;
+    border-top: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+  }
+  .body .prose :global(a) {
+    color: var(--gold-bright);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--gold-tarnished) 70%, transparent);
+  }
+  .body .prose :global(a:hover) {
+    text-decoration-color: var(--gold-bright);
+  }
+  .body .prose :global(table) {
+    margin: 0.4em 0;
+    border-collapse: collapse;
+    font-size: 0.95em;
+  }
+  .body .prose :global(th),
+  .body .prose :global(td) {
+    padding: 0.3em 0.55em;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+    text-align: left;
+  }
+  .body .prose :global(th) {
+    color: var(--gold-bright);
+    font-weight: 600;
+  }
+
   .msg--dm {
     border-left: 2px solid var(--gold-tarnished);
     padding-left: 1rem;
   }
-  .msg--dm .body p {
+  .msg--dm .body p,
+  .msg--dm .body .prose {
     color: color-mix(in oklab, var(--paper-warm) 95%, transparent);
     font-size: 1.08rem;
     line-height: 1.65;
@@ -222,7 +365,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     border-left: 2px solid color-mix(in oklab, var(--rust-iron) 60%, transparent);
     padding-left: 1rem;
   }
-  .msg--system .body p {
+  .msg--system .body p,
+  .msg--system .body .prose {
     color: color-mix(in oklab, var(--paper-shadow) 95%, transparent);
     font-family: var(--font-pixel);
     font-size: 0.85rem;
@@ -255,7 +399,8 @@ MechanicalReceipt so the player can verify the dice on demand.
     color: color-mix(in oklab, var(--verdigris, #4a7c74) 70%, var(--paper-bone));
     letter-spacing: 0.06em;
   }
-  .msg--ooc .body p {
+  .msg--ooc .body p,
+  .msg--ooc .body .prose {
     color: color-mix(in oklab, var(--paper-bone) 95%, transparent);
     font-family: var(--font-prose, var(--font-serif, serif));
     font-size: 0.98rem;
