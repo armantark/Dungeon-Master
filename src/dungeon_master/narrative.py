@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from collections.abc import Generator, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-from dotenv import load_dotenv
 from litellm import completion as litellm_completion
 from litellm.exceptions import (
     APIConnectionError,
@@ -24,47 +22,31 @@ from litellm.exceptions import (
 )
 
 from dungeon_master.cancel import CancellationToken, RequestCancelledError
-from dungeon_master.models import GameState, OracleKind, OracleOutcome
+from dungeon_master.config import (
+    DEFAULT_MODEL,
+    DEFAULT_REASONING_POLICY,
+    VALID_REASONING_POLICIES,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
+from dungeon_master.config import (
+    LLMConfig as NarrativeConfig,
+)
+from dungeon_master.models import GameState, OracleOutcome
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
 
-type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "default"]
-type ReasoningPolicy = ReasoningEffort | Literal["auto"]
 type ChatMessage = dict[str, str]
 
-DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.6"
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_REASONING_POLICY: ReasoningPolicy = "auto"
-VALID_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "default",
-)
-VALID_REASONING_POLICIES: tuple[ReasoningPolicy, ...] = (*VALID_REASONING_EFFORTS, "auto")
-# Why we keep most narrative tasks at "low":
-# Kimi K2.6 Thinking spends ~30-60s on reasoning at "low", and another
-# 60-120s at "medium". For routine narration of player actions, oracle
-# yes/no resolutions, and quick mechanical receipts, that extra latency
-# does not buy enough fictional depth to justify the wait. We reserve
-# "medium" for scene transitions and random events (which need
-# cross-referencing of threads/NPCs to land cleanly) and never go higher
-# at the per-turn level — campaign generation is the only "high" call.
-REASONING_BY_TASK: dict[OracleKind, ReasoningEffort] = {
-    OracleKind.YES_NO: "low",
-    OracleKind.PLAYER_ACTION: "low",
-    OracleKind.RANDOM_EVENT: "medium",
-    OracleKind.SCENE_CHECK: "medium",
-    OracleKind.SAVE: "low",
-    OracleKind.ATTACK: "low",
-    OracleKind.HARM: "low",
-    OracleKind.RECOVERY: "low",
-    OracleKind.RETREAT: "low",
-}
+__all__ = [
+    "DEFAULT_MODEL",
+    "DEFAULT_REASONING_POLICY",
+    "VALID_REASONING_POLICIES",
+    "NarrativeConfig",
+    "ReasoningEffort",
+    "ReasoningPolicy",
+]
 
 SYSTEM_PROMPT = """You are the narrative voice for a solo tabletop role-playing game.
 
@@ -140,56 +122,6 @@ class CompletionText:
 class NarrativeResult:
     content: str
     thinking: str = ""
-
-
-@dataclass(frozen=True)
-class NarrativeConfig:
-    model: str
-    api_key: str | None
-    base_url: str | None
-    reasoning_policy: ReasoningPolicy = DEFAULT_REASONING_POLICY
-    # We default to STREAMING the reasoning back to the client because Kimi
-    # K2.6 typically spends 60-180s thinking before the first content token
-    # arrives. Without thinking deltas the user stares at a frozen UI for
-    # minutes; with them, the UI can show a collapsed "thinking..." chip
-    # that progresses in real time. Set LITELLM_EXCLUDE_REASONING=true to
-    # opt out (e.g. for cheaper unit-test runs).
-    exclude_reasoning: bool = False
-    temperature: float = 0.85
-    # Kimi K2.6 Thinking burns ~2-3k reasoning tokens regardless of `effort`,
-    # so anything below ~4k starves the actual narration of completion-token
-    # budget and produces empty content (which forces the fallback narration).
-    # 4500 leaves ~1.5-2k for prose after thinking, which is plenty for the
-    # compact 1-2 paragraph narration we ask for.
-    max_tokens: int = 4500
-    timeout_seconds: float = 180.0
-    max_retries: int = 2
-    app_name: str | None = None
-    site_url: str | None = None
-
-    @classmethod
-    def from_env(cls) -> NarrativeConfig:
-        load_dotenv()
-        return cls(
-            model=os.getenv("LITELLM_MODEL", DEFAULT_MODEL),
-            api_key=os.getenv("OPENROUTER_API_KEY") or os.getenv("LITELLM_API_KEY") or None,
-            base_url=os.getenv("OPENROUTER_API_BASE", DEFAULT_OPENROUTER_BASE_URL).rstrip("/"),
-            reasoning_policy=_reasoning_policy_from_env(),
-            exclude_reasoning=_env_bool("LITELLM_EXCLUDE_REASONING", default=False),
-            temperature=_env_float("LITELLM_TEMPERATURE", default=1.2),
-            max_tokens=_env_int("LITELLM_MAX_TOKENS", default=4500),
-            timeout_seconds=_env_float("LITELLM_TIMEOUT_SECONDS", default=180.0),
-            max_retries=_env_int("LITELLM_MAX_RETRIES", default=2),
-            app_name=os.getenv("OR_APP_NAME") or "Dungeon Master",
-            site_url=os.getenv("OR_SITE_URL") or None,
-        )
-
-    def is_usable(self) -> bool:
-        if not self.model:
-            return False
-        if self.model.startswith("openrouter/"):
-            return self.api_key is not None
-        return True
 
 
 class NarrativeEngine:
@@ -389,11 +321,6 @@ class NarrativeEngine:
             headers["X-Title"] = self._config.app_name
         return headers or None
 
-    def _reasoning_effort_for(self, outcome: OracleOutcome) -> ReasoningEffort:
-        if self._config.reasoning_policy != "auto":
-            return self._config.reasoning_policy
-        return REASONING_BY_TASK[outcome.kind]
-
     def _build_request(  # noqa: PLR0913
         self,
         state: GameState,
@@ -416,33 +343,21 @@ class NarrativeEngine:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        # Cap reasoning per task: routine narration (player_action / yes_no
-        # / save / attack / harm / recovery) gets ~1500 reasoning tokens,
-        # cross-referencing tasks (random_event / scene_check) get ~3000.
-        # Without these caps Kimi K2.6 frequently reasons 60-180s and pushes
-        # per-turn latency well past 5 minutes. OpenRouter forbids combining
-        # `effort` and `max_tokens` in the reasoning dict, so we use
-        # `max_tokens` (more deterministic) and let `reasoning_effort`
-        # remain as a top-level OpenAI-compatible alias for providers that
-        # do not understand `max_tokens` and would otherwise default to
-        # `medium`.
-        effort = self._reasoning_effort_for(outcome)
-        reasoning_max_tokens = 3000 if effort in ("medium", "high") else 1500
-        reasoning: dict[str, object] = {
-            "max_tokens": reasoning_max_tokens,
-            "exclude": self._config.exclude_reasoning,
-        }
+        profile = self._config.profiles.narration_for(
+            kind=outcome.kind,
+            reasoning_policy=self._config.reasoning_policy,
+        )
         return CompletionRequest(
             model=self._config.model,
             messages=messages,
-            temperature=self._config.temperature,
-            max_tokens=self._config.max_tokens,
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=stream,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort=self._reasoning_effort_for(outcome),
-            reasoning=reasoning,
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -826,37 +741,3 @@ def _extract_text(value: object) -> str:  # noqa: PLR0911
     if output_text is not None:
         return _extract_text(output_text)
     return ""
-
-
-def _env_bool(name: str, *, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, *, default: float) -> float:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def _env_int(name: str, *, default: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def _reasoning_policy_from_env() -> ReasoningPolicy:
-    value = os.getenv("LITELLM_REASONING_EFFORT", DEFAULT_REASONING_POLICY)
-    if value in VALID_REASONING_POLICIES:
-        return value
-    return DEFAULT_REASONING_POLICY

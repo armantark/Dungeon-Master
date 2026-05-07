@@ -858,23 +858,23 @@ class CairnEngine:
         generated: GeneratedInventoryAcquisition | None = None
         if self._config.is_usable():
             prompt = self._build_acquisition_prompt(state, cleaned)
+            acquisition_profile = self._config.profiles.cairn_acquisition
             request = CompletionRequest(
                 model=self._config.model,
                 messages=[
                     {"role": "system", "content": CAIRN_ACQUISITION_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.0,
-                max_tokens=max(self._config.max_tokens, 2200),
+                temperature=acquisition_profile.temperature,
+                max_tokens=acquisition_profile.max_tokens,
                 timeout=self._config.timeout_seconds,
                 stream=True,
                 api_key=self._config.api_key,
                 base_url=self._config.base_url,
-                reasoning_effort="low",
-                reasoning={
-                    "max_tokens": 900,
-                    "exclude": self._config.exclude_reasoning,
-                },
+                reasoning_effort=acquisition_profile.reasoning_effort,
+                reasoning=acquisition_profile.reasoning(
+                    default_exclude=self._config.exclude_reasoning,
+                ),
                 extra_headers=self._openrouter_headers(),
                 response_format=None,
                 cancel_token=cancel_token,
@@ -915,20 +915,21 @@ class CairnEngine:
             raise ValueError(message)
 
         prompt = self._build_backfill_prompt(state)
+        backfill_profile = self._config.profiles.cairn_backfill
         request = CompletionRequest(
             model=self._config.model,
             messages=[
                 {"role": "system", "content": CAIRN_BACKFILL_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
-            max_tokens=max(self._config.max_tokens, 4500),
+            temperature=backfill_profile.temperature,
+            max_tokens=backfill_profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=False,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={"effort": "low", "exclude": self._config.exclude_reasoning},
+            reasoning_effort=backfill_profile.reasoning_effort,
+            reasoning=backfill_profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -1163,29 +1164,26 @@ class CairnEngine:
                 target_name=target_name,
                 initiator=initiator,
             )
+            encounter_profile = self._config.profiles.cairn_encounter_seed
             request = CompletionRequest(
                 model=self._config.model,
                 messages=[
                     {"role": "system", "content": CAIRN_ENCOUNTER_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.0,
-                max_tokens=max(self._config.max_tokens, 2500),
+                temperature=encounter_profile.temperature,
+                max_tokens=encounter_profile.max_tokens,
                 timeout=self._config.timeout_seconds,
                 stream=True,
                 api_key=self._config.api_key,
                 base_url=self._config.base_url,
-                reasoning_effort="low",
+                reasoning_effort=encounter_profile.reasoning_effort,
                 # Cap reasoning to keep encounter seeding under ~30s wallclock.
                 # The fallback seed (`_fallback_encounter_seed`) is a perfectly
                 # serviceable single-foe encounter, so we'd rather time out
                 # the LLM than make the player wait minutes for richer stats.
-                # OpenRouter forbids combining `effort` and `max_tokens`, so
-                # we keep `max_tokens` (more deterministic budget control).
-                reasoning={
-                    "max_tokens": 1200,
-                    "exclude": self._config.exclude_reasoning,
-                },
+                # We keep this as a bounded budget profile for the same reason.
+                reasoning=encounter_profile.reasoning(default_exclude=self._config.exclude_reasoning),
                 extra_headers=self._openrouter_headers(),
                 response_format=None,
                 cancel_token=cancel_token,

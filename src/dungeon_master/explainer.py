@@ -164,6 +164,7 @@ class ExplainerEngine:
         stream: bool,
         cancel_token: CancellationToken | None,
     ) -> CompletionRequest:
+        profile = self._config.profiles.explainer
         messages = [
             {"role": "system", "content": EXPLAINER_SYSTEM_PROMPT},
             {
@@ -178,14 +179,14 @@ class ExplainerEngine:
         return CompletionRequest(
             model=self._config.model,
             messages=messages,
-            temperature=0.25,
-            max_tokens=2200,
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=stream,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={"max_tokens": 1200, "exclude": self._config.exclude_reasoning},
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,

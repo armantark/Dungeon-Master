@@ -211,6 +211,14 @@ The first memory pass rebuilt `data/memory.json` from a lossy replay of `GameSta
 
 The current implementation uses LiteLLM for model routing. The default model is OpenRouter Kimi K2.6 via `openrouter/moonshotai/kimi-k2.6`, with task-based reasoning: medium for ordinary player-action and yes/no narration, high for scene checks and random-event synthesis. Reasoning tokens are excluded from the response. When no usable API key/model configuration is present, the app returns deterministic placeholder narration so the oracle loop remains playable.
 
+One more configuration pattern now sits underneath that client layer: **global runtime config and per-task model profiles are separate objects on purpose**. `src/dungeon_master/config/app.py` now defines:
+
+- `AppConfig` for cross-cutting runtime paths/settings
+- `LLMConfig` for provider/runtime defaults (model, key, base URL, timeout, retries, reasoning visibility)
+- `LLMProfiles` for the actual per-subsystem completion budgets
+
+This is deliberately not "one env var per call site." The user wanted reasoning/temperature/token choices to be easy to trace, but not flattened into a fake single knob. The resulting rule is: env controls the narrator-facing defaults and runtime envelope, while task-specific planner/updater/generator behavior lives in typed Python profiles. That fixes the previous smell where `LITELLM_MAX_TOKENS` looked like a global ceiling but was secretly being used as a floor inside unrelated structured-generation paths.
+
 Streaming pattern:
 
 - `src/dungeon_master/narrative.py` exposes both buffered generation (`generate_result`) and generator-based streaming (`iter_stream`) using a shared `CompletionDelta` / `NarrativeResult` contract.

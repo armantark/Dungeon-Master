@@ -256,23 +256,21 @@ class NPCUpdater:
             execution_context=execution_context,
             memory_context=memory_context,
         )
+        update_profile = self._config.profiles.npc_updater
         request = CompletionRequest(
             model=self._config.model,
             messages=[
                 {"role": "system", "content": NPC_UPDATER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
-            max_tokens=max(self._config.max_tokens, 1800),
+            temperature=update_profile.temperature,
+            max_tokens=update_profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=True,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={
-                "max_tokens": 700,
-                "exclude": self._config.exclude_reasoning,
-            },
+            reasoning_effort=update_profile.reasoning_effort,
+            reasoning=update_profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -297,23 +295,21 @@ class NPCUpdater:
             return self._fallback_legacy_roster(state)
 
         prompt = self._build_legacy_repair_prompt(state, memory_context=memory_context)
+        repair_profile = self._config.profiles.legacy_npc_repair
         request = CompletionRequest(
             model=self._config.model,
             messages=[
                 {"role": "system", "content": LEGACY_NPC_REPAIR_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
-            max_tokens=max(self._config.max_tokens, 2200),
+            temperature=repair_profile.temperature,
+            max_tokens=repair_profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=True,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={
-                "max_tokens": 900,
-                "exclude": self._config.exclude_reasoning,
-            },
+            reasoning_effort=repair_profile.reasoning_effort,
+            reasoning=repair_profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,

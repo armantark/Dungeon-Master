@@ -747,20 +747,21 @@ class CharacterGenerator:
         # reasoning the way scene/event synthesis does, so we cap at
         # `medium`; the 12000 budget guarantees the JSON always closes
         # cleanly even after the model thinks aggressively.
+        templates_profile = self.config.profiles.character_templates
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": CHARACTER_TEMPLATES_USER_PROMPT},
             ],
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=templates_profile.temperature,
+            max_tokens=templates_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=templates_profile.reasoning_effort,
+            reasoning=templates_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
         )
@@ -790,20 +791,21 @@ class CharacterGenerator:
             )
             return fallback
 
+        templates_profile = self.config.profiles.character_templates
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": CHARACTER_TEMPLATES_USER_PROMPT},
             ],
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=templates_profile.temperature,
+            max_tokens=templates_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=templates_profile.reasoning_effort,
+            reasoning=templates_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -847,20 +849,21 @@ class CharacterGenerator:
         # K2.6 Thinking does not actually obey low/medium reasoning
         # caps, so the budget must absorb its always-on thinking
         # without leaving the JSON truncated.
+        quiz_profile = self.config.profiles.character_quiz
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_QUIZ_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.9,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=quiz_profile.temperature,
+            max_tokens=quiz_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="low",
-            reasoning={"effort": "low", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=quiz_profile.reasoning_effort,
+            reasoning=quiz_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
         )
@@ -888,20 +891,21 @@ class CharacterGenerator:
             return fallback
 
         user_prompt = CHARACTER_QUIZ_USER_PROMPT_TEMPLATE.replace("<<CONCEPT>>", cleaned)
+        quiz_profile = self.config.profiles.character_quiz
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_QUIZ_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.9,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=quiz_profile.temperature,
+            max_tokens=quiz_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="low",
-            reasoning={"effort": "low", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=quiz_profile.reasoning_effort,
+            reasoning=quiz_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -966,20 +970,23 @@ class CharacterGenerator:
         # specificity. Medium reasoning + generous max_tokens. See the
         # `generate_quiz` and `generate_templates` notes on why we never
         # use `high` here — the model's thinking starves the actual JSON.
+        quizzed_draft_profile = self.config.profiles.quizzed_character_draft
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.9,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=quizzed_draft_profile.temperature,
+            max_tokens=quizzed_draft_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=quizzed_draft_profile.reasoning_effort,
+            reasoning=quizzed_draft_profile.reasoning(
+                default_exclude=self.config.exclude_reasoning,
+            ),
             extra_headers=self._openrouter_headers(),
             response_format=None,
         )
@@ -1025,20 +1032,23 @@ class CharacterGenerator:
             .replace("<<INTERVIEW>>", interview_block)
             .replace("<<FINAL_NOTE>>", cleaned_note or "(none)")
         )
+        quizzed_draft_profile = self.config.profiles.quizzed_character_draft
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.9,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=quizzed_draft_profile.temperature,
+            max_tokens=quizzed_draft_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=quizzed_draft_profile.reasoning_effort,
+            reasoning=quizzed_draft_profile.reasoning(
+                default_exclude=self.config.exclude_reasoning,
+            ),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -1096,20 +1106,21 @@ class CharacterGenerator:
             )
         )
         # See `generate_templates` for the medium-reasoning rationale.
+        draft_profile = self.config.profiles.character_draft
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=draft_profile.temperature,
+            max_tokens=draft_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=draft_profile.reasoning_effort,
+            reasoning=draft_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
         )
@@ -1153,20 +1164,21 @@ class CharacterGenerator:
                 f"Extra guidance:\n{prompt or 'None.'}"
             )
         )
+        draft_profile = self.config.profiles.character_draft
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=draft_profile.temperature,
+            max_tokens=draft_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="medium",
-            reasoning={"effort": "medium", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=draft_profile.reasoning_effort,
+            reasoning=draft_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
@@ -1270,6 +1282,7 @@ class CampaignGenerator:
         if not self.config.is_usable():
             return CampaignWorldResult(state=self._configuration_required_state(character))
 
+        campaign_profile = self.config.profiles.campaign_world
         request = CompletionRequest(
             model=self.config.model,
             messages=[
@@ -1289,14 +1302,14 @@ class CampaignGenerator:
             # campaign generation is the one place where deeper reasoning
             # actually pays off — threads, NPCs, and oracle word banks
             # all benefit from cross-referencing the character.
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=campaign_profile.temperature,
+            max_tokens=campaign_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="high",
-            reasoning={"effort": "high", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=campaign_profile.reasoning_effort,
+            reasoning=campaign_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
         )
@@ -1333,6 +1346,7 @@ class CampaignGenerator:
             yield CompletionDelta(content=json.dumps(fallback.state.model_dump(mode="json")))
             return fallback
 
+        campaign_profile = self.config.profiles.campaign_world
         request = CompletionRequest(
             model=self.config.model,
             messages=[
@@ -1345,14 +1359,14 @@ class CampaignGenerator:
                     ),
                 },
             ],
-            temperature=0.95,
-            max_tokens=max(self.config.max_tokens, 12000),
+            temperature=campaign_profile.temperature,
+            max_tokens=campaign_profile.max_tokens,
             timeout=self.config.timeout_seconds,
             stream=True,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
-            reasoning_effort="high",
-            reasoning={"effort": "high", "exclude": self.config.exclude_reasoning},
+            reasoning_effort=campaign_profile.reasoning_effort,
+            reasoning=campaign_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,

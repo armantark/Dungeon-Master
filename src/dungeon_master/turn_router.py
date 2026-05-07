@@ -308,23 +308,21 @@ class TurnRouter:
             .replace("<<MEMORY>>", memory_context or "(none)")
             .replace("<<LIKELIHOOD>>", likelihood.value if likelihood is not None else "null")
         )
+        profile = self._config.profiles.turn_router
         request = CompletionRequest(
             model=self._config.model,
             messages=[
                 {"role": "system", "content": TURN_ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
-            max_tokens=max(self._config.max_tokens, 1600),
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=True,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={
-                "max_tokens": 700,
-                "exclude": self._config.exclude_reasoning,
-            },
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,

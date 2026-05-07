@@ -134,23 +134,21 @@ class ThreadUpdater:
             execution_context=execution_context,
             memory_context=memory_context,
         )
+        profile = self._config.profiles.thread_updater
         request = CompletionRequest(
             model=self._config.model,
             messages=[
                 {"role": "system", "content": THREAD_UPDATER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
-            max_tokens=max(self._config.max_tokens, 1800),
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
             timeout=self._config.timeout_seconds,
             stream=True,
             api_key=self._config.api_key,
             base_url=self._config.base_url,
-            reasoning_effort="low",
-            reasoning={
-                "max_tokens": 700,
-                "exclude": self._config.exclude_reasoning,
-            },
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,

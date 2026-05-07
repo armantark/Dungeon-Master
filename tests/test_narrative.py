@@ -61,6 +61,9 @@ def test_default_narrative_config_uses_openrouter_kimi(monkeypatch: pytest.Monke
     # "thinking..." chip while Kimi K2.6 spends 60-180s on internal
     # deliberation. Set LITELLM_EXCLUDE_REASONING=true to opt out.
     assert config.exclude_reasoning is False
+    assert config.temperature == 1.25
+    assert config.max_tokens == 4500
+    assert config.timeout_seconds == 600.0
     assert config.is_usable()
 
 

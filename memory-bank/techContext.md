@@ -41,6 +41,7 @@ Backend:
 - `src/dungeon_master/models.py`: Pydantic state and event schemas, including `CampaignStatus`, `CampaignEndReason`, `CharacterSheet`, `InventoryItem`, `NPCStatus`, `EncounterInitiator`, and `OracleOutcome`'s continuity linkage (`referenced_thread_id` / `referenced_thread_ids` for threads, `referenced_npc_id` / `referenced_npc_ids` for recurring cast updates). `EncounterState.initiator` + `CairnResolution.combat_initiator` are the minimal F-05 metadata for enemy-opened fights. F-06 extends `GameState` itself with terminal lifecycle metadata (`campaign_end_reason`, `campaign_ended_at`, `campaign_end_summary`) rather than introducing a separate archive/save wrapper. F-16/B-02 extends `GameState` again with `npc_roster_version`, visible `npcs`, backend-only `hidden_npcs`, and a separate `CampaignDirectives` model (`world_guidance`, `play_guidance`). H-01 further extends `NPC` with `player_label` plus `player_label_kind` (`proper_name | descriptor`) so the backend can keep a canonical true name while rendering a safe player-facing label. The old `setting_notes` / `player_notes` fields remain intact for campaign/backstory canon; directives are a new OOC steering layer, not a rename-in-place.
 - `src/dungeon_master/oracle.py`: deterministic oracle engine.
 - `src/dungeon_master/cairn.py`: Cairn 2e-inspired rules engine. Deterministic math stays here (saves, attacks, harm/critical damage/scars, recovery, equipment toggles, derived armor/burden recomputation), while one-time character backfill is now LLM-backed and returns a structured mechanics record plus a practical starting bundle. F-05 adds `resolve_enemy_opener(...)`, widens encounter seeding from player-led escalation to a general combat trigger with explicit initiator, and keeps generic `suffer_harm()` separate so non-combat damage does not accidentally start encounters.
+- `src/dungeon_master/config/`: typed runtime/model config package. `app.py` defines `AppConfig`, `LLMConfig`, `TaskProfile`, and `LLMProfiles`; `README.md` explains the env surface and why narrator-facing knobs stay separate from low-temperature structured-call profiles.
 - `src/dungeon_master/npc_updater.py`: focused backend-only structured updater for recurring NPC canon. It consumes current scene/player input/resolved outcome/execution context/current NPCs plus bounded memory context, validates a bounded `create | update | retire` op batch, and applies canonical NPC mutations in Python before checkpointing/narration. F-16 widens each op with `player_visible: bool`, lets the updater reason over the full canonical cast (visible + hidden), and adds a one-time legacy roster reseed helper for pre-split saves. H-01 widens the prompt/output contract again with `player_label` + `player_label_kind`, allowing the model to keep a backend canonical name while authoring a safe descriptor-visible roster label.
 - `src/dungeon_master/thread_updater.py`: focused backend-only structured updater for campaign threads. It consumes current scene/player input/resolved outcome/execution context/current threads plus bounded memory context, validates a bounded `create | update | resolve` op batch, and applies canonical thread mutations in Python before checkpointing/narration.
 - `src/dungeon_master/continuity_classifier.py`: tiny backend-only continuity scope classifier. It makes one cheap LiteLLM call and expects a single token (`none | threads | npcs | both`) rather than a full structured update payload. The purpose is to percolate continuity work more intelligently without introducing a deterministic lexical gate; if the classifier is unavailable or malformed, runtime falls back to `both`.
@@ -52,7 +53,7 @@ Backend:
 - `src/dungeon_master/backfill_cli.py`: backend maintenance CLI. Resolves either the active save slot or an explicit `--save-id`, runs `GameService.backfill_current_save(...)`, defaults to dry-run, and supports `--apply` plus `--json` report output.
 - `src/dungeon_master/fixture_cli.py`: dev-only fixture seeding CLI. `dungeon-master-fixtures` writes an isolated save-library root with canned saves for browser/manual smoke (`Fixture Bellringer` for continuity-link + descriptor-roster coverage, `Fixture Archive` for ended-shelf coverage). The default root lives under `tempfile.gettempdir()`, `--force` is required to replace an existing fixture root, and the fixture states explicitly set `npc_roster_version=2` so load-time legacy-roster repair does not silently rewrite them.
 - `src/dungeon_master/turn_router.py`: LiteLLM-backed natural-language planner for `/api/turn`. The legacy summary route still stays in the older public set (`player_action`, `yes_no`, `random_event`, `scene_check`, `save`, `attack`, `harm`, `recovery`, `equip`, `retreat`), but the op vocabulary is richer: F-05 adds an internal-only `enemy_opener` op so prose ambushes can seed combat while the public route/outcome remains `harm`. It still falls back to `player_action` if the model is unavailable rather than using regex inference.
-- `src/dungeon_master/settings.py`: environment-backed state path configuration.
+- `src/dungeon_master/settings.py`: thin compatibility wrapper around `AppConfig.from_env().state_path`.
 
 Frontend:
 
@@ -97,9 +98,14 @@ Do not change the selected LLM or public API signature unless the user explicitl
 - `OPENROUTER_API_KEY` loaded from `.env`
 - `OPENROUTER_API_BASE=https://openrouter.ai/api/v1`
 - `LITELLM_REASONING_EFFORT=auto`
-- `LITELLM_EXCLUDE_REASONING=true`
+- `LITELLM_EXCLUDE_REASONING=false`
+- `LITELLM_NARRATION_TEMPERATURE=1.25`
+- `LITELLM_NARRATION_MAX_TOKENS=4500`
+- `LITELLM_TIMEOUT_SECONDS=600`
 
 OpenRouter's model card lists the underlying model slug as `moonshotai/kimi-k2.6`, with 262K context and reasoning token support. LiteLLM uses the provider-prefixed model string `openrouter/moonshotai/kimi-k2.6`. The app defaults to a medium/high task-based reasoning policy instead of `xhigh`, because excessive thinking may make the model overcomplicate or hallucinate.
+
+Older `LITELLM_TEMPERATURE` and `LITELLM_MAX_TOKENS` names still load as fallbacks for backward compatibility, but the typed config layer now treats them as deprecated narrator-only aliases rather than as shared task budgets.
 
 ## Testing Expectations
 
