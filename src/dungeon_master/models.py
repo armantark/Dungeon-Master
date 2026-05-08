@@ -417,6 +417,9 @@ class OracleOutcome(StrictModel):
     referenced_npc_id: str | None = None
     referenced_npc_ids: list[str] = Field(default_factory=list)
     scene_status: SceneStatus | None = None
+    scene_number_snapshot: int | None = Field(default=None, ge=1)
+    scene_label_snapshot: str | None = None
+    scene_status_snapshot: SceneStatus | None = None
     cairn: CairnResolution | None = None
 
 

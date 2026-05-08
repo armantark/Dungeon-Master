@@ -7,6 +7,7 @@ from dungeon_master.models import (
     NPCStatus,
     OracleKind,
     OracleOutcome,
+    SceneStatus,
 )
 from tests.factories import sample_state
 
@@ -233,3 +234,110 @@ def test_memory_manager_does_not_surface_hidden_npcs_in_player_facing_contexts()
 
     assert all("The Hierophant" not in line for line in planner.relevant_memory)
     assert all("The Hierophant" not in line for line in narrator.relevant_memory)
+
+
+def test_memory_manager_keeps_full_current_scene_transcript() -> None:
+    state = sample_state()
+    manager = MemoryManager()
+    first = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="You challenge the bellringer at the threshold.",
+        chaos_factor=state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+    second = OracleOutcome(
+        kind=OracleKind.YES_NO,
+        summary="No: The bellringer will not answer plainly.",
+        chaos_factor=state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="I call to the ash-veiled bellringer.",
+            outcome=first,
+            narrative_text="He turns only enough for the bell to catch the light.",
+        ),
+    )
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="Why do you hunt me?",
+            outcome=second,
+            narrative_text="The silence answers before the figure does.",
+        ),
+        memory=memory,
+    )
+
+    planner = manager.retrieve_for_planner(state, memory, "I press him again.")
+
+    assert [message.role for message in planner.scene_messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert planner.scene_messages[0].content == "I call to the ash-veiled bellringer."
+    assert "Resolved outcome: No: The bellringer will not answer plainly." in (
+        planner.scene_messages[-1].content
+    )
+    assert "The silence answers before the figure does." in planner.scene_messages[-1].content
+
+
+def test_memory_manager_compacts_prior_scenes_into_campaign_chronicle() -> None:
+    initial_state = sample_state()
+    manager = MemoryManager()
+    first = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="You force your way through the broken transept.",
+        chaos_factor=initial_state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=initial_state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+    memory = manager.update_from_turn(
+        initial_state,
+        CommittedTurnMemory(
+            player_input="I shoulder through the collapse toward the road.",
+            outcome=first,
+            narrative_text="Dust and old mortar choke the threshold as you emerge.",
+        ),
+    )
+
+    next_state = initial_state.model_copy(deep=True)
+    next_state.scene_number = 2
+    next_state.current_scene = "The ash road below the chapel."
+    next_state.scene_status = SceneStatus.EXPECTED
+    second = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=next_state.chaos_factor,
+        scene_number_snapshot=2,
+        scene_label_snapshot=next_state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+    memory = manager.update_from_turn(
+        next_state,
+        CommittedTurnMemory(
+            player_input="I scan the road for living company.",
+            outcome=second,
+            narrative_text="The road lies open beneath the ash-heavy sky.",
+        ),
+        memory=memory,
+    )
+
+    narrator = manager.retrieve_for_narrator(
+        next_state,
+        memory,
+        "I scan the road for living company.",
+        second,
+    )
+
+    assert len(narrator.scene_messages) == 2
+    assert narrator.scene_messages[0].content == "I scan the road for living company."
+    assert any(line.startswith("Scene 1:") for line in narrator.campaign_chronicle)

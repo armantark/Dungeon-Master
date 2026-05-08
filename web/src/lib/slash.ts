@@ -81,7 +81,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDescriptor[] = [
   {
     name: "ask",
     aliases: [],
-    summary: "Yes/no oracle question (optionally weighted).",
+    summary: "Read-only yes/no oracle preview (does not commit a turn).",
     usage: "/ask <question> [likely|unlikely|even|...]",
   },
   {

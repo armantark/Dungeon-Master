@@ -413,6 +413,9 @@ export interface OracleOutcome {
   // "recently advanced" surface in the NPCs panel.
   referenced_npc_ids: string[];
   scene_status: SceneStatus | null;
+  scene_number_snapshot?: number | null;
+  scene_label_snapshot?: string | null;
+  scene_status_snapshot?: SceneStatus | null;
   cairn: CairnResolution | null;
 }
 

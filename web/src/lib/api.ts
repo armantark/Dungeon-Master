@@ -22,6 +22,7 @@ import type {
   ExplanationResponse,
   GameState,
   Likelihood,
+  OracleOutcome,
   SaveLibraryBootstrapResponse,
 } from "./types";
 
@@ -209,6 +210,17 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<GameState> =>
     request("/oracle/yes-no", {
+      method: "POST",
+      signal,
+      json: { question, likelihood },
+    }),
+
+  previewYesNo: (
+    question: string,
+    likelihood: Likelihood,
+    signal?: AbortSignal,
+  ): Promise<OracleOutcome> =>
+    request("/oracle/yes-no/preview", {
       method: "POST",
       signal,
       json: { question, likelihood },

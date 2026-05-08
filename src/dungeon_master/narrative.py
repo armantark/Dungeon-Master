@@ -164,6 +164,7 @@ class NarrativeEngine:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[ChatMessage] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         return self.generate_result(
@@ -172,6 +173,7 @@ class NarrativeEngine:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             cancel_token=cancel_token,
         ).content
 
@@ -183,6 +185,7 @@ class NarrativeEngine:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[ChatMessage] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NarrativeResult:
         if not self._config.is_usable():
@@ -194,6 +197,7 @@ class NarrativeEngine:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             stream=False,
             cancel_token=cancel_token,
         )
@@ -226,6 +230,7 @@ class NarrativeEngine:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[ChatMessage] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> tuple[list[CompletionDelta], NarrativeResult]:
         if not self._config.is_usable():
@@ -238,6 +243,7 @@ class NarrativeEngine:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             stream=True,
             cancel_token=cancel_token,
         )
@@ -286,6 +292,7 @@ class NarrativeEngine:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[ChatMessage] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, NarrativeResult]:
         if not self._config.is_usable():
@@ -299,6 +306,7 @@ class NarrativeEngine:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             stream=True,
             cancel_token=cancel_token,
         )
@@ -352,6 +360,7 @@ class NarrativeEngine:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[ChatMessage] | None = None,
         stream: bool,
         cancel_token: CancellationToken | None = None,
     ) -> CompletionRequest:
@@ -364,6 +373,7 @@ class NarrativeEngine:
         )
         messages: list[ChatMessage] = [
             {"role": "system", "content": SYSTEM_PROMPT},
+            *(scene_messages or []),
             {"role": "user", "content": prompt},
         ]
         profile = self._config.profiles.narration_for(
@@ -691,7 +701,8 @@ def _iter_stream_response(
     response: object,
     cancel_token: CancellationToken | None = None,
 ) -> Iterator[CompletionDelta]:
-    stream = iter(cast("Iterable[object]", response))
+    streamable: Iterable[object] = cast("Iterable[object]", response)
+    stream = iter(streamable)
     try:
         for chunk in stream:
             _raise_if_cancelled(cancel_token)

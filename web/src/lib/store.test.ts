@@ -192,6 +192,49 @@ describe("GameStore setup streaming", () => {
     expect(summaryArg).toBeNull();
   });
 
+  it("dispatches /ask to the read-only preview endpoint and lands a session-only OOC note", async () => {
+    const previewSpy = vi
+      .spyOn(api, "previewYesNo")
+      .mockResolvedValue({
+        id: "oracle_preview_1",
+        created_at: "2025-01-01T00:00:00Z",
+        kind: "yes_no",
+        summary: "Yes: Is the gate watched?",
+        rolls: [{ label: "fate", result: 17, sides: 100 }],
+        question: "Is the gate watched?",
+        likelihood: "Likely",
+        answer: "Yes",
+        probability: 70,
+        chaos_factor: 5,
+        event_focus: null,
+        event_action: null,
+        event_tone: null,
+        event_subject: null,
+        referenced_thread_id: null,
+        referenced_thread_ids: [],
+        referenced_npc_id: null,
+        referenced_npc_ids: [],
+        scene_status: null,
+        cairn: null,
+      } as never);
+    const committedSpy = vi.spyOn(api, "askYesNo");
+
+    const consumed = await game.submit("/ask Is the gate watched? [likely]");
+
+    expect(consumed).toBe(true);
+    expect(previewSpy).toHaveBeenCalledTimes(1);
+    expect(committedSpy).not.toHaveBeenCalled();
+    const [questionArg, likelihoodArg] = previewSpy.mock.calls[0]!;
+    expect(questionArg).toBe("Is the gate watched?");
+    expect(likelihoodArg).toBe("Likely");
+    const note = game.notes.find((n) => n.kind === "oracle_preview");
+    expect(note).toBeDefined();
+    expect(note?.question).toBe("Is the gate watched?");
+    expect(note?.text).toContain("**Oracle preview**");
+    expect(note?.text).toContain("**Adjusted chance:** 70%");
+    expect(note?.text).toContain("does not commit the turn");
+  });
+
   it("dispatches /explain to streamExplain and persists the answer as an ephemeral OOC note", async () => {
     // The OOC explainer must hit `streamExplain` (not the unary
     // `/explain` endpoint) on the happy path so the player gets

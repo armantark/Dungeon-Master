@@ -82,6 +82,37 @@ describe("OOC explainer persistence across reloads", () => {
     expect(parsed[0]?.text).toContain("Saves use a d20");
   });
 
+  it("does not persist /ask oracle previews to localStorage", async () => {
+    game.activeSaveId = SAVE_ID;
+    vi.spyOn(api, "previewYesNo").mockResolvedValue({
+      id: "oracle_preview_1",
+      created_at: "2025-01-01T00:00:00Z",
+      kind: "yes_no",
+      summary: "No: Is the crypt quiet?",
+      rolls: [{ label: "fate", result: 88, sides: 100 }],
+      question: "Is the crypt quiet?",
+      likelihood: "Even odds",
+      answer: "No",
+      probability: 50,
+      chaos_factor: 5,
+      event_focus: null,
+      event_action: null,
+      event_tone: null,
+      event_subject: null,
+      referenced_thread_id: null,
+      referenced_thread_ids: [],
+      referenced_npc_id: null,
+      referenced_npc_ids: [],
+      scene_status: null,
+      cairn: null,
+    } as never);
+
+    await game.submit("/ask Is the crypt quiet?");
+
+    expect(window.localStorage.getItem(`dm.ooc.${SAVE_ID}`)).toBeNull();
+    expect(game.notes.some((n) => n.kind === "oracle_preview")).toBe(true);
+  });
+
   it("rehydrates persisted OOC notes after bootstrap so reload preserves the scrollback", async () => {
     // Simulate "the player closed the tab and came back later":
     // localStorage already has a prior exchange, the bootstrap call

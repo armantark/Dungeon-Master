@@ -21,6 +21,7 @@ from dungeon_master.explainer import ExplainerEngine, ExplanationResult
 from dungeon_master.memory import (
     CURRENT_MEMORY_SCHEMA_VERSION,
     CommittedTurnMemory,
+    ConversationMessage,
     MemoryManager,
     MemoryState,
 )
@@ -115,6 +116,7 @@ class NarrativePort(Protocol):
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         raise NotImplementedError
@@ -1063,6 +1065,11 @@ class GameService:
         )
         return state
 
+    def preview_oracle(self, question: str, likelihood: Likelihood) -> OracleOutcome:
+        state = self._load_state_readonly()
+        self._ensure_active(state)
+        return self._oracle.ask_yes_no(state, question, likelihood)
+
     def generate_random_event(self) -> GameState:
         state = self.load_state()
         self._ensure_active(state)
@@ -1080,9 +1087,7 @@ class GameService:
         self._ensure_active(state)
         outcome = self._oracle.check_scene(state, expected_scene)
         if outcome.scene_status is not None:
-            state.scene_status = outcome.scene_status
-            state.scene_number += 1
-            state.current_scene = self._scene_text(expected_scene, outcome.scene_status)
+            self._apply_scene_transition(state, expected_scene, outcome.scene_status)
 
         self._commit_oracle_turn(
             state=state,
@@ -1189,7 +1194,7 @@ class GameService:
             ),
         )
         working_memory = self._load_turn_memory_state(restored_state)
-        memory_context, _ = self._memory_context_for_narrator(
+        memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
             outcome=outcome,
@@ -1201,6 +1206,7 @@ class GameService:
             checkpoint.player_input,
             execution_context=checkpoint.execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
         )
         self._record_event(
             restored_state,
@@ -1355,7 +1361,7 @@ class GameService:
         self._raise_if_cancelled(cancel_token)
         yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
         working_memory = self._load_turn_memory_state(restored_state)
-        memory_context, _ = self._memory_context_for_narrator(
+        memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
             outcome=outcome,
@@ -1369,6 +1375,7 @@ class GameService:
             checkpoint.player_input,
             execution_context=checkpoint.execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
@@ -1464,9 +1471,7 @@ class GameService:
             if op.kind == PlannedTurnOpKind.SCENE_CHECK:
                 primary_outcome = self._oracle.check_scene(state, op.text)
                 if primary_outcome.scene_status is not None:
-                    state.scene_status = primary_outcome.scene_status
-                    state.scene_number += 1
-                    state.current_scene = self._scene_text(op.text, primary_outcome.scene_status)
+                    self._apply_scene_transition(state, op.text, primary_outcome.scene_status)
                 oracle_title = "Scene check"
                 step_summaries.append(f"Scene resolved: {primary_outcome.summary}")
                 continue
@@ -1571,8 +1576,9 @@ class GameService:
         oracle_title: str | None,
         execution_context: str | None = None,
     ) -> None:
-        state.oracle_history.append(outcome)
         working_memory = self._load_turn_memory_state(state)
+        self._stamp_scene_snapshot(state, outcome)
+        state.oracle_history.append(outcome)
         working_memory = self._apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
@@ -1597,7 +1603,7 @@ class GameService:
             execution_context=execution_context,
             state=state,
         )
-        memory_context, _ = self._memory_context_for_narrator(
+        memory_context, scene_messages, _ = self._memory_context_for_narrator(
             state,
             player_input=player_input,
             outcome=outcome,
@@ -1609,6 +1615,7 @@ class GameService:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
         )
         self._record_event(
             state,
@@ -1649,8 +1656,9 @@ class GameService:
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
-        state.oracle_history.append(outcome)
         working_memory = self._load_turn_memory_state(state)
+        self._stamp_scene_snapshot(state, outcome)
+        state.oracle_history.append(outcome)
         working_memory = yield from self._iter_apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
@@ -1680,7 +1688,7 @@ class GameService:
         )
         self._raise_if_cancelled(cancel_token)
         yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
-        memory_context, _ = self._memory_context_for_narrator(
+        memory_context, scene_messages, _ = self._memory_context_for_narrator(
             state,
             player_input=player_input,
             outcome=outcome,
@@ -1694,6 +1702,7 @@ class GameService:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
@@ -1900,6 +1909,37 @@ class GameService:
             return f"Altered: {expected_scene}"
         return f"Interrupted before: {expected_scene}"
 
+    def _apply_scene_transition(
+        self,
+        state: GameState,
+        expected_scene: str,
+        status: SceneStatus,
+    ) -> None:
+        previous_label = state.current_scene
+        previous_status = state.scene_status
+        next_label = self._scene_text(expected_scene, status)
+        state.scene_status = status
+        state.current_scene = next_label
+        if (
+            _normalize_scene_label(previous_label) != _normalize_scene_label(next_label)
+            or previous_status != status
+        ):
+            state.scene_number += 1
+
+    def _stamp_scene_snapshot(self, state: GameState, outcome: OracleOutcome) -> None:
+        outcome.scene_number_snapshot = state.scene_number
+        outcome.scene_label_snapshot = state.current_scene
+        outcome.scene_status_snapshot = state.scene_status
+
+    def _prompt_scene_messages(
+        self,
+        scene_messages: list[ConversationMessage],
+    ) -> list[dict[str, str]]:
+        return [
+            {"role": message.role, "content": message.content}
+            for message in scene_messages
+        ]
+
     def _generate_narrative(  # noqa: PLR0913
         self,
         state: GameState,
@@ -1908,6 +1948,7 @@ class GameService:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NarrativeResult:
         generate_result = getattr(self._narrative, "generate_result", None)
@@ -1918,6 +1959,7 @@ class GameService:
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
                 cancel_token=cancel_token,
             )
             if isinstance(generated, NarrativeResult):
@@ -1931,6 +1973,7 @@ class GameService:
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
                 cancel_token=cancel_token,
             ),
         )
@@ -1943,6 +1986,7 @@ class GameService:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, NarrativeResult]:
         iter_stream = getattr(self._narrative, "iter_stream", None)
@@ -1953,6 +1997,7 @@ class GameService:
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
                 cancel_token=cancel_token,
             )
             result = yield from streamed
@@ -1966,6 +2011,7 @@ class GameService:
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
             cancel_token=cancel_token,
         )
         yield CompletionDelta(content=generated.content, thinking=generated.thinking)
@@ -1986,10 +2032,11 @@ class GameService:
             state,
             planner_memory,
             text,
-        ).render()
+        )
         plan = self._turn_router.plan(
             text,
-            memory_context=planner_context,
+            memory_context=planner_context.render(),
+            scene_messages=self._prompt_scene_messages(planner_context.scene_messages),
             cancel_token=cancel_token,
         )
         self._raise_if_cancelled(cancel_token)
@@ -2026,15 +2073,19 @@ class GameService:
         player_input: str,
         outcome: OracleOutcome,
         working_memory: MemoryState | None = None,
-    ) -> tuple[str | None, MemoryState]:
-        memory = self._memory_for_state(state, existing_memory=working_memory)
+    ) -> tuple[str | None, list[dict[str, str]], MemoryState]:
+        memory = self._context_memory_for_state(state, working_memory)
         context = self._memory.retrieve_for_narrator(
             state,
             memory,
             player_input,
             outcome,
-        ).render()
-        return (context or None), memory
+        )
+        return (
+            context.render() or None,
+            self._prompt_scene_messages(context.scene_messages),
+            memory,
+        )
 
     def _memory_context_for_thread_updater(
         self,
@@ -2044,7 +2095,7 @@ class GameService:
         outcome: OracleOutcome,
         working_memory: MemoryState | None = None,
     ) -> tuple[str | None, MemoryState]:
-        memory = self._memory_for_state(state, existing_memory=working_memory)
+        memory = self._context_memory_for_state(state, working_memory)
         context = self._memory.retrieve_for_thread_updater(
             state,
             memory,
@@ -2061,7 +2112,7 @@ class GameService:
         outcome: OracleOutcome,
         working_memory: MemoryState | None = None,
     ) -> tuple[str | None, MemoryState]:
-        memory = self._memory_for_state(state, existing_memory=working_memory)
+        memory = self._context_memory_for_state(state, working_memory)
         context = self._memory.retrieve_for_npc_updater(
             state,
             memory,
@@ -2075,6 +2126,24 @@ class GameService:
             state,
             existing_memory=self._store.load_memory_or_none(),
         )
+
+    def _context_memory_for_state(
+        self,
+        state: GameState,
+        working_memory: MemoryState | None,
+    ) -> MemoryState:
+        if working_memory is None:
+            return self._memory_for_state(state)
+        memory = self._memory.sync_from_state(
+            state,
+            working_memory.model_copy(deep=True),
+        )
+        if (
+            memory.current_scene_turns
+            and memory.current_scene_turns[-1].scene_key != memory.current_scene_key
+        ):
+            memory.current_scene_turns = []
+        return memory
 
     def _apply_continuity_updates_for_turn(  # noqa: PLR0913
         self,
@@ -2645,3 +2714,12 @@ class GameService:
             return item_id
         message = f"Unknown inventory item: {item_name}"
         raise ValueError(message)
+
+
+def _normalize_scene_label(text: str) -> str:
+    normalized = text.strip().lower()
+    if normalized.startswith("altered:"):
+        return normalized.removeprefix("altered:").strip()
+    if normalized.startswith("interrupted before:"):
+        return normalized.removeprefix("interrupted before:").strip()
+    return normalized

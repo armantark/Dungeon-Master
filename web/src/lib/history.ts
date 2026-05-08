@@ -172,7 +172,7 @@ function fromNote(note: ClientNote): TranscriptRow {
   // avoids widening `TranscriptRowKind` for an ephemeral surface that
   // the inspector treats uniformly with other client notes; the OOC
   // visual treatment lives in the chat feed, not the inspector list.
-  if (note.kind === "explanation" && note.question) {
+  if ((note.kind === "explanation" || note.kind === "oracle_preview") && note.question) {
     return {
       id: note.id,
       kind: "system",

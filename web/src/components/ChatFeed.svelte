@@ -114,7 +114,7 @@ F-09 browsing behavior:
   }
 
   function fromNote(note: ClientNote): Msg {
-    if (note.kind === "explanation") {
+    if (note.kind === "explanation" || note.kind === "oracle_preview") {
       // F-10 OOC notes carry both the question and the answer so the
       // chat surface can render a single Q+A card. We keep them as
       // ClientNotes (not action_log entries) so they're ephemeral by

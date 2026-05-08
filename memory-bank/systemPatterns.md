@@ -116,6 +116,13 @@ The follow-up bug-fix pass tightened two important invariants around that sideca
 - streamed turns now persist a captured **pre-narration** turn checkpoint, matching the unary regenerate contract instead of checkpointing a state that already contains the old DM response
 - turn checkpoints now also persist `execution_context`, so memory rebuilds and regenerate calls can retain the exact deterministic backend-step summary that originally grounded the narration
 
+One more memory pattern now exists on top of that sidecar: **scene transcript vs. campaign chronicle**.
+
+- The active scene is no longer represented only as compact turn summaries. Each committed `OracleOutcome` now snapshots its scene number / label / status, and `MemoryManager` keeps a full `current_scene_turns` transcript for the still-open scene.
+- Closed scenes are compacted into the existing `scene_summaries` list, which now acts as a rolling campaign chronicle rather than only a local note card list.
+- Planner and narrator prompts now receive the active scene transcript as prepended chat history plus the prior-scene chronicle as compact continuity notes. This preserves short-horizon conversational referents ("who is speaking right now?") without replaying the whole campaign transcript every turn.
+- Scene numbering is also no longer "scene check count." `GameService` only increments `scene_number` when the resolved scene label or status materially changes, so a same-scene confirmation does not silently create Scene 2.
+
 F-12 adds one more state-manager invariant on top of the existing discard-only streaming contract: **the active save may not change while a streamed request is still live.** The cancellation registry is therefore no longer only a stop-button primitive; it also gates save switching. If any request remains registered, `POST /api/library/select` (and any create-and-select operation) rejects with a conflict rather than risking a turn that starts against save A and commits against save B.
 
 The frontend mirrors that single-active-save invariant directly. The Svelte store (`web/src/lib/store.svelte.ts`) models a `LibraryStatus = "loading" | "empty" | "selecting" | "ready"` discriminated union, and the App layout routes through an exhaustive `loading | library-empty | library-selecting | setup | active | ended` switch. A library splash (`SaveLibrary.svelte`) owns the screen until the player resolves it; mid-session "switch save" enters the `selecting` mode without unbinding the current save, so the player can cancel out without a network round-trip. The single canonical store-side rule is that **every save switch flushes per-save client ephemera** — a small `#resetEphemera()` helper is called from both `createSave` and `selectSave` and clears `notes`, the in-flight provisional streaming buffer, the F-09 scroll request, the dice phase, and the local error sink. Cross-save bleed-through is impossible by construction. The hamburger system menu (`SystemMenu.svelte`) is mounted on both the play `StatusStrip` and the skeleton strip used during character creation / library splashes, so a fresh save can never become a one-way trapdoor — the player always has a path back to the shelf without having to finalize a sheet.
@@ -206,6 +213,8 @@ The narrator and turn planner now also receive a bounded **memory context** asse
 - compacted sidecar cards rather than replaying full `action_log` / `oracle_history`
 
 This preserves separation of concerns: memory compaction/retrieval is an application layer, not an invitation for the narrator to treat past prose as canon.
+
+The newer scene-transcript pass narrows that statement further: the app still avoids replaying the **full campaign** transcript, but it now deliberately replays the **full current-scene** transcript because that is the shortest horizon where conversational continuity failures were actually happening. Past scenes stay compacted; the live scene stays raw.
 
 The first memory pass rebuilt `data/memory.json` from a lossy replay of `GameState` alone. That has now been corrected: `GameService` reconstructs committed turns from canonical outcomes plus exact turn-checkpoint metadata (`player_input`, `execution_context`) before rebuilding the sidecar. This matters because explicit oracle routes (`/ask`, `/event`, `/scene`) do not always emit a player event into `action_log`, and planner-executed deterministic prep steps would otherwise vanish from derived memory.
 

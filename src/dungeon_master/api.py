@@ -35,6 +35,7 @@ from dungeon_master.models import (
     CharacterSheet,
     GameState,
     Likelihood,
+    OracleOutcome,
 )
 from dungeon_master.narrative import CompletionDelta
 from dungeon_master.save_library import SaveLibrary, SaveSummary
@@ -673,6 +674,17 @@ def update_directives(svc: ServiceDep, payload: Annotated[DirectivesRequest, Bod
 def ask_oracle(svc: ServiceDep, payload: Annotated[YesNoRequest, Body()]) -> GameState:
     try:
         return svc.ask_oracle(payload.question, payload.likelihood)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/oracle/yes-no/preview", response_model=OracleOutcome)
+def preview_oracle(
+    svc: ServiceDep,
+    payload: Annotated[YesNoRequest, Body()],
+) -> OracleOutcome:
+    try:
+        return svc.preview_oracle(payload.question, payload.likelihood)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

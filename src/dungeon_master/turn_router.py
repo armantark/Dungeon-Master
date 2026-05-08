@@ -290,6 +290,7 @@ class TurnRouter:
         text: str,
         *,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> TurnPlan:
         body, likelihood = self._strip_likelihood_hint(text)
@@ -320,6 +321,7 @@ class TurnRouter:
             model=self._config.model,
             messages=[
                 {"role": "system", "content": TURN_ROUTER_SYSTEM_PROMPT},
+                *(scene_messages or []),
                 {"role": "user", "content": prompt},
             ],
             temperature=profile.temperature,
@@ -376,10 +378,16 @@ class TurnRouter:
         text: str,
         *,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> RoutedTurn:
         return self._routed_turn_from_plan(
-            self.plan(text, memory_context=memory_context, cancel_token=cancel_token),
+            self.plan(
+                text,
+                memory_context=memory_context,
+                scene_messages=scene_messages,
+                cancel_token=cancel_token,
+            ),
         )
 
     def _log_plan_decision(self, plan: TurnPlan, *, source: str) -> None:
