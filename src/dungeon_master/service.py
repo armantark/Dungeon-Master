@@ -126,27 +126,18 @@ class StageTimingTracker:
         persisted_status = _STAGE_STATUS_FROM_STREAM[status]
         existing = self._records.get(stage_id)
         now = utc_now()
-        if existing is None:
-            self._records[stage_id] = StageTiming(
-                stage_id=stage_id,
-                label=label,
-                status=persisted_status,
-                started_at=now if status == StreamStageStatus.ACTIVE else None,
-                completed_at=(
-                    now
-                    if status in (StreamStageStatus.DONE, StreamStageStatus.SKIPPED)
-                    else None
-                ),
-            )
-            return
-        # `started_at` is sticky: once we've observed an ACTIVE we keep
-        # that wall-clock timestamp even if the stage flips through
-        # repeated states. `completed_at` is final on DONE/SKIPPED.
-        started = existing.started_at
+        # `started_at` is set on the first ACTIVE transition.
+        # `completed_at` is set on a DONE that follows a started stage —
+        # a SKIPPED stage never started, so leaving completed_at None
+        # keeps the simple "duration = completed_at - started_at" math
+        # well-defined: present + present ⇒ duration; either missing ⇒
+        # no duration. Encoding the skipped intent in `status` alone
+        # avoids the ambiguity of "completed without running".
+        started = existing.started_at if existing is not None else None
+        completed = existing.completed_at if existing is not None else None
         if status == StreamStageStatus.ACTIVE and started is None:
             started = now
-        completed = existing.completed_at
-        if status in (StreamStageStatus.DONE, StreamStageStatus.SKIPPED) and completed is None:
+        if status == StreamStageStatus.DONE and completed is None:
             completed = now
         self._records[stage_id] = StageTiming(
             stage_id=stage_id,

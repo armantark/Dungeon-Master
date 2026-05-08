@@ -44,6 +44,7 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     RetreatOutcome,
+    StageStatus,
     ThreadStatus,
 )
 from dungeon_master.narrative import CompletionDelta, NarrativeConfig
@@ -53,7 +54,7 @@ from dungeon_master.npc_updater import (
     NPCUpdateResult,
 )
 from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import GameService
+from dungeon_master.service import TURN_STREAM_STAGE_ORDER, GameService
 from dungeon_master.state_store import StateStore
 from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
 from dungeon_master.turn_router import (
@@ -2176,3 +2177,164 @@ def test_streamed_player_action_reuses_memory_sidecar_load_before_narration(
         pass
 
     assert load_calls == 3
+
+
+# --- StageTiming persistence ----------------------------------------------
+#
+# These anchor the contract introduced when the pre-narration checklist
+# was promoted from a frontend-only ephemeral surface to canonical state.
+# Three things matter:
+#   1. The narrative GameEvent persists a `stage_timings` snapshot for
+#      every stage the tracker observed during the streamed turn.
+#   2. Stages skipped by route (e.g. player-action skips planning /
+#      mechanics) land as `skipped` rather than `done`, so the UI can
+#      render the same channel for the same turn shape across routes.
+#   3. The stage timestamps are monotonic in canonical pipeline order:
+#      `started_at` of stage N+1 is never earlier than `completed_at`
+#      of stage N for stages that actually ran. This guards against a
+#      future refactor that accidentally records timestamps off the
+#      bootstrap frame instead of the real ACTIVE transition.
+
+
+def _consume_stream(generator: Generator[CompletionDelta, None, GameState]) -> GameState:
+    """Drain a streamed turn and return the final GameState.
+
+    Test helper because the generator protocol returns the final state
+    via StopIteration.value, which `for _ in stream` would silently
+    discard. Several assertions below want to verify state and timings
+    in the same test, so we centralize the pattern here.
+    """
+    while True:
+        try:
+            next(generator)
+        except StopIteration as stop:
+            return stop.value
+
+
+def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    final = _consume_stream(
+        service.stream_submit_player_turn("Is the abbey gate watched? [likely]"),
+    )
+    narrative_event = final.action_log[-1]
+    timings = narrative_event.stage_timings
+    by_id = {timing.stage_id: timing for timing in timings}
+
+    # Every canonical pre-narration stage should appear in order. We
+    # don't assert exact statuses for continuity stages because the
+    # scripted classifier's scope is route-dependent; we *do* assert
+    # the planning / mechanics / narration trio is `done` because the
+    # full-turn route always runs them.
+    assert [t.stage_id for t in timings] == list(TURN_STREAM_STAGE_ORDER)
+    for stage_id in (
+        "planning_turn",
+        "resolving_mechanics",
+        "preparing_narration",
+        "streaming_narration",
+    ):
+        timing = by_id[stage_id]
+        assert timing.status == StageStatus.DONE
+        assert timing.started_at is not None
+        assert timing.completed_at is not None
+        assert timing.completed_at >= timing.started_at
+
+
+def test_streamed_player_action_marks_skipped_stages(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    final = _consume_stream(
+        service.stream_submit_player_action("I wait in silence."),
+    )
+    timings = final.action_log[-1].stage_timings
+    by_id = {timing.stage_id: timing for timing in timings}
+
+    # The action route bypasses planning + mechanics by design; their
+    # entries must still appear in the persisted record (so the UI
+    # never has to decide whether a stage "would have been there"),
+    # but they're flagged skipped and have no timestamps.
+    for skipped_id in ("planning_turn", "resolving_mechanics"):
+        assert by_id[skipped_id].status == StageStatus.SKIPPED
+        assert by_id[skipped_id].started_at is None
+        assert by_id[skipped_id].completed_at is None
+
+    # And the narration stages still recorded real wall-clock entries.
+    assert by_id["streaming_narration"].status == StageStatus.DONE
+    assert by_id["streaming_narration"].started_at is not None
+    assert by_id["streaming_narration"].completed_at is not None
+
+
+def test_streamed_regenerate_persists_stage_timings(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    initial = _consume_stream(
+        service.stream_submit_player_turn("Is the abbey gate watched? [likely]"),
+    )
+    target_event_id = initial.action_log[-1].id
+
+    repaired = _consume_stream(service.stream_regenerate_response(target_event_id))
+    timings = repaired.action_log[-1].stage_timings
+    by_id = {timing.stage_id: timing for timing in timings}
+
+    # Regenerate path is a focused repair: continuity / planner /
+    # mechanics are skipped (the original outcome is reused), and only
+    # the narration prep + stream actually run. Assert both halves to
+    # lock the route's timing-shape against future drift.
+    for skipped_id in (
+        "planning_turn",
+        "resolving_mechanics",
+        "classifying_continuity",
+        "updating_threads",
+        "updating_npcs",
+    ):
+        assert by_id[skipped_id].status == StageStatus.SKIPPED
+    for done_id in ("preparing_narration", "streaming_narration"):
+        timing = by_id[done_id]
+        assert timing.status == StageStatus.DONE
+        assert timing.started_at is not None
+        assert timing.completed_at is not None
+
+
+def test_stage_timings_round_trip_through_persistence(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    _consume_stream(service.stream_submit_player_action("I wait in silence."))
+    # Reload from disk specifically (rather than the in-memory final
+    # state) to assert the StageTiming list survives serialization.
+    reloaded = store.load()
+    timings = reloaded.action_log[-1].stage_timings
+
+    assert len(timings) == len(TURN_STREAM_STAGE_ORDER)
+    assert any(t.status == StageStatus.SKIPPED for t in timings)
+    assert any(t.status == StageStatus.DONE and t.started_at is not None for t in timings)
