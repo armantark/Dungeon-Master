@@ -34,6 +34,7 @@ def sample_state() -> GameState:
             GameThread(title="Generated thread two", stakes="Generated stakes two."),
             GameThread(title="Generated thread three", stakes="Generated stakes three."),
         ],
+        party_members=[],
         npcs=[
             NPC(name="Generated NPC One", role="Test role", disposition="watchful"),
             NPC(name="Generated NPC Two", role="Test role", disposition="wary"),

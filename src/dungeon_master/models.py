@@ -80,6 +80,12 @@ class NPCPlayerLabelKind(StrEnum):
     DESCRIPTOR = "descriptor"
 
 
+class PartyMemberKind(StrEnum):
+    COMPANION = "companion"
+    HIRELING = "hireling"
+    ANIMAL = "animal"
+
+
 class SceneStatus(StrEnum):
     EXPECTED = "expected"
     ALTERED = "altered"
@@ -408,6 +414,22 @@ class CharacterSheet(StrictModel):
     cairn: CairnCharacterState = Field(default_factory=CairnCharacterState)
 
 
+class PartyMember(StrictModel):
+    id: str = Field(default_factory=lambda: new_id("party"))
+    kind: PartyMemberKind = PartyMemberKind.COMPANION
+    sheet: CharacterSheet = Field(default_factory=CharacterSheet)
+    npc_id: str | None = None
+    active: bool = True
+    loyalty: str = ""
+    notes: str = ""
+
+    def display_label(self) -> str:
+        name = self.sheet.name.strip()
+        if name:
+            return name
+        return self.sheet.epithet.strip() or self.kind.value
+
+
 class CampaignDirectives(StrictModel):
     """Persistent OOC guidance for this campaign.
 
@@ -548,6 +570,7 @@ class GameState(StrictModel):
     threads: list[GameThread] = Field(default_factory=list)
     npcs: list[NPC] = Field(default_factory=list)
     hidden_npcs: list[NPC] = Field(default_factory=list)
+    party_members: list[PartyMember] = Field(default_factory=list)
     encounter: EncounterState = Field(default_factory=EncounterState)
     oracle_tables: OracleTables
     oracle_history: list[OracleOutcome] = Field(default_factory=list)
@@ -570,6 +593,9 @@ class GameState(StrictModel):
 
     def all_npcs(self) -> list[NPC]:
         return [*self.npcs, *self.hidden_npcs]
+
+    def party_sheets(self) -> list[CharacterSheet]:
+        return [self.character, *(member.sheet for member in self.party_members if member.active)]
 
     @model_validator(mode="after")
     def seed_character_from_legacy_notes(self) -> GameState:
