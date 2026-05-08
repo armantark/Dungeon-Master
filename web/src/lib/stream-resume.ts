@@ -35,11 +35,26 @@ const RESUME_TTL_MS = 10 * 60 * 1000;
 // request_id. `route` is for telemetry / labeling the resumed bubble;
 // `started_at` lets us TTL-fence stale entries; `save_id` is the
 // scope guard and matches the bucket key.
+// Serializable stage snapshot mirroring `StageProgress` from the store.
+// We duplicate the shape (instead of importing) so the stream-resume
+// module stays self-contained and doesn't pull Svelte runes code into
+// a plain-TS validation path.
+export interface PersistedStage {
+  stageId: string;
+  label: string;
+  status: string;
+  order: number;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
 export interface StreamResumeDescriptor {
   request_id: string;
   save_id: string;
   route: string;
   started_at: string;
+  /** Snapshot of the pipeline stages at the time of the last persist. */
+  stages?: PersistedStage[];
 }
 
 function storageKey(saveId: string): string {
@@ -98,6 +113,41 @@ export function saveStreamResume(
     // Quota or disabled storage: the next reload simply won't try to
     // resume. The current session's stream still works because that
     // path runs entirely off in-memory store state.
+  }
+}
+
+/**
+ * Persist the current stage snapshot onto the existing descriptor for
+ * `saveId`. No-op when no descriptor exists (the meta event hasn't
+ * landed yet) or storage is unavailable. Called on every backend
+ * `stage` event so a mid-stream reload restores the checklist.
+ */
+export function updateStreamResumeStages(
+  saveId: string | null,
+  stages: PersistedStage[],
+): void {
+  if (saveId === null) return;
+  const storage = safeStorage();
+  if (storage === null) return;
+  let raw: string | null;
+  try {
+    raw = storage.getItem(storageKey(saveId));
+  } catch {
+    return;
+  }
+  if (raw === null) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!isValidDescriptor(parsed)) return;
+  const updated: StreamResumeDescriptor = { ...parsed, stages };
+  try {
+    storage.setItem(storageKey(saveId), JSON.stringify(updated));
+  } catch {
+    // Quota — best effort.
   }
 }
 

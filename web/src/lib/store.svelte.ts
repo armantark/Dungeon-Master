@@ -15,6 +15,7 @@ import {
   clearStreamResume,
   loadStreamResume,
   saveStreamResume,
+  updateStreamResumeStages,
 } from "./stream-resume";
 import type { StreamHandlers, StreamResult } from "./streaming";
 import type { StreamRoute, StreamStageStatus } from "./streaming-types";
@@ -1057,10 +1058,26 @@ class GameStore {
     // resume (the original POST already happened on the previous
     // page), so we surface any transport failure as an error.
     try {
+      // Restore persisted stages so the checklist appears immediately
+      // before the reattach round-trip completes. The backend may
+      // replay stage events that supersede these, which is fine —
+      // applyStageEvent merges by stage_id.
+      const restoredStages: StageProgress[] = (descriptor.stages ?? []).map(
+        (s) => ({
+          stageId: s.stageId,
+          label: s.label,
+          status: s.status as StageProgress["status"],
+          order: s.order,
+          startedAt: s.startedAt,
+          completedAt: s.completedAt,
+        }),
+      );
+
       this.streaming = {
         ...emptyStreamingState(),
         active: true,
         resuming: true,
+        stages: restoredStages,
       };
       this.error = null;
       this.isLoading = true;
@@ -1076,6 +1093,11 @@ class GameStore {
             route: event.route,
             requestId: event.request_id,
           };
+        },
+        onStage: (event) => {
+          const next = applyStageEvent(this.streaming.stages, event);
+          this.streaming = { ...this.streaming, stages: next };
+          updateStreamResumeStages(this.activeSaveId, next);
         },
         onMechanics: (event) => {
           this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
@@ -1205,18 +1227,15 @@ class GameStore {
         });
       },
       onStage: (event) => {
-        this.streaming = {
-          ...this.streaming,
-          stages: applyStageEvent(this.streaming.stages, event),
-        };
+        const next = applyStageEvent(this.streaming.stages, event);
+        this.streaming = { ...this.streaming, stages: next };
+        updateStreamResumeStages(this.activeSaveId, next);
       },
       onMechanics: (event) => {
         this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
         this.pendingOracle = event.outcome;
         mechanicsArrived = true;
         if (opts.rollAware) {
-          // Tumble briefly so the receipt feels physical, then settle
-          // before prose deltas start arriving.
           void this.#tumbleAfterMechanics();
         }
       },
