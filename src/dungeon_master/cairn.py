@@ -1339,6 +1339,54 @@ class CairnEngine:
         self._recompute_derived(actor.sheet)
         return self._inventory_acquisition_summary(acquired, actor=actor)
 
+    def backfill_companion_sheet(
+        self,
+        state: GameState,
+        authored: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterSheet:
+        if self._backfill_function is not None:
+            draft_state = state.model_copy(deep=True)
+            draft_state.character = authored
+            sheet = self._backfill_function(draft_state)
+            self._recompute_derived(sheet)
+            return sheet
+
+        if not self._config.is_usable():
+            self._recompute_derived(authored)
+            return authored
+
+        draft_state = state.model_copy(deep=True)
+        draft_state.character = authored
+        prompt = self._build_backfill_prompt(draft_state)
+        backfill_profile = self._config.profiles.cairn_backfill
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": CAIRN_BACKFILL_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=backfill_profile.temperature,
+            max_tokens=backfill_profile.max_tokens,
+            timeout=self._config.timeout_seconds,
+            stream=False,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort=backfill_profile.reasoning_effort,
+            reasoning=backfill_profile.reasoning(default_exclude=self._config.exclude_reasoning),
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+            trace_route="cairn.companion_backfill",
+            trace_profile="cairn_backfill",
+        )
+        payload = self._complete_json(request)
+        generated = GeneratedCairnBackfill.model_validate_json(extract_json_object(payload))
+        sheet = self._apply_generated_backfill(authored, generated)
+        self._recompute_derived(sheet)
+        return sheet
+
     def _backfill_character(
         self,
         state: GameState,

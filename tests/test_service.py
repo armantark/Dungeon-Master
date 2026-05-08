@@ -888,6 +888,39 @@ class FakeCairnEngine:
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
 
+    def backfill_companion_sheet(
+        self,
+        state: GameState,
+        authored: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterSheet:
+        del state, cancel_token
+        authored.cairn = CairnCharacterState(
+            source=CairnMechanicsSource.EXPLICIT,
+            hp=3,
+            max_hp=3,
+            str_score=10,
+            dex_score=11,
+            wil_score=12,
+            max_str_score=10,
+            max_dex_score=11,
+            max_wil_score=12,
+        )
+        authored.inventory = [
+            InventoryItem(
+                name=f"{authored.name}'s walking stick",
+                details="A companion's practical weapon.",
+                cairn=CairnItemState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    tags=[CairnItemTag.WEAPON],
+                    weapon_damage_die=6,
+                    equipped=True,
+                ),
+            ),
+        ]
+        return authored
+
 
 class FatalFakeCairnEngine(FakeCairnEngine):
     def suffer_harm(
@@ -1340,6 +1373,51 @@ def test_service_player_turn_transfers_inventory_to_companion(tmp_path: Path) ->
         "Transferred Test map from Test Wanderer to Brother Sava."
         in next_state.action_log[1].content
     )
+
+
+def test_service_player_turn_recruits_visible_npc_to_party(tmp_path: Path) -> None:
+    def recruit_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECRUIT_NPC,
+                    text=text,
+                    npc_name="Brother Sava",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=recruit_classifier),
+    )
+    state = service.load_state()
+    recruitable = NPC(
+        name="Brother Sava",
+        role="Lantern bearer",
+        disposition="wary but willing",
+    )
+    state.npcs.append(recruitable)
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    next_state = service.submit_player_turn("I ask Brother Sava to join us.")
+
+    assert len(next_state.party_members) == 1
+    member = next_state.party_members[0]
+    assert member.npc_id == recruitable.id
+    assert member.display_label() == "Brother Sava"
+    assert member.sheet.cairn.source == CairnMechanicsSource.EXPLICIT
+    assert member.sheet.inventory[0].name == "Brother Sava's walking stick"
+    assert next_state.npcs[-1].status == NPCStatus.RETIRED
+    assert "Recruited Brother Sava into the party." in next_state.action_log[1].content
 
 
 def test_service_player_turn_uses_holy_relic_as_structured_outcome(tmp_path: Path) -> None:

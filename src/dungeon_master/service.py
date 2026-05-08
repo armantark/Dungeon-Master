@@ -41,8 +41,10 @@ from dungeon_master.models import (
     GameState,
     Likelihood,
     NPCPlayerLabelKind,
+    NPCStatus,
     OracleKind,
     OracleOutcome,
+    PartyMember,
     SceneStatus,
     StageStatus,
     StageTiming,
@@ -315,6 +317,15 @@ class CairnPort(Protocol):
         item_id: str,
         actor_id: str | None = None,
     ) -> str:
+        raise NotImplementedError
+
+    def backfill_companion_sheet(
+        self,
+        state: GameState,
+        authored: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterSheet:
         raise NotImplementedError
 
 
@@ -1631,6 +1642,16 @@ class GameService:
                 )
                 continue
 
+            if op.kind == PlannedTurnOpKind.RECRUIT_NPC and op.npc_name is not None:
+                step_summaries.append(
+                    self._recruit_npc_to_party(
+                        state,
+                        npc_name=op.npc_name,
+                        cancel_token=cancel_token,
+                    ),
+                )
+                continue
+
             if op.kind == PlannedTurnOpKind.EQUIP and op.item_name is not None:
                 actor = self._character_for_actor_name(state, op.actor_name)
                 item_id = self._require_item_id_from_name(actor.sheet, op.item_name)
@@ -1797,6 +1818,57 @@ class GameService:
         target.sheet.inventory.append(item)
         self._recompute_party_burden(source.sheet, target.sheet)
         return f"Transferred {item.name} from {source.name} to {target.name}."
+
+    def _recruit_npc_to_party(
+        self,
+        state: GameState,
+        *,
+        npc_name: str,
+        cancel_token: CancellationToken | None,
+    ) -> str:
+        npc = self._require_visible_npc_by_name(state, npc_name)
+        if any(member.npc_id == npc.id and member.active for member in state.party_members):
+            message = f"{npc.display_label()} is already in the party."
+            raise ValueError(message)
+        authored = CharacterSheet(
+            name=npc.display_label(),
+            archetype=npc.role or "Companion",
+            epithet=npc.disposition,
+            backstory=(
+                f"{npc.display_label()} was recruited from the current NPC roster. "
+                f"Role: {npc.role or 'unknown'}. Disposition: {npc.disposition}."
+            ),
+            drive="Survive with the party and honor the terms of recruitment.",
+            flaw="Has loyalties and limits beyond the player character's control.",
+            condition="Able to travel.",
+        )
+        sheet = self._cairn.backfill_companion_sheet(
+            state,
+            authored,
+            cancel_token=cancel_token,
+        )
+        member = PartyMember(
+            sheet=sheet,
+            npc_id=npc.id,
+            loyalty=npc.disposition,
+            notes=f"Recruited from visible NPC roster entry {npc.id}.",
+        )
+        state.party_members.append(member)
+        npc.status = NPCStatus.RETIRED
+        return f"Recruited {member.display_label()} into the party."
+
+    def _require_visible_npc_by_name(self, state: GameState, npc_name: str) -> NPC:
+        cleaned = npc_name.strip().lower()
+        for npc in state.npcs:
+            label = npc.display_label()
+            candidates = {npc.id.lower(), npc.name.lower(), label.lower()}
+            if cleaned in candidates or cleaned in label.lower() or label.lower() in cleaned:
+                if npc.status != NPCStatus.ACTIVE:
+                    message = f"NPC is not active: {label}"
+                    raise ValueError(message)
+                return npc
+        message = f"Unknown visible NPC: {npc_name}"
+        raise ValueError(message)
 
     def _character_for_actor_name(
         self,

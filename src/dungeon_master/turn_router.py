@@ -53,6 +53,7 @@ class PlannedTurnOpKind(StrEnum):
     SEARCH_SCENE = "search_scene"
     ACQUIRE_ITEM = "acquire_item"
     TRANSFER_ITEM = "transfer_item"
+    RECRUIT_NPC = "recruit_npc"
     USE_ITEM = "use_item"
     DROP_ITEM = "drop_item"
     NARRATE = "narrate"
@@ -68,6 +69,7 @@ class PlannedTurnOp:
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    npc_name: str | None = None
     actor_name: str | None = None
     source_actor_name: str | None = None
     target_actor_name: str | None = None
@@ -95,6 +97,7 @@ class RoutedTurn:
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    npc_name: str | None = None
     actor_name: str | None = None
     source_actor_name: str | None = None
     target_actor_name: str | None = None
@@ -115,6 +118,7 @@ class GeneratedPlannedTurnOp(StrictModel):
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    npc_name: str | None = None
     actor_name: str | None = None
     source_actor_name: str | None = None
     target_actor_name: str | None = None
@@ -211,6 +215,8 @@ Allowed op kinds:
   or otherwise adding a concrete item or bundle to their carried gear now
 - transfer_item: an existing carried item is being moved between the player
   and a named party member, hireling, animal, or companion
+- recruit_npc: a visible NPC is joining the player's party as a companion
+  or hireling now
 - use_item: the player is explicitly drinking, lighting, applying,
   consuming, reading, invoking, praying with, or otherwise using a carried item
 - drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
@@ -233,7 +239,8 @@ Rules:
   because the stable public outcome kind remains `harm`.
 - If ops contain only `equip`, `route` may be `equip`.
 - If ops contain only `inspect_inventory`, `search_scene`, `acquire_item`, `use_item`,
-  `transfer_item`, `drop_item`, or `narrate`, route must be `player_action`.
+  `transfer_item`, `recruit_npc`, `drop_item`, or `narrate`, route must be
+  `player_action`.
 - Use `save` only when the player is attempting one concrete risky action right now.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
 - If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
@@ -247,6 +254,8 @@ Rules:
   full item list in the planner itself.
 - If kind is `transfer_item`, include `item_name`, `source_actor_name`, and
   `target_actor_name`. Use "player" for the main character when needed.
+- If kind is `recruit_npc`, include `npc_name` naming the visible NPC who
+  joins the party now.
 - If another action is performed by a named party member, include `actor_name`.
 - If kind is `use_item` or `drop_item`, include `item_name`.
 - A prayer by itself is usually `narrate` or an oracle/save if risk is explicit.
@@ -267,7 +276,7 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
     'enemy_opener | harm | recovery | equip | retreat | acquire_item | transfer_item | '
-    'inspect_inventory | search_scene | use_item | drop_item",\n'
+    'recruit_npc | inspect_inventory | search_scene | use_item | drop_item",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
     '      "ability": "STR | DEX | WIL | null",\n'
@@ -275,6 +284,7 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '      "stance": "normal | impaired | enhanced | null",\n'
     '      "rest_kind": "breather | full_rest | week_recovery | null",\n'
     '      "item_name": "string or null",\n'
+    '      "npc_name": "string or null",\n'
     '      "actor_name": "string or null",\n'
     '      "source_actor_name": "string or null",\n'
     '      "target_actor_name": "string or null",\n'
@@ -464,6 +474,7 @@ class TurnRouter:
                     stance=op.stance,
                     rest_kind=op.rest_kind,
                     item_name=op.item_name,
+                    npc_name=op.npc_name,
                     actor_name=op.actor_name,
                     source_actor_name=op.source_actor_name,
                     target_actor_name=op.target_actor_name,
@@ -497,7 +508,7 @@ class TurnRouter:
             return self._fallback_plan(text)
         return TurnPlan(route=plan.route, text=text, ops=ops)
 
-    def _normalize_op(  # noqa: C901
+    def _normalize_op(  # noqa: C901, PLR0912
         self,
         op: PlannedTurnOp,
         *,
@@ -541,12 +552,16 @@ class TurnRouter:
         ):
             message = "transfer_item ops require source_actor_name and target_actor_name."
             raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.RECRUIT_NPC and op.npc_name is None:
+            message = "recruit_npc ops require an npc_name."
+            raise ValueError(message)
         if op.kind in (
             PlannedTurnOpKind.INSPECT_INVENTORY,
             PlannedTurnOpKind.SEARCH_SCENE,
             PlannedTurnOpKind.ACQUIRE_ITEM,
             PlannedTurnOpKind.USE_ITEM,
             PlannedTurnOpKind.TRANSFER_ITEM,
+            PlannedTurnOpKind.RECRUIT_NPC,
             PlannedTurnOpKind.DROP_ITEM,
             PlannedTurnOpKind.NARRATE,
         ) and route != TurnRoute.PLAYER_ACTION:
@@ -563,6 +578,7 @@ class TurnRouter:
             stance=op.stance,
             rest_kind=op.rest_kind,
             item_name=op.item_name,
+            npc_name=op.npc_name,
             actor_name=op.actor_name,
             source_actor_name=op.source_actor_name,
             target_actor_name=op.target_actor_name,
@@ -595,6 +611,7 @@ class TurnRouter:
             stance=routed.stance,
             rest_kind=routed.rest_kind,
             item_name=routed.item_name,
+            npc_name=routed.npc_name,
             actor_name=routed.actor_name,
             source_actor_name=routed.source_actor_name,
             target_actor_name=routed.target_actor_name,
@@ -616,6 +633,7 @@ class TurnRouter:
             stance=primary.stance,
             rest_kind=primary.rest_kind,
             item_name=primary.item_name,
+            npc_name=primary.npc_name,
             actor_name=primary.actor_name,
             source_actor_name=primary.source_actor_name,
             target_actor_name=primary.target_actor_name,

@@ -317,6 +317,31 @@ def test_classifier_can_return_inventory_transfer_plan() -> None:
     assert routed.target_actor_name == "Brother Sava"
 
 
+def test_classifier_can_return_npc_recruitment_plan() -> None:
+    def recruit_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECRUIT_NPC,
+                    text=text,
+                    npc_name="Brother Sava",
+                ),
+            ),
+        )
+
+    router = TurnRouter(classifier=recruit_classifier)
+
+    planned = router.plan("I ask Brother Sava to join us.")
+    routed = router.route("I ask Brother Sava to join us.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert planned.ops[0].kind == PlannedTurnOpKind.RECRUIT_NPC
+    assert planned.ops[0].npc_name == "Brother Sava"
+    assert routed.npc_name == "Brother Sava"
+
+
 def test_classifier_can_return_holy_relic_use_plan() -> None:
     def relic_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
         return TurnPlan(
