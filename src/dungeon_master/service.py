@@ -230,11 +230,12 @@ class CairnPort(Protocol):
         target_armor: int,
         weapon_item_id: str | None,
         stance: AttackStance,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
         raise NotImplementedError
 
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -242,6 +243,7 @@ class CairnPort(Protocol):
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
         raise NotImplementedError
 
@@ -255,13 +257,26 @@ class CairnPort(Protocol):
     ) -> OracleOutcome:
         raise NotImplementedError
 
-    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+    def recover(
+        self,
+        state: GameState,
+        kind: CairnRestKind,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         raise NotImplementedError
 
     def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
         raise NotImplementedError
 
-    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+    def set_item_equipped(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        equipped: bool,
+        actor_id: str | None = None,
+    ) -> None:
         raise NotImplementedError
 
     def acquire_items(
@@ -269,14 +284,28 @@ class CairnPort(Protocol):
         state: GameState,
         *,
         text: str,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         raise NotImplementedError
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
+    def use_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        intent: str,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         raise NotImplementedError
 
-    def drop_item(self, state: GameState, *, item_id: str) -> str:
+    def drop_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        actor_id: str | None = None,
+    ) -> str:
         raise NotImplementedError
 
 

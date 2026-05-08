@@ -17,6 +17,7 @@ from dungeon_master.models import (
     EnemyCombatant,
     GameState,
     InventoryItem,
+    PartyMember,
     RetreatOutcome,
 )
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
@@ -62,6 +63,45 @@ def _active_encounter_state(*, player_dex: int, enemy_dex: int) -> GameState:
             ),
         ],
     )
+    return state
+
+
+def _companion_state() -> GameState:
+    state = _ready_state()
+    companion = PartyMember(
+        sheet=state.character.model_copy(deep=True),
+        loyalty="Paid through the next dawn.",
+    )
+    companion.sheet.name = "Brother Sava"
+    companion.sheet.inventory = [
+        InventoryItem(
+            name="Sava's spear",
+            details="A hireling's ashwood spear.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.WEAPON],
+                weapon_damage_die=8,
+                equipped=True,
+            ),
+        ),
+        InventoryItem(
+            name="Shared rope",
+            details="Twenty-five feet of knotted rope.",
+            cairn=CairnItemState(source=CairnMechanicsSource.EXPLICIT, slots=1),
+        ),
+    ]
+    companion.sheet.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=10,
+        dex_score=18,
+        wil_score=9,
+        max_str_score=10,
+        max_dex_score=18,
+        max_wil_score=9,
+        hp=3,
+        max_hp=3,
+    )
+    state.party_members.append(companion)
     return state
 
 
@@ -168,6 +208,33 @@ def test_resolve_attack_failed_first_round_still_allows_enemy_retaliation() -> N
     assert state.character.cairn.hp == 3
 
 
+def test_companion_can_resolve_attack_with_own_weapon_and_take_retaliation() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    outcome = engine.resolve_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=0,
+        weapon_item_id=companion.sheet.inventory[0].id,
+        stance=AttackStance.NORMAL,
+        actor_id=companion.id,
+    )
+
+    assert outcome.cairn is not None
+    assert outcome.cairn.actor_id == companion.id
+    assert outcome.cairn.actor_name == "Brother Sava"
+    assert outcome.cairn.weapon_name == "Sava's spear"
+    assert outcome.cairn.base_damage is not None
+    assert outcome.cairn.hp_after == companion.sheet.cairn.hp
+    assert companion.sheet.cairn.hp < companion.sheet.cairn.max_hp
+    assert state.character.cairn.hp == 4
+
+
 def test_suffer_harm_does_not_seed_encounter() -> None:
     state = _ready_state()
     engine = CairnEngine(
@@ -188,6 +255,29 @@ def test_suffer_harm_does_not_seed_encounter() -> None:
     assert outcome.cairn.combat_started is None
     assert outcome.cairn.combat_initiator is None
     assert state.encounter.active is False
+
+
+def test_companion_can_suffer_harm_without_mutating_player() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    outcome = engine.suffer_harm(
+        state,
+        amount=2,
+        source="Falling masonry",
+        in_combat=False,
+        armor_applies=False,
+        actor_id=companion.id,
+    )
+
+    assert outcome.cairn is not None
+    assert outcome.cairn.actor_id == companion.id
+    assert companion.sheet.cairn.str_score == 8
+    assert state.character.cairn.str_score == 12
 
 
 def test_resolve_retreat_can_escape_encounter() -> None:
@@ -329,6 +419,67 @@ def test_acquire_items_falls_back_when_model_is_unavailable() -> None:
         state.character.inventory[-1].details
         == "Taken during play: I gather the spoils into my sack."
     )
+
+
+def test_companion_can_acquire_and_drop_inventory() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    summary = engine.acquire_items(
+        state,
+        text="Sava gathers the extra torch.",
+        actor_id=companion.id,
+    )
+
+    assert summary == "Brother Sava acquired Acquired gear."
+    assert companion.sheet.inventory[-1].name == "Acquired gear"
+    assert len(state.character.inventory) == 2
+    drop_summary = engine.drop_item(
+        state,
+        item_id=companion.sheet.inventory[-1].id,
+        actor_id=companion.id,
+    )
+    assert drop_summary == "Brother Sava dropped Acquired gear."
+    assert [item.name for item in companion.sheet.inventory] == ["Sava's spear", "Shared rope"]
+
+
+def test_companion_item_use_consumes_companion_item() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    scroll = InventoryItem(
+        name="Sava's scroll",
+        details="A petty scroll that stills a hostile will once.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.PETTY, CairnItemTag.MAGIC, CairnItemTag.CONSUMABLE],
+            slots=0,
+            uses=1,
+            power=CairnItemPower(
+                kind=CairnItemPowerKind.SCROLL,
+                name="Still Water",
+                effect=CairnItemEffectKind.WARD_OR_PACIFY,
+                consumed_on_use=True,
+            ),
+        ),
+    )
+    companion.sheet.inventory.append(scroll)
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    outcome = engine.use_item(
+        state,
+        item_id=scroll.id,
+        intent="Sava reads the scroll aloud.",
+        actor_id=companion.id,
+    )
+
+    assert outcome.cairn is not None
+    assert outcome.cairn.actor_id == companion.id
+    assert scroll not in companion.sheet.inventory
+    assert all(item.name != "Sava's scroll" for item in state.character.inventory)
 
 
 def test_spellbook_adds_fatigue_and_requires_wil_save_in_danger() -> None:

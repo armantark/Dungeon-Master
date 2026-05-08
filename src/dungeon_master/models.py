@@ -350,6 +350,8 @@ class CairnResolution(StrictModel):
     target: int | None = Field(default=None, ge=1, le=20)
     success: bool | None = None
     rest_kind: CairnRestKind | None = None
+    actor_id: str | None = None
+    actor_name: str | None = None
     item_id: str | None = None
     item_name: str | None = None
     item_power_kind: CairnItemPowerKind | None = None

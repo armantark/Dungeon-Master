@@ -414,6 +414,14 @@ class ItemUseResolution:
     wil_save_success: bool | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedActor:
+    id: str
+    name: str
+    sheet: CharacterSheet
+    is_player: bool
+
+
 class CairnEngine:
     def __init__(
         self,
@@ -452,19 +460,34 @@ class CairnEngine:
         self._recompute_derived(character)
         return False
 
-    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+    def resolve_save(
+        self,
+        state: GameState,
+        ability: CairnAbility,
+        reason: str,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         self._require_ready(state)
-        score = self._ability_score(state.character.cairn, ability)
+        actor = self._resolve_actor(state, actor_id)
+        score = self._ability_score(actor.sheet.cairn, ability)
         roll = self._roll(D20_SIDES, "save")
         success = roll.result == 1 or (roll.result != D20_SIDES and roll.result <= score)
         verdict = "passed" if success else "failed"
+        actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
             kind=OracleKind.SAVE,
-            summary=f"{ability.value} save {verdict}: {reason}",
+            summary=f"{actor_prefix}{ability.value} save {verdict}: {reason}",
             rolls=[roll],
             question=reason,
             chaos_factor=state.chaos_factor,
-            cairn=CairnResolution(ability=ability, target=score, success=success),
+            cairn=CairnResolution(
+                ability=ability,
+                target=score,
+                success=success,
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
+            ),
         )
 
     def resolve_attack(  # noqa: PLR0913
@@ -475,9 +498,11 @@ class CairnEngine:
         target_armor: int,
         weapon_item_id: str | None,
         stance: AttackStance,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
         self._require_ready(state)
+        actor = self._resolve_actor(state, actor_id)
         encounter = self._ensure_encounter(
             state,
             player_input=f"Attack {target_name}",
@@ -487,7 +512,7 @@ class CairnEngine:
             cancel_token=cancel_token,
         )
         target = self._require_target(encounter, target_name)
-        weapon = self._resolve_weapon(state.character, weapon_item_id)
+        weapon = self._resolve_weapon(actor.sheet, weapon_item_id)
         base_die = self._attack_die(weapon, stance)
         round_before = encounter.round_number
         weapon_name = weapon.name if weapon is not None else "Unarmed strike"
@@ -497,7 +522,7 @@ class CairnEngine:
         initiative_target: int | None = None
 
         if encounter.first_round_dex_gate_pending:
-            initiative_target = state.character.cairn.dex_score
+            initiative_target = actor.sheet.cairn.dex_score
             initiative_roll = self._roll(D20_SIDES, "initiative")
             rolls.append(initiative_roll)
             player_acted = self._save_succeeds(initiative_roll.result, initiative_target)
@@ -541,16 +566,18 @@ class CairnEngine:
             fled_ids.extend(morale_fled_ids)
             if target.id in morale_fled_ids:
                 target.defeated = False
+            actor_prefix = "" if actor.is_player else f"{actor.name} "
             attack_summary = (
-                f"Attack against {target.name}: {weapon_name}. {damage_summary}"
+                f"{actor_prefix}attacks {target.name}: {weapon_name}. {damage_summary}"
             )
         else:
             damage_after_armor = 0
+            actor_prefix = "You" if actor.is_player else actor.name
             attack_summary = (
-                f"Lost the first round and failed to act before {target.name} could close."
+                f"{actor_prefix} lost the first round and failed to act before {target.name} could close."
             )
 
-        enemy_harm = self._resolve_enemy_turn(state, encounter)
+        enemy_harm = self._resolve_enemy_turn(state, encounter, defender=actor.sheet)
         rolls.extend(enemy_harm.rolls)
         encounter.active = self._has_active_enemies(encounter)
         if encounter.active:
@@ -580,6 +607,8 @@ class CairnEngine:
                 combat_initiator=encounter.initiator,
                 player_acted=player_acted,
                 initiative_target=initiative_target,
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
                 weapon_item_id=weapon.id if weapon is not None else None,
                 weapon_name=weapon_name,
                 target_combatant_id=target.id,
@@ -605,7 +634,7 @@ class CairnEngine:
                 defeated_combatant_ids=defeated_ids,
                 fled_combatant_ids=fled_ids,
                 scar_result=enemy_harm.scar_result,
-                overloaded=state.character.cairn.overloaded,
+                overloaded=actor.sheet.cairn.overloaded,
             ),
         )
 
@@ -765,7 +794,7 @@ class CairnEngine:
             ),
         )
 
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -773,23 +802,28 @@ class CairnEngine:
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
         self._require_ready(state)
+        actor = self._resolve_actor(state, actor_id)
         applied = self._apply_harm_to_character(
-            state.character.cairn,
+            actor.sheet.cairn,
             amount=amount,
             source=source,
             in_combat=in_combat,
             armor_applies=armor_applies,
         )
-        self._recompute_derived(state.character)
+        self._recompute_derived(actor.sheet)
+        actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
             kind=OracleKind.HARM,
-            summary=applied.summary,
+            summary=f"{actor_prefix}{applied.summary}",
             rolls=applied.rolls,
             question=source,
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
                 combat_initiator=(
                     state.encounter.initiator
                     if in_combat and state.encounter.active
@@ -800,17 +834,24 @@ class CairnEngine:
                 base_damage=amount,
                 damage_after_armor=applied.damage_after_armor,
                 hp_before=applied.hp_before,
-                hp_after=state.character.cairn.hp,
+                hp_after=actor.sheet.cairn.hp,
                 str_before=applied.str_before,
-                str_after=state.character.cairn.str_score,
+                str_after=actor.sheet.cairn.str_score,
                 scar_result=applied.scar_result,
-                overloaded=state.character.cairn.overloaded,
+                overloaded=actor.sheet.cairn.overloaded,
             ),
         )
 
-    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+    def recover(
+        self,
+        state: GameState,
+        kind: CairnRestKind,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         self._require_ready(state)
-        cairn = state.character.cairn
+        actor = self._resolve_actor(state, actor_id)
+        cairn = actor.sheet.cairn
         hp_before = cairn.hp
         fatigue_before = cairn.fatigue
         str_before = cairn.str_score
@@ -837,15 +878,18 @@ class CairnEngine:
             cairn.paralyzed = False
             cairn.delirious = False
 
-        self._recompute_derived(state.character)
+        self._recompute_derived(actor.sheet)
+        actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
             kind=OracleKind.RECOVERY,
-            summary=f"Recovery resolved: {kind.value}.",
+            summary=f"{actor_prefix}Recovery resolved: {kind.value}.",
             rolls=[],
             question=kind.value,
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(
                 rest_kind=kind,
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
                 hp_before=hp_before,
                 hp_after=cairn.hp,
                 str_before=str_before,
@@ -856,36 +900,55 @@ class CairnEngine:
             ),
         )
 
-    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+    def set_item_equipped(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        equipped: bool,
+        actor_id: str | None = None,
+    ) -> None:
         self._require_ready(state)
-        target = self._find_item(state.character, item_id)
+        actor = self._resolve_actor(state, actor_id)
+        target = self._find_item(actor.sheet, item_id)
         if target is None:
             message = f"Unknown inventory item: {item_id}"
             raise ValueError(message)
 
         if CairnItemTag.WEAPON in target.cairn.tags and equipped:
-            for item in state.character.inventory:
+            for item in actor.sheet.inventory:
                 if item.id != item_id and CairnItemTag.WEAPON in item.cairn.tags:
                     item.cairn.equipped = False
         target.cairn.equipped = equipped
-        self._recompute_derived(state.character)
+        self._recompute_derived(actor.sheet)
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
+    def use_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        intent: str,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         self._require_ready(state)
-        target = self._find_item(state.character, item_id)
+        actor = self._resolve_actor(state, actor_id)
+        target = self._find_item(actor.sheet, item_id)
         if target is None:
             message = f"Unknown inventory item: {item_id}"
             raise ValueError(message)
 
-        resolution = self._resolve_item_use(state, target, intent=intent)
-        self._recompute_derived(state.character)
+        resolution = self._resolve_item_use(state, actor.sheet, target, intent=intent)
+        self._recompute_derived(actor.sheet)
+        actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
             kind=OracleKind.PLAYER_ACTION,
-            summary=resolution.summary,
+            summary=f"{actor_prefix}{resolution.summary}",
             rolls=resolution.rolls,
             question=intent,
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
                 item_id=item_id,
                 item_name=target.name,
                 item_power_kind=target.cairn.power.kind,
@@ -909,18 +972,19 @@ class CairnEngine:
                 wil_after=resolution.wil_after,
                 fatigue_before=resolution.fatigue_before,
                 fatigue_after=resolution.fatigue_after,
-                overloaded=state.character.cairn.overloaded,
+                overloaded=actor.sheet.cairn.overloaded,
             ),
         )
 
     def _resolve_item_use(
         self,
         state: GameState,
+        character: CharacterSheet,
         item: InventoryItem,
         *,
         intent: str,
     ) -> ItemUseResolution:
-        cairn = state.character.cairn
+        cairn = character.cairn
         power = self._effective_item_power(item)
         hp_before = cairn.hp
         str_before = cairn.str_score
@@ -964,7 +1028,7 @@ class CairnEngine:
             cairn.fatigue += 1
             effect_notes.append("Fatigue +1")
 
-        if self._item_use_requires_wil_save(state, power):
+        if self._item_use_requires_wil_save(state, character, power):
             wil_save_target = wil_before
             roll = self._roll(D20_SIDES, "item_wil_save")
             rolls.append(roll)
@@ -980,7 +1044,7 @@ class CairnEngine:
         )
         effect_notes.insert(0, effect_summary)
 
-        item_removed = self._spend_item_use(state, item, power)
+        item_removed = self._spend_item_use(character, item, power)
         uses_after = None if item_removed else item.cairn.uses
         summary = self._item_use_summary(
             item,
@@ -1034,10 +1098,15 @@ class CairnEngine:
             )
         return power
 
-    def _item_use_requires_wil_save(self, state: GameState, power: CairnItemPower) -> bool:
+    def _item_use_requires_wil_save(
+        self,
+        state: GameState,
+        character: CharacterSheet,
+        power: CairnItemPower,
+    ) -> bool:
         if not power.requires_wil_save_in_danger and power.kind != CairnItemPowerKind.SPELLBOOK:
             return False
-        return state.encounter.active or state.character.cairn.deprived
+        return state.encounter.active or character.cairn.deprived
 
     def _apply_item_power_effect(
         self,
@@ -1151,7 +1220,7 @@ class CairnEngine:
 
     def _spend_item_use(
         self,
-        state: GameState,
+        character: CharacterSheet,
         item: InventoryItem,
         power: CairnItemPower,
     ) -> bool:
@@ -1163,8 +1232,8 @@ class CairnEngine:
             or CairnItemTag.CONSUMABLE in item.cairn.tags
         )
         if should_remove and (item.cairn.uses is None or item.cairn.uses == 0):
-            state.character.inventory = [
-                candidate for candidate in state.character.inventory if candidate.id != item.id
+            character.inventory = [
+                candidate for candidate in character.inventory if candidate.id != item.id
             ]
             return True
         return False
@@ -1188,27 +1257,37 @@ class CairnEngine:
             return f"Used {label}: {effect}. Uses {uses_before}->{uses_after}.{recharge}"
         return f"Used {label}: {effect}. No limited uses were consumed."
 
-    def drop_item(self, state: GameState, *, item_id: str) -> str:
+    def drop_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        actor_id: str | None = None,
+    ) -> str:
         self._require_ready(state)
-        target = self._find_item(state.character, item_id)
+        actor = self._resolve_actor(state, actor_id)
+        target = self._find_item(actor.sheet, item_id)
         if target is None:
             message = f"Unknown inventory item: {item_id}"
             raise ValueError(message)
 
-        state.character.inventory = [
-            item for item in state.character.inventory if item.id != item_id
+        actor.sheet.inventory = [
+            item for item in actor.sheet.inventory if item.id != item_id
         ]
-        self._recompute_derived(state.character)
-        return f"Dropped {target.name}."
+        self._recompute_derived(actor.sheet)
+        actor_prefix = "" if actor.is_player else f"{actor.name} "
+        return f"{actor_prefix}dropped {target.name}."
 
     def acquire_items(
         self,
         state: GameState,
         *,
         text: str,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         self._require_ready(state)
+        actor = self._resolve_actor(state, actor_id)
         cleaned = text.strip()
         if not cleaned:
             message = "Acquisition text cannot be empty."
@@ -1216,7 +1295,7 @@ class CairnEngine:
 
         generated: GeneratedInventoryAcquisition | None = None
         if self._config.is_usable():
-            prompt = self._build_acquisition_prompt(state, cleaned)
+            prompt = self._build_acquisition_prompt(state, cleaned, actor=actor)
             acquisition_profile = self._config.profiles.cairn_acquisition
             request = CompletionRequest(
                 model=self._config.model,
@@ -1255,10 +1334,10 @@ class CairnEngine:
             generated.items,
             source=CairnMechanicsSource.EXPLICIT,
         )
-        state.character.inventory.extend(acquired)
-        self._normalize_newly_equipped_weapons(state.character, acquired)
-        self._recompute_derived(state.character)
-        return self._inventory_acquisition_summary(acquired)
+        actor.sheet.inventory.extend(acquired)
+        self._normalize_newly_equipped_weapons(actor.sheet, acquired)
+        self._recompute_derived(actor.sheet)
+        return self._inventory_acquisition_summary(acquired, actor=actor)
 
     def _backfill_character(
         self,
@@ -1390,7 +1469,13 @@ class CairnEngine:
             if CairnItemTag.WEAPON in item.cairn.tags:
                 item.cairn.equipped = item.id == equipped_weapon.id
 
-    def _build_acquisition_prompt(self, state: GameState, text: str) -> str:
+    def _build_acquisition_prompt(
+        self,
+        state: GameState,
+        text: str,
+        *,
+        actor: ResolvedActor,
+    ) -> str:
         return (
             CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE.replace("<<ACQUISITION>>", text)
             .replace("<<CURRENT_SCENE>>", state.current_scene)
@@ -1398,11 +1483,14 @@ class CairnEngine:
             .replace(
                 "<<INVENTORY_JSON>>",
                 json.dumps(
-                    [item.model_dump(mode="json") for item in state.character.inventory],
+                    [item.model_dump(mode="json") for item in actor.sheet.inventory],
                     indent=2,
                 ),
             )
-            .replace("<<CHARACTER_NOTES>>", state.character.cairn.notes or "(none)")
+            .replace(
+                "<<CHARACTER_NOTES>>",
+                f"Actor: {actor.name}\n{actor.sheet.cairn.notes or '(none)'}",
+            )
         )
 
     def _fallback_inventory_acquisition(self, text: str) -> GeneratedInventoryAcquisition:
@@ -1421,7 +1509,12 @@ class CairnEngine:
             ],
         )
 
-    def _inventory_acquisition_summary(self, acquired: list[InventoryItem]) -> str:
+    def _inventory_acquisition_summary(
+        self,
+        acquired: list[InventoryItem],
+        *,
+        actor: ResolvedActor,
+    ) -> str:
         names = ", ".join(item.name for item in acquired)
         equipped = [
             item.name
@@ -1433,10 +1526,15 @@ class CairnEngine:
                 or CairnItemTag.SHIELD in item.cairn.tags
             )
         ]
+        actor_prefix = "" if actor.is_player else f"{actor.name} acquired "
         if equipped:
             equipped_names = ", ".join(equipped)
-            return f"Acquired {names}. Readied: {equipped_names}."
-        return f"Acquired {names}."
+            if actor.is_player:
+                return f"Acquired {names}. Readied: {equipped_names}."
+            return f"{actor_prefix}{names}. Readied: {equipped_names}."
+        if actor.is_player:
+            return f"Acquired {names}."
+        return f"{actor_prefix}{names}."
 
     def _build_backfill_prompt(self, state: GameState) -> str:
         return (
@@ -1779,8 +1877,10 @@ class CairnEngine:
         state: GameState,
         encounter: EncounterState,
         *,
+        defender: CharacterSheet | None = None,
         preferred_attacker_name: str | None = None,
     ) -> HarmApplication:
+        target_sheet = defender or state.character
         active = [
             combatant
             for combatant in encounter.combatants
@@ -1791,12 +1891,12 @@ class CairnEngine:
                 source="No active foes",
                 summary="No enemy retaliation; no active foes remain.",
                 rolls=[],
-                armor_value=state.character.cairn.armor,
+                armor_value=target_sheet.cairn.armor,
                 damage_after_armor=0,
-                hp_before=state.character.cairn.hp,
-                hp_after=state.character.cairn.hp,
-                str_before=state.character.cairn.str_score,
-                str_after=state.character.cairn.str_score,
+                hp_before=target_sheet.cairn.hp,
+                hp_after=target_sheet.cairn.hp,
+                str_before=target_sheet.cairn.str_score,
+                str_after=target_sheet.cairn.str_score,
                 scar_result=None,
             )
 
@@ -1822,7 +1922,7 @@ class CairnEngine:
             ]
         highest_combatant, highest_roll = max(enemy_rolls, key=lambda pair: pair[1].result)
         applied = self._apply_harm_to_character(
-            state.character.cairn,
+            target_sheet.cairn,
             amount=highest_roll.result,
             source=highest_combatant.name,
             in_combat=True,
@@ -1841,17 +1941,24 @@ class CairnEngine:
             scar_result=applied.scar_result,
         )
 
-    def _empty_harm_application(self, state: GameState, *, source: str) -> HarmApplication:
+    def _empty_harm_application(
+        self,
+        state: GameState,
+        *,
+        source: str,
+        defender: CharacterSheet | None = None,
+    ) -> HarmApplication:
+        target_sheet = defender or state.character
         return HarmApplication(
             source=source,
             summary="No enemy retaliation landed.",
             rolls=[],
-            armor_value=state.character.cairn.armor,
+            armor_value=target_sheet.cairn.armor,
             damage_after_armor=0,
-            hp_before=state.character.cairn.hp,
-            hp_after=state.character.cairn.hp,
-            str_before=state.character.cairn.str_score,
-            str_after=state.character.cairn.str_score,
+            hp_before=target_sheet.cairn.hp,
+            hp_after=target_sheet.cairn.hp,
+            str_before=target_sheet.cairn.str_score,
+            str_after=target_sheet.cairn.str_score,
             scar_result=None,
         )
 
@@ -1931,6 +2038,28 @@ class CairnEngine:
         if state.character.cairn.source == CairnMechanicsSource.UNSET:
             message = "Cairn mechanics are not available for this character yet."
             raise ValueError(message)
+
+    def _resolve_actor(self, state: GameState, actor_id: str | None) -> ResolvedActor:
+        if actor_id is None or actor_id == "player":
+            return ResolvedActor(
+                id="player",
+                name=state.character.name,
+                sheet=state.character,
+                is_player=True,
+            )
+        for member in state.party_members:
+            if member.id == actor_id and member.active:
+                if member.sheet.cairn.source == CairnMechanicsSource.UNSET:
+                    message = f"Cairn mechanics are not available for {member.display_label()} yet."
+                    raise ValueError(message)
+                return ResolvedActor(
+                    id=member.id,
+                    name=member.display_label(),
+                    sheet=member.sheet,
+                    is_player=False,
+                )
+        message = f"Unknown active party member: {actor_id}"
+        raise ValueError(message)
 
     def _recompute_derived(self, character: CharacterSheet) -> None:
         cairn = character.cairn
