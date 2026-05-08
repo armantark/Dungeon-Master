@@ -400,7 +400,6 @@ def _start_game_state_stream(  # noqa: PLR0913
     return _streaming_response(session)
 
 
-<<<<<<< HEAD
 def _drive_game_state_session(
     session: StreamSession,
     service_generator: Generator[CompletionDelta, None, GameState],
@@ -497,7 +496,6 @@ def _start_setup_stream(  # noqa: PLR0913
     return _streaming_response(session)
 
 
-<<<<<<< HEAD
 def _drive_setup_payload_session(
     session: StreamSession,
     service_generator: Generator[CompletionDelta, None, object],

@@ -51,6 +51,10 @@ export class StreamTransportError extends Error {
 // backend to be backwards-compatible until the frontend catches up.
 export interface StreamHandlers {
   onMeta?: (event: Extract<StreamEvent, { type: "meta" }>) => void;
+  // Backend pre-narration stage progress. Bootstrap frames arrive in
+  // pipeline order at stream start (each pending or skipped) and the
+  // active/done frames follow as the backend works through them.
+  onStage?: (event: Extract<StreamEvent, { type: "stage" }>) => void;
   onMechanics?: (event: Extract<StreamEvent, { type: "mechanics_ready" }>) => void;
   onOracleOutcome?: (event: Extract<StreamEvent, { type: "oracle_outcome" }>) => void;
   onThinkingDelta?: (event: Extract<StreamEvent, { type: "thinking_delta" }>) => void;
@@ -248,6 +252,9 @@ function dispatch(event: StreamEvent, handlers: StreamHandlers): void {
   switch (event.type) {
     case "meta":
       handlers.onMeta?.(event);
+      return;
+    case "stage":
+      handlers.onStage?.(event);
       return;
     case "mechanics_ready":
       handlers.onMechanics?.(event);

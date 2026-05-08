@@ -34,6 +34,7 @@ F-09 browsing behavior:
 <script lang="ts">
   import { onMount } from "svelte";
   import ChatMessage from "./ChatMessage.svelte";
+  import StageChecklist from "./StageChecklist.svelte";
   import { canRegenerateMessage } from "../lib/message-actions";
   import { game } from "../lib/store.svelte";
   import type { GameState, GameEvent, OracleOutcome } from "../lib/types";
@@ -401,6 +402,18 @@ F-09 browsing behavior:
     {/each}
     {#if provisional}
       <div class="anchor" data-event-id={provisional.id}>
+        {#if game.streaming.stages.length > 0}
+          <!--
+            Stage checklist sits *above* the provisional bubble so the
+            player has something to read while the backend is still in
+            its pre-narration steps (planner → mechanics → continuity →
+            updaters → narration prep). Once the narrator starts
+            streaming and `streaming_narration` flips to active, the
+            checklist remains visible but the focus naturally moves to
+            the prose tokens accumulating below.
+          -->
+          <StageChecklist stages={game.streaming.stages} />
+        {/if}
         <ChatMessage
           eventId={provisional.id}
           speaker={provisional.kind}
@@ -420,7 +433,18 @@ F-09 browsing behavior:
   {/if}
 
   {#if game.isLoading && game.rollPhase === "idle" && provisional === null}
-    <div class="composing"><span class="spinner-row">DM is composing</span></div>
+    {#if game.streaming.stages.length > 0}
+      <!--
+        Edge case: the stream opened (we received stage frames) but the
+        provisional bubble hasn't materialized yet — typically because
+        meta hasn't arrived or the route is one we don't render a
+        provisional bubble for. Keep the checklist visible so the
+        player still gets progress feedback during the wait.
+      -->
+      <div class="composing-stages"><StageChecklist stages={game.streaming.stages} /></div>
+    {:else}
+      <div class="composing"><span class="spinner-row">DM is composing</span></div>
+    {/if}
   {/if}
 </section>
 
@@ -469,6 +493,15 @@ F-09 browsing behavior:
   }
   .composing {
     padding: 0.6rem 1rem;
+  }
+  .composing-stages {
+    /*
+     * Same horizontal inset as `.composing` so the checklist lines up
+     * with the spinner-row when the player switches between the two
+     * surfaces across requests; vertical padding is lighter because
+     * the StageChecklist already has its own bordered card.
+     */
+    padding: 0.2rem 1rem 0.6rem;
   }
 
   /*

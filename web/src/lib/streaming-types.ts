@@ -13,6 +13,11 @@
 //
 // Recommended event names from the plan, in lifecycle order:
 //   meta            once, first frame, request id and routing intent
+//   stage           zero or many, ordered backend pre-narration progress
+//                   updates (planner, mechanics, continuity classifier,
+//                   thread/NPC updaters, narration prep). Lets the UI
+//                   render a live checklist while the model thinks
+//                   instead of staring at a blank composing strip.
 //   mechanics_ready zero or one, deterministic Cairn/oracle resolution
 //                   resolved before any prose token streams
 //   oracle_outcome  alias of mechanics_ready when the resolution comes
@@ -75,6 +80,30 @@ export type StreamRoute =
 // types so the backend can distinguish "this came from the oracle
 // engine" (history-tracked) from "this came from the Cairn engine"
 // (mechanically authoritative). The frontend treats them identically.
+// Backend pre-narration stage progress. The backend emits one bootstrap
+// frame per stage at stream start (status `pending`, or `skipped` for
+// stages that don't apply to the current route — e.g. action endpoints
+// skip `planning_turn` and `resolving_mechanics`), then flips each
+// stage to `active` and `done` as it works through the pipeline.
+//
+// Why an opaque `stage_id` plus a server-authored `label`:
+//   The backend owns the canonical stage taxonomy (see
+//   TURN_STREAM_STAGE_ORDER in service.py). Hardcoding a TypeScript
+//   enum here would mean two places to edit when a new pipeline step
+//   lands; instead we let the backend ship the human-readable label
+//   alongside the id and the frontend renders whatever the backend
+//   declared. Unknown stage_ids appended to the order arrive in the
+//   order they're emitted, which is exactly what the checklist renderer
+//   wants.
+export type StreamStageStatus = "pending" | "active" | "done" | "skipped";
+
+export interface StreamStage {
+  type: "stage";
+  stage_id: string;
+  label: string;
+  status: StreamStageStatus;
+}
+
 export interface StreamMechanicsReady {
   type: "mechanics_ready";
   outcome: OracleOutcome;
@@ -142,6 +171,7 @@ export interface StreamError {
 
 export type StreamEvent =
   | StreamMeta
+  | StreamStage
   | StreamMechanicsReady
   | StreamOracleOutcome
   | StreamThinkingDelta

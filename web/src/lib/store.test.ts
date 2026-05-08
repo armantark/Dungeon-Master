@@ -20,6 +20,7 @@ describe("GameStore setup streaming", () => {
       thinking: "",
       pendingOutcome: null,
       resuming: false,
+      stages: [],
     };
     game.notes = [];
     game.inspectorOpen = false;
@@ -286,6 +287,143 @@ describe("GameStore setup streaming", () => {
 
     expect(result).toBeNull();
     expect(game.error).toBe("The request ended before a final result arrived.");
+    expect(game.isLoading).toBe(false);
+  });
+
+  it("threads backend stage frames into the streaming.stages checklist in pipeline order", async () => {
+    // The backend emits an ordered `stage` bootstrap at stream open
+    // (one frame per pipeline step, status `pending` or `skipped`) and
+    // then flips each step to `active` and `done` as it works
+    // through them. The store must:
+    //   - keep the bootstrap order stable as `order` indices,
+    //   - update an existing stage in place (not append a duplicate)
+    //     when a later frame flips its status,
+    //   - clear the checklist when the stream finishes.
+    const previousState: NonNullable<typeof game.state> = {
+      id: "state_pre",
+      oracle_history: [],
+    } as never;
+    const finalState: NonNullable<typeof game.state> = {
+      id: "state_post",
+      oracle_history: [],
+    } as never;
+    game.state = previousState;
+
+    let observedDuringStream: ReturnType<typeof getStages> | null = null;
+    function getStages() {
+      // Snapshot is a shallow copy keyed by stage_id so the assertion
+      // doesn't race the store's own array-replace semantics. We
+      // sort by `order` because the checklist UI also sorts by it.
+      return game.streaming.stages
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map((s) => ({ id: s.stageId, status: s.status, order: s.order }));
+    }
+
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
+      (_text, handlers) => {
+        handlers.onMeta?.({ type: "meta", request_id: "req_1", route: "player_action" });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "planning_turn",
+          label: "Planning turn",
+          status: "pending",
+        });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "preparing_narration",
+          label: "Preparing narration",
+          status: "pending",
+        });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "streaming_narration",
+          label: "Streaming narration",
+          status: "pending",
+        });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "planning_turn",
+          label: "Planning turn",
+          status: "active",
+        });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "planning_turn",
+          label: "Planning turn",
+          status: "done",
+        });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "preparing_narration",
+          label: "Preparing narration",
+          status: "active",
+        });
+        // Snapshot mid-stream so we can assert in-place updates and
+        // stable ordering before the stream completes.
+        observedDuringStream = getStages();
+        handlers.onFinalState?.({ type: "final_state", state: finalState, thinking: null });
+        return Promise.resolve({ kind: "final", final: { type: "final_state", state: finalState, thinking: null } } as never);
+      },
+    );
+
+    await game.submitTurn("I peer into the dark.");
+
+    expect(observedDuringStream).not.toBeNull();
+    // Order is the bootstrap order; stages added later were appended.
+    expect(observedDuringStream!.map((s) => s.id)).toEqual([
+      "planning_turn",
+      "preparing_narration",
+      "streaming_narration",
+    ]);
+    // In-place updates kept the same `order` index for planning_turn
+    // even after two status flips (active, done).
+    expect(observedDuringStream!.map((s) => s.order)).toEqual([0, 1, 2]);
+    expect(observedDuringStream!.map((s) => s.status)).toEqual([
+      "done",
+      "active",
+      "pending",
+    ]);
+    // The store always clears the streaming buffer at end-of-flight so
+    // the checklist doesn't linger on the next idle composer state.
+    expect(game.streaming.stages).toEqual([]);
+    expect(game.streaming.active).toBe(false);
+  });
+
+  it("clears streaming.stages when the player cancels a streamed request mid-flight", async () => {
+    // Cancel must collapse the in-flight checklist immediately so the
+    // chat surface doesn't show a stale "active" pulse for whichever
+    // step the backend was in when we tore the connection down. We
+    // drive a real streamed turn that hangs after emitting a few
+    // stage frames, then call cancelCurrentRequest from a microtask
+    // and assert the stages array is empty after the call resolves.
+    vi.spyOn(api, "cancelRequest").mockResolvedValue(undefined as never);
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
+      (_text, handlers, signal) => {
+        handlers.onMeta?.({ type: "meta", request_id: "req_42", route: "player_action" });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "planning_turn",
+          label: "Planning turn",
+          status: "active",
+        });
+        // Trigger cancel from the same tick so the abort is observed
+        // before the next handler call would land. The promise the
+        // store awaits resolves with `kind: "aborted"` once the
+        // signal trips.
+        queueMicrotask(() => game.cancelCurrentRequest());
+        return new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            resolve({ kind: "aborted", reason: "client" } as never);
+          });
+        });
+      },
+    );
+
+    await game.submitTurn("I look around.");
+
+    expect(game.streaming.stages).toEqual([]);
+    expect(game.streaming.active).toBe(false);
     expect(game.isLoading).toBe(false);
   });
 
