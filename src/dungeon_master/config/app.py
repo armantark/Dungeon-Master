@@ -153,8 +153,9 @@ class LLMProfiles:
     cairn_backfill: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.1,
-            max_tokens=4500,
+            max_tokens=12000,
             reasoning_effort="low",
+            reasoning_max_tokens=1200,
         ),
     )
     cairn_encounter_seed: TaskProfile = field(

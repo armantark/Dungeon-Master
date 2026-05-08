@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from dungeon_master.models import (
     EventType,
     GameEvent,
     GameState,
+    JSONValue,
     Likelihood,
     NPCPlayerLabelKind,
     NPCStatus,
@@ -74,6 +76,7 @@ from dungeon_master.thread_updater import (
 from dungeon_master.turn_router import PlannedTurnOpKind, TurnPlan, TurnRouter
 
 CURRENT_NPC_ROSTER_VERSION = 2
+CURRENT_SAVE_SCHEMA_VERSION = 4
 TURN_STREAM_STAGE_LABELS: dict[str, str] = {
     "planning_turn": "Planning turn",
     "resolving_mechanics": "Resolving mechanics",
@@ -646,10 +649,12 @@ class GameService:
             cancel_token=cancel_token,
         )
         terminal_state_synced = self._sync_terminal_state_on_load(working)
+        schema_defaults_persisted = self._ensure_current_save_schema(working)
         state_changed = (
             character_backfilled
             or npc_roster_repaired
             or terminal_state_synced
+            or schema_defaults_persisted
         )
 
         rebuilt_memory = self._memory_for_state(
@@ -3096,6 +3101,22 @@ class GameService:
         del committed_turn
         self._store.save(state, create_checkpoint=create_checkpoint)
         self._store.save_memory(self._memory_for_state(state, force_rebuild=True))
+
+    def _ensure_current_save_schema(self, state: GameState) -> bool:
+        """Persist newly-added schema defaults during explicit backfill.
+
+        Pydantic fills missing fields (for example item `power` objects and
+        `party_members`) while loading old saves, but that alone does not rewrite
+        the JSON file. The explicit backfill command should therefore compare the
+        original parsed payload to the current model dump and mark the state dirty
+        when the on-disk shape lacks fields that now have canonical defaults.
+        """
+        if not self._store.exists():
+            return False
+
+        before: JSONValue = json.loads(self._store.state_path.read_text(encoding="utf-8"))
+        after = state.model_dump(mode="json")
+        return before != after
 
     def _memory_for_state(
         self,
