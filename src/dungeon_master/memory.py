@@ -278,14 +278,10 @@ class NarrativeMemoryContext(StrictModel):
             sections.append(f"Current scene summary: {self.scene_summary}")
         if self.active_encounter_summary:
             sections.append(f"Active encounter: {self.active_encounter_summary}")
-        if self.campaign_chronicle:
-            sections.append(
-                "Campaign chronicle:\n"
-                + "\n".join(f"- {item}" for item in self.campaign_chronicle),
-            )
         if self.recent_turns:
             sections.append(
-                "Recent turn summaries:\n" + "\n".join(f"- {item}" for item in self.recent_turns),
+                "Most recent scene turns:\n"
+                + "\n".join(f"- {item}" for item in self.recent_turns),
             )
         if self.open_loops:
             sections.append("Open loops:\n" + "\n".join(f"- {item}" for item in self.open_loops))
@@ -302,6 +298,11 @@ class NarrativeMemoryContext(StrictModel):
             sections.append(
                 "Callback candidates:\n"
                 + "\n".join(f"- {item}" for item in self.callback_candidates),
+            )
+        if self.campaign_chronicle:
+            sections.append(
+                "Earlier scene chronicle:\n"
+                + "\n".join(f"- {item}" for item in self.campaign_chronicle),
             )
         return "\n\n".join(sections)
 
@@ -365,8 +366,16 @@ class MemoryManager:
         player_input: str,
         outcome: OracleOutcome,
     ) -> NarrativeMemoryContext:
-        del player_input
-        recent_turns = [self._render_turn(turn) for turn in memory.recent_turn_summaries[-3:]]
+        query = player_input.lower()
+        scene_recent_turns = (
+            memory.current_scene_turns[-3:]
+            if memory.current_scene_turns
+            else memory.recent_turn_summaries[-3:]
+        )
+        recent_turns = [
+            self._render_narrative_recent_turn(turn)
+            for turn in reversed(scene_recent_turns)
+        ]
         return NarrativeMemoryContext(
             scene_summary=memory.current_scene_summary,
             active_encounter_summary=memory.active_encounter_summary,
@@ -374,8 +383,8 @@ class MemoryManager:
             recent_turns=recent_turns,
             campaign_chronicle=self._campaign_chronicle_lines(memory),
             open_loops=[loop.text for loop in memory.open_loops[:4]],
-            relevant_memory=self._narrative_memory_lines(state, memory, outcome),
-            revealed_facts=self._narrative_facts(memory, outcome),
+            relevant_memory=self._narrative_memory_lines(state, memory, outcome, query),
+            revealed_facts=self._narrative_facts(memory, outcome, query),
             callback_candidates=self._narrative_callbacks(memory, outcome),
         )
 
@@ -419,7 +428,7 @@ class MemoryManager:
             recent_turns=[self._render_turn(turn) for turn in memory.recent_turn_summaries[-2:]],
             active_threads=active_threads[:4],
             open_loops=[loop.text for loop in memory.open_loops[:4]],
-            revealed_facts=self._narrative_facts(memory, outcome)[:4],
+            revealed_facts=self._narrative_facts(memory, outcome, query)[:4],
             callback_candidates=self._narrative_callbacks(memory, outcome)[:3],
         )
 
@@ -468,7 +477,7 @@ class MemoryManager:
             recent_turns=[self._render_turn(turn) for turn in memory.recent_turn_summaries[-2:]],
             active_npcs=active_npcs[:4],
             open_loops=[loop.text for loop in memory.open_loops[:4]],
-            revealed_facts=self._narrative_facts(memory, outcome)[:4],
+            revealed_facts=self._narrative_facts(memory, outcome, query)[:4],
             callback_candidates=self._narrative_callbacks(memory, outcome)[:3],
         )
 
@@ -926,6 +935,7 @@ class MemoryManager:
         state: GameState,
         memory: MemoryState,
         outcome: OracleOutcome,
+        query: str,
     ) -> list[str]:
         lines: list[str] = []
         direct_thread_ids = self._thread_ids_for_outcome(outcome)
@@ -943,13 +953,31 @@ class MemoryManager:
             )
             if thread is not None:
                 lines.append(f"Thread - {thread.title}: {thread.summary}")
-        lines.extend(
-            f"Thread - {thread.title}: {thread.summary}"
+        matched_threads = [
+            thread
             for thread in memory.thread_memory
             if (
                 thread.status == ThreadStatus.ACTIVE
                 and thread.thread_id not in direct_thread_ids
+                and self._query_matches_label(query, thread.title)
             )
+        ]
+        fallback_threads = sorted(
+            [
+                thread
+                for thread in memory.thread_memory
+                if (
+                    thread.status == ThreadStatus.ACTIVE
+                    and thread.thread_id not in direct_thread_ids
+                    and thread not in matched_threads
+                )
+            ],
+            key=lambda thread: thread.last_touched_turn,
+            reverse=True,
+        )
+        lines.extend(
+            f"Thread - {thread.title}: {thread.summary}"
+            for thread in [*matched_threads[:2], *fallback_threads[:2]]
         )
         direct_npc_ids = self._npc_ids_for_outcome(outcome)
         for npc_id in direct_npc_ids:
@@ -959,18 +987,44 @@ class MemoryManager:
             )
             if npc is not None:
                 lines.append(f"NPC - {_npc_memory_label(npc)}: {npc.summary}")
-        lines.extend(
-            f"NPC - {_npc_memory_label(npc)}: {npc.summary}"
+        matched_npcs = [
+            npc
             for npc in memory.npc_memory
             if (
                 npc.status == NPCStatus.ACTIVE
-                and npc.last_touched_turn > 0
                 and npc.npc_id not in direct_npc_ids
+                and (
+                    self._query_matches_label(query, npc.name)
+                    or self._query_matches_label(query, _npc_memory_label(npc))
+                )
             )
+        ]
+        fallback_npcs = sorted(
+            [
+                npc
+                for npc in memory.npc_memory
+                if (
+                    npc.status == NPCStatus.ACTIVE
+                    and npc.last_touched_turn > 0
+                    and npc.npc_id not in direct_npc_ids
+                    and npc not in matched_npcs
+                )
+            ],
+            key=lambda npc: npc.last_touched_turn,
+            reverse=True,
+        )
+        lines.extend(
+            f"NPC - {_npc_memory_label(npc)}: {npc.summary}"
+            for npc in [*matched_npcs[:2], *fallback_npcs[:2]]
         )
         return lines[:6]
 
-    def _narrative_facts(self, memory: MemoryState, outcome: OracleOutcome) -> list[str]:
+    def _narrative_facts(
+        self,
+        memory: MemoryState,
+        outcome: OracleOutcome,
+        query: str,
+    ) -> list[str]:
         selected: list[str] = []
         direct_thread_ids = self._thread_ids_for_outcome(outcome)
         direct_npc_ids = self._npc_ids_for_outcome(outcome)
@@ -988,6 +1042,12 @@ class MemoryManager:
             for fact in reversed(memory.revealed_facts)
             if fact.scene_key == memory.current_scene_key
         )
+        if query:
+            selected.extend(
+                fact.text
+                for fact in reversed(memory.revealed_facts)
+                if self._query_matches_label(query, fact.text)
+            )
         return _dedupe_strings(selected)[:5]
 
     def _narrative_callbacks(self, memory: MemoryState, outcome: OracleOutcome) -> list[str]:
@@ -1176,6 +1236,12 @@ class MemoryManager:
 
     def _render_turn(self, turn: TurnMemory) -> str:
         return _clip(f"Turn {turn.turn_index}: {turn.player_input} -> {turn.oracle_summary}", 180)
+
+    def _render_narrative_recent_turn(self, turn: TurnMemory) -> str:
+        parts = [f"Turn {turn.turn_index}: {turn.player_input} -> {turn.oracle_summary}"]
+        if turn.narrative_excerpt.strip():
+            parts.append(f"Narration: {turn.narrative_excerpt.strip()}")
+        return _clip(" | ".join(parts), 320)
 
     def _planner_inventory_summary(self, state: GameState, query: str) -> str:
         items = state.character.inventory

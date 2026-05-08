@@ -27,15 +27,33 @@ Return exactly one lowercase token and nothing else:
 - both
 
 Choose:
-- none: the turn is self-contained and very unlikely to create, advance, resolve,
-  or clarify long-running threads or recurring NPCs
+- none: the turn is self-contained and very unlikely to create, advance,
+  resolve, reveal, retire, rename, or materially update long-running threads
+  or recurring NPCs
 - threads: likely thread continuity only
 - npcs: likely recurring-NPC continuity only
 - both: both may matter, or there is enough uncertainty that skipping one would be risky
 
+Clarification and lore-check questions:
+- Choose `none` when the player is asking what is already known, remembered,
+  implied, or legible from the immediate scene ("do we know his name?", "is
+  he of legend?", "was this chapel my dwelling?", "what do I remember?").
+  The possible answer might be a known name, no known name, a title/descriptor
+  only, a known legend, an uncertain rumor, or a refusal to reveal the fact.
+  The classifier must not pre-answer that question by choosing updater scope.
+  The narrator answers from recent scene transcript, state, and memory.
+- Do NOT run thread/NPC updaters just because the question mentions an
+  existing thread, visible NPC, hidden NPC, title, icon, legend, or name.
+  Updaters are for durable continuity changes, not for pre-narration lookup.
+- If the resolved turn already says a durable change happened (a name is
+  disclosed, an NPC is introduced/retired/renamed, a thread advances/resolves),
+  choose the matching updater scope. Otherwise, leave the answer to narration.
+
 Be conservative.
-If you are uncertain, return `both`.
-Prefer `none` only when the turn looks obviously local/mechanical and not continuity-bearing.
+If you are uncertain whether the turn will materially change durable continuity,
+return `both`.
+If the uncertainty is only about which already-established fact the narrator
+should recall or explain, return `none`.
 """
 
 CONTINUITY_CLASSIFIER_USER_PROMPT_TEMPLATE = """Current scene:

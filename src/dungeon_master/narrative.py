@@ -67,6 +67,10 @@ Discipline:
 - Keep narration compact: usually one paragraph, at most two unless the oracle
   outcome or a scene transition genuinely needs more space.
 - Mirror the player's declared action before extending the scene.
+- When a detail is ambiguous, especially a pronoun reference, resolve it
+  against the immediately preceding scene transcript and the most recent
+  scene turns first; only fall back to older campaign memory if recent
+  context does not answer it.
 - Treat item descriptions, atmospheric details, and latent threats as flavor,
   not as hardened present-tense facts, unless the oracle outcome or canonical
   state explicitly supports them.
@@ -445,6 +449,8 @@ class NarrativeEngine:
                     "Write 1-2 compact paragraphs of playable narration, usually 1. "
                     "Use second person (`you`) for the player-character. "
                     "Mirror the player's action before extending the fiction. "
+                    "When recent scene context and older campaign memory differ, trust the "
+                    "most recent scene transcript and latest turn context. "
                     "Only harden facts that are supported by the supplied outcome/state. "
                     "End with one concrete prompt for action."
                 ),

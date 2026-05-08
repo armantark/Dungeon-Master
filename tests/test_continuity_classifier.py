@@ -112,6 +112,67 @@ def test_continuity_classifier_prompt_is_small_and_grounded() -> None:
     assert "Visible recurring NPCs:" in user_prompt
     assert "Hidden recurring NPCs:" in user_prompt
     assert "The Hierophant" in user_prompt
+    assert "Clarification and lore-check questions" in completion.request.messages[0]["content"]
+    system_prompt = " ".join(completion.request.messages[0]["content"].split())
+    assert "is he of legend?" in system_prompt
+    assert "known name, no known name, a title/descriptor only" in system_prompt
+    assert "must not pre-answer that question" in system_prompt
+    assert "pre-narration lookup" in completion.request.messages[0]["content"]
+
+
+def test_continuity_classifier_can_skip_clarification_lore_questions() -> None:
+    completion = RecordingContinuityCompletion("none")
+    classifier = ContinuityClassifier(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None),
+        completion_function=completion,
+    )
+    state = sample_state()
+    state.hidden_npcs.append(
+        NPC(
+            name="The Hierophant",
+            role="Face-thief patriarch",
+            disposition="patient malice",
+        ),
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=5,
+    )
+
+    scope = classifier.classify_update_scope(
+        state,
+        player_input="Do we know his name? Or is it of legend?",
+        outcome=outcome,
+    )
+
+    assert scope == ContinuityUpdateScope.NONE
+
+
+def test_continuity_classifier_prompt_distinguishes_resolved_disclosures() -> None:
+    completion = RecordingContinuityCompletion("npcs")
+    classifier = ContinuityClassifier(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The icon's patriarch is named as Saint Vyr, a dead patron of the abbey.",
+        chaos_factor=5,
+    )
+
+    scope = classifier.classify_update_scope(
+        state,
+        player_input="Do we know his name?",
+        outcome=outcome,
+    )
+
+    assert scope == ContinuityUpdateScope.NPCS
+    assert completion.request is not None
+    system_prompt = " ".join(completion.request.messages[0]["content"].split())
+    assert "If the resolved turn already says a durable change happened" in system_prompt
+    assert "a name is disclosed" in system_prompt
 
 
 def test_continuity_classifier_logs_scope_and_traces_request(

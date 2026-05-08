@@ -341,3 +341,89 @@ def test_memory_manager_compacts_prior_scenes_into_campaign_chronicle() -> None:
     assert len(narrator.scene_messages) == 2
     assert narrator.scene_messages[0].content == "I scan the road for living company."
     assert any(line.startswith("Scene 1:") for line in narrator.campaign_chronicle)
+
+
+def test_narrator_memory_prefers_latest_current_scene_turns_first() -> None:
+    state = sample_state()
+    manager = MemoryManager()
+    first = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="You study the icon for the patriarch's face.",
+        chaos_factor=state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+    second = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The patriarch's icon keeps that face turned toward you.",
+        chaos_factor=state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="I study the icon and the patriarch's face.",
+            outcome=first,
+            narrative_text="The icon's old patriarch stares down through smoke-black varnish.",
+        ),
+    )
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="Is the patriarch on the icon the same face again?",
+            outcome=second,
+            narrative_text="The same gaunt face haunts the icon and the chapel wall alike.",
+        ),
+        memory=memory,
+    )
+
+    narrator = manager.retrieve_for_narrator(
+        state,
+        memory,
+        "Do we know his name? Or is it of legend?",
+        second,
+    )
+
+    assert narrator.recent_turns
+    assert narrator.recent_turns[0].startswith(
+        "Turn 2: Is the patriarch on the icon the same face again?",
+    )
+    assert "Narration: The same gaunt face haunts the icon" in narrator.recent_turns[0]
+
+
+def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:
+    state = sample_state()
+    state.npcs[0].name = "The Hierophant"
+    state.npcs[0].player_label = "The ash-veiled bellringer"
+    state.npcs[0].player_label_kind = NPCPlayerLabelKind.DESCRIPTOR
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The ash-veiled bellringer waits beneath the icon.",
+        chaos_factor=state.chaos_factor,
+    )
+    manager = MemoryManager()
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="I ask whether the ash-veiled bellringer has a name.",
+            outcome=outcome,
+            narrative_text="The bellringer's veil never parts enough to answer you.",
+        ),
+    )
+
+    narrator = manager.retrieve_for_narrator(
+        state,
+        memory,
+        "Do we know the ash-veiled bellringer's name?",
+        outcome,
+    )
+
+    assert any(
+        "The ash-veiled bellringer (descriptor)" in line
+        for line in narrator.relevant_memory
+    )
+    assert all("The Hierophant" not in line for line in narrator.relevant_memory)

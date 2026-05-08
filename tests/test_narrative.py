@@ -112,12 +112,12 @@ def test_narrative_engine_passes_task_based_reasoning_to_litellm() -> None:
     assert result == "The abbey waits."
     assert completion.model == DEFAULT_MODEL
     assert completion.api_key == "test-key"
-    assert completion.reasoning_effort == "medium"
+    assert completion.reasoning_effort == "low"
     # OpenRouter forbids combining `effort` and `max_tokens` in the nested
     # reasoning dict, so we surface `effort` only via the top-level
     # `reasoning_effort` alias and keep `max_tokens` here for deterministic
     # budget control.
-    assert completion.reasoning == {"max_tokens": 1200, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 450, "exclude": True}
 
 
 def test_completion_logs_llm_trace(
@@ -182,11 +182,14 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     user_prompt = completion.messages[1]["content"]
     assert "usually one paragraph, at most two" in system_prompt
     assert "Mirror the player's declared action before extending the scene." in system_prompt
+    assert "especially a pronoun reference" in system_prompt
+    assert "scene transcript and the most recent" in system_prompt
     assert "Address the player-character in second person" in system_prompt
     assert "latent threats as flavor" in system_prompt
     assert "hardened present-tense facts" in system_prompt
     assert "Write 1-2 compact paragraphs of playable narration, usually 1." in user_prompt
     assert "Use second person (`you`) for the player-character." in user_prompt
+    assert "trust the most recent scene transcript and latest turn context" in user_prompt
     assert "Only harden facts that are supported by the supplied outcome/state." in user_prompt
 
 
@@ -300,7 +303,7 @@ def test_narrative_engine_allows_fixed_medium_reasoning() -> None:
     engine.generate(state, outcome, "I enter the hospice.")
 
     assert completion.reasoning_effort == "medium"
-    assert completion.reasoning == {"max_tokens": 1200, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 900, "exclude": True}
 
 
 def test_narrative_stream_raises_on_cancellation_without_fallback() -> None:

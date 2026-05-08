@@ -50,6 +50,21 @@ class EventType(StrEnum):
     SYSTEM = "system"
 
 
+class StageStatus(StrEnum):
+    """Persisted mirror of `narrative.StreamStageStatus`.
+
+    Lives in `models.py` because `GameEvent.stage_timings` carries it
+    onto disk, and the persistence-mirror file is the source of truth
+    for what we serialize. The wire enum in `narrative.py` stays
+    decoupled so streaming code can move independently of the schema.
+    """
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
 class ThreadStatus(StrEnum):
     ACTIVE = "active"
     RESOLVED = "resolved"
@@ -423,6 +438,23 @@ class OracleOutcome(StrictModel):
     cairn: CairnResolution | None = None
 
 
+class StageTiming(StrictModel):
+    """Persisted timing for one pre-narration pipeline stage.
+
+    The status is recorded as the *terminal* status reached during the
+    turn (`done` / `skipped`), or `active` when the stream cancelled
+    mid-stage. `started_at` is None for stages that were skipped before
+    they ran; `completed_at` is None for stages that were still active
+    at termination.
+    """
+
+    stage_id: str
+    label: str
+    status: StageStatus
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class GameEvent(StrictModel):
     id: str = Field(default_factory=lambda: new_id("event"))
     created_at: datetime = Field(default_factory=utc_now)
@@ -431,6 +463,11 @@ class GameEvent(StrictModel):
     content: str
     thinking: str = ""
     oracle_outcome_id: str | None = None
+    # Pre-narration pipeline timings recorded by `StageTimingTracker`
+    # while the turn streamed. Empty for non-narrative events and for
+    # legacy saves that predate the field. Default `[]` keeps the
+    # JSON-on-disk contract backwards-compatible without a migration.
+    stage_timings: list[StageTiming] = Field(default_factory=list)
 
 
 class GameState(StrictModel):

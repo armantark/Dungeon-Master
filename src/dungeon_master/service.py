@@ -44,6 +44,8 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     SceneStatus,
+    StageStatus,
+    StageTiming,
     utc_now,
 )
 from dungeon_master.narrative import (
@@ -80,6 +82,82 @@ TURN_STREAM_STAGE_LABELS: dict[str, str] = {
     "streaming_narration": "Streaming narration",
 }
 TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
+
+# Map between the wire-stream enum (`narrative.StreamStageStatus`) and
+# the persisted enum (`models.StageStatus`). The two are intentionally
+# separate types — wire vs. persistence — so the streaming protocol can
+# evolve without forcing a save migration. The mapping is total and
+# direct; we keep it as a module-level constant rather than a method so
+# the lookup can be re-used inside `StageTimingTracker.record`.
+_STAGE_STATUS_FROM_STREAM: dict[StreamStageStatus, StageStatus] = {
+    StreamStageStatus.PENDING: StageStatus.PENDING,
+    StreamStageStatus.ACTIVE: StageStatus.ACTIVE,
+    StreamStageStatus.DONE: StageStatus.DONE,
+    StreamStageStatus.SKIPPED: StageStatus.SKIPPED,
+}
+
+
+class StageTimingTracker:
+    """Records per-stage start / end timestamps for one streamed turn.
+
+    The tracker is the canonical owner of stage timings while a turn
+    streams. It updates on every status transition emitted via
+    ``_stage_delta``: ``ACTIVE`` writes ``started_at`` (idempotent —
+    we keep the first-seen timestamp so a repeated ACTIVE doesn't
+    reset the clock), and ``DONE`` / ``SKIPPED`` write ``completed_at``.
+    The tracker preserves bootstrap order so ``snapshot()`` returns the
+    stages in the same sequence the frontend renders the checklist.
+
+    The tracker deliberately does not read or yield ``CompletionDelta``
+    values. It is invoked alongside the existing ``_stage_delta`` so
+    the streaming generator's shape stays unchanged; callers thread one
+    tracker through the entire turn and attach its snapshot to the
+    persisted ``GameEvent`` once the narrator finishes.
+    """
+
+    def __init__(self) -> None:
+        # Insertion-ordered map keyed by stage_id. We snapshot by
+        # iterating insertion order rather than re-sorting, because the
+        # bootstrap pass that primes the tracker already emits stages
+        # in canonical pipeline order.
+        self._records: dict[str, StageTiming] = {}
+
+    def record(self, stage_id: str, label: str, status: StreamStageStatus) -> None:
+        persisted_status = _STAGE_STATUS_FROM_STREAM[status]
+        existing = self._records.get(stage_id)
+        now = utc_now()
+        if existing is None:
+            self._records[stage_id] = StageTiming(
+                stage_id=stage_id,
+                label=label,
+                status=persisted_status,
+                started_at=now if status == StreamStageStatus.ACTIVE else None,
+                completed_at=(
+                    now
+                    if status in (StreamStageStatus.DONE, StreamStageStatus.SKIPPED)
+                    else None
+                ),
+            )
+            return
+        # `started_at` is sticky: once we've observed an ACTIVE we keep
+        # that wall-clock timestamp even if the stage flips through
+        # repeated states. `completed_at` is final on DONE/SKIPPED.
+        started = existing.started_at
+        if status == StreamStageStatus.ACTIVE and started is None:
+            started = now
+        completed = existing.completed_at
+        if status in (StreamStageStatus.DONE, StreamStageStatus.SKIPPED) and completed is None:
+            completed = now
+        self._records[stage_id] = StageTiming(
+            stage_id=stage_id,
+            label=label,
+            status=persisted_status,
+            started_at=started,
+            completed_at=completed,
+        )
+
+    def snapshot(self) -> list[StageTiming]:
+        return list(self._records.values())
 
 
 @dataclass(frozen=True)
@@ -1236,8 +1314,10 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
+        tracker = StageTimingTracker()
         yield from self._iter_turn_stage_bootstrap(
             skipped_stage_ids={"planning_turn", "resolving_mechanics"},
+            tracker=tracker,
         )
         state = self.load_state(cancel_token=cancel_token)
         self._ensure_active(state)
@@ -1260,6 +1340,7 @@ class GameService:
                 oracle_title=None,
                 queued_events=queued_events,
                 cancel_token=cancel_token,
+                tracker=tracker,
             )
         )
 
@@ -1269,10 +1350,11 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
-        yield from self._iter_turn_stage_bootstrap()
-        yield self._stage_delta("planning_turn", StreamStageStatus.ACTIVE)
+        tracker = StageTimingTracker()
+        yield from self._iter_turn_stage_bootstrap(tracker=tracker)
+        yield self._stage_delta("planning_turn", StreamStageStatus.ACTIVE, tracker=tracker)
         plan, state = self._plan_turn_and_load_state(text, cancel_token=cancel_token)
-        yield self._stage_delta("planning_turn", StreamStageStatus.DONE)
+        yield self._stage_delta("planning_turn", StreamStageStatus.DONE, tracker=tracker)
         self._ensure_active(state)
         queued_events: list[GameEvent] = []
         self._queue_event(
@@ -1281,9 +1363,9 @@ class GameService:
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
         self._raise_if_cancelled(cancel_token)
-        yield self._stage_delta("resolving_mechanics", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("resolving_mechanics", StreamStageStatus.ACTIVE, tracker=tracker)
         executed = self._execute_turn_plan(state, plan, cancel_token=cancel_token)
-        yield self._stage_delta("resolving_mechanics", StreamStageStatus.DONE)
+        yield self._stage_delta("resolving_mechanics", StreamStageStatus.DONE, tracker=tracker)
         return (yield from self._stream_oracle_turn(
             state=state,
             player_input=text,
@@ -1292,6 +1374,7 @@ class GameService:
             queued_events=queued_events,
             execution_context=executed.execution_context,
             cancel_token=cancel_token,
+            tracker=tracker,
         ))
 
     def stream_regenerate_response(
@@ -1300,6 +1383,7 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
+        tracker = StageTimingTracker()
         yield from self._iter_turn_stage_bootstrap(
             skipped_stage_ids={
                 "planning_turn",
@@ -1308,6 +1392,7 @@ class GameService:
                 "updating_threads",
                 "updating_npcs",
             },
+            tracker=tracker,
         )
         state = self.load_state(cancel_token=cancel_token)
         self._ensure_active(state)
@@ -1359,7 +1444,7 @@ class GameService:
             ),
         )
         self._raise_if_cancelled(cancel_token)
-        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE, tracker=tracker)
         working_memory = self._load_turn_memory_state(restored_state)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
@@ -1367,8 +1452,8 @@ class GameService:
             outcome=outcome,
             working_memory=working_memory,
         )
-        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE)
-        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE, tracker=tracker)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE, tracker=tracker)
         narration = yield from self._iter_stream_narrative(
             restored_state,
             outcome,
@@ -1378,7 +1463,7 @@ class GameService:
             scene_messages=scene_messages,
             cancel_token=cancel_token,
         )
-        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
         self._queue_event(
             restored_state,
             queued_events,
@@ -1388,6 +1473,7 @@ class GameService:
                 content=narration.content,
                 thinking=narration.thinking,
                 oracle_outcome_id=outcome.id,
+                stage_timings=tracker.snapshot(),
             ),
         )
         self._persist_streamed_state(
@@ -1655,6 +1741,7 @@ class GameService:
         queued_events: list[GameEvent],
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
+        tracker: StageTimingTracker | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
         working_memory = self._load_turn_memory_state(state)
         self._stamp_scene_snapshot(state, outcome)
@@ -1666,6 +1753,7 @@ class GameService:
             execution_context=execution_context,
             cancel_token=cancel_token,
             working_memory=working_memory,
+            tracker=tracker,
         )
         terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
@@ -1687,15 +1775,15 @@ class GameService:
             state=state.model_copy(deep=True),
         )
         self._raise_if_cancelled(cancel_token)
-        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE, tracker=tracker)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             state,
             player_input=player_input,
             outcome=outcome,
             working_memory=working_memory,
         )
-        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE)
-        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE, tracker=tracker)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE, tracker=tracker)
         narration = yield from self._iter_stream_narrative(
             state,
             outcome,
@@ -1705,7 +1793,13 @@ class GameService:
             scene_messages=scene_messages,
             cancel_token=cancel_token,
         )
-        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
+        # Snapshot the tracker after the final stage flips DONE so the
+        # persisted GameEvent carries the complete pre-narration timing
+        # record. Empty tracker → empty list, which is the same as a
+        # legacy save and keeps the UI's compact-checklist render path
+        # robust against missing timings.
+        timings = tracker.snapshot() if tracker is not None else []
         self._queue_event(
             state,
             queued_events,
@@ -1715,6 +1809,7 @@ class GameService:
                 content=narration.content,
                 thinking=narration.thinking,
                 oracle_outcome_id=outcome.id,
+                stage_timings=timings,
             ),
         )
         revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
@@ -2247,9 +2342,10 @@ class GameService:
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
         working_memory: MemoryState | None = None,
+        tracker: StageTimingTracker | None = None,
     ) -> Generator[CompletionDelta, None, MemoryState]:
         memory = self._memory_for_state(state, existing_memory=working_memory)
-        yield self._stage_delta("classifying_continuity", StreamStageStatus.ACTIVE)
+        yield self._stage_delta("classifying_continuity", StreamStageStatus.ACTIVE, tracker=tracker)
         scope = self._continuity_classifier.classify_update_scope(
             state,
             player_input=player_input,
@@ -2257,7 +2353,7 @@ class GameService:
             execution_context=execution_context,
             cancel_token=cancel_token,
         )
-        yield self._stage_delta("classifying_continuity", StreamStageStatus.DONE)
+        yield self._stage_delta("classifying_continuity", StreamStageStatus.DONE, tracker=tracker)
         touched_thread_ids: tuple[str, ...] = ()
         touched_npc_ids: tuple[str, ...] = ()
         if scope == ContinuityUpdateScope.BOTH:
@@ -2273,8 +2369,8 @@ class GameService:
                 outcome=outcome,
                 working_memory=memory,
             )
-            yield self._stage_delta("updating_threads", StreamStageStatus.ACTIVE)
-            yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE)
+            yield self._stage_delta("updating_threads", StreamStageStatus.ACTIVE, tracker=tracker)
+            yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE, tracker=tracker)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 thread_future = executor.submit(
                     self._generate_thread_updates_for_turn,
@@ -2297,9 +2393,9 @@ class GameService:
                 thread_generated = thread_future.result()
                 npc_generated = npc_future.result()
             touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
-            yield self._stage_delta("updating_threads", StreamStageStatus.DONE)
+            yield self._stage_delta("updating_threads", StreamStageStatus.DONE, tracker=tracker)
             touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
-            yield self._stage_delta("updating_npcs", StreamStageStatus.DONE)
+            yield self._stage_delta("updating_npcs", StreamStageStatus.DONE, tracker=tracker)
         else:
             if scope.updates_threads():
                 thread_context, memory = self._memory_context_for_thread_updater(
@@ -2308,7 +2404,9 @@ class GameService:
                     outcome=outcome,
                     working_memory=memory,
                 )
-                yield self._stage_delta("updating_threads", StreamStageStatus.ACTIVE)
+                yield self._stage_delta(
+                    "updating_threads", StreamStageStatus.ACTIVE, tracker=tracker,
+                )
                 touched_thread_ids = self._run_thread_updates_for_turn(
                     state,
                     player_input=player_input,
@@ -2317,10 +2415,14 @@ class GameService:
                     memory_context=thread_context,
                     cancel_token=cancel_token,
                 )
-                yield self._stage_delta("updating_threads", StreamStageStatus.DONE)
+                yield self._stage_delta(
+                    "updating_threads", StreamStageStatus.DONE, tracker=tracker,
+                )
                 memory = self._memory_for_state(state, existing_memory=memory)
             else:
-                yield self._stage_delta("updating_threads", StreamStageStatus.SKIPPED)
+                yield self._stage_delta(
+                    "updating_threads", StreamStageStatus.SKIPPED, tracker=tracker,
+                )
             if scope.updates_npcs():
                 npc_context, memory = self._memory_context_for_npc_updater(
                     state,
@@ -2328,7 +2430,7 @@ class GameService:
                     outcome=outcome,
                     working_memory=memory,
                 )
-                yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE)
+                yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE, tracker=tracker)
                 touched_npc_ids = self._run_npc_updates_for_turn(
                     state,
                     player_input=player_input,
@@ -2337,10 +2439,12 @@ class GameService:
                     memory_context=npc_context,
                     cancel_token=cancel_token,
                 )
-                yield self._stage_delta("updating_npcs", StreamStageStatus.DONE)
+                yield self._stage_delta("updating_npcs", StreamStageStatus.DONE, tracker=tracker)
                 memory = self._memory_for_state(state, existing_memory=memory)
             else:
-                yield self._stage_delta("updating_npcs", StreamStageStatus.SKIPPED)
+                yield self._stage_delta(
+                    "updating_npcs", StreamStageStatus.SKIPPED, tracker=tracker,
+                )
         self._apply_thread_references(outcome, touched_thread_ids)
         self._apply_npc_references(state, outcome, touched_npc_ids)
         return self._memory_for_state(state, existing_memory=memory)
@@ -2653,6 +2757,7 @@ class GameService:
         self,
         *,
         skipped_stage_ids: set[str] | None = None,
+        tracker: StageTimingTracker | None = None,
     ) -> Generator[CompletionDelta, None, None]:
         skipped = skipped_stage_ids or set()
         for stage_id in TURN_STREAM_STAGE_ORDER:
@@ -2661,17 +2766,22 @@ class GameService:
                 if stage_id in skipped
                 else StreamStageStatus.PENDING
             )
-            yield self._stage_delta(stage_id, status)
+            yield self._stage_delta(stage_id, status, tracker=tracker)
 
     def _stage_delta(
         self,
         stage_id: str,
         status: StreamStageStatus,
+        *,
+        tracker: StageTimingTracker | None = None,
     ) -> CompletionDelta:
+        label = TURN_STREAM_STAGE_LABELS[stage_id]
+        if tracker is not None:
+            tracker.record(stage_id, label, status)
         return CompletionDelta(
             stage=StreamStageUpdate(
                 stage_id=stage_id,
-                label=TURN_STREAM_STAGE_LABELS[stage_id],
+                label=label,
                 status=status,
             ),
         )

@@ -49,15 +49,15 @@ class TaskProfile:
 
 def _default_narration_reasoning_by_task() -> dict[OracleKind, ReasoningEffort]:
     return {
-        OracleKind.YES_NO: "low",
-        OracleKind.PLAYER_ACTION: "low",
-        OracleKind.RANDOM_EVENT: "medium",
-        OracleKind.SCENE_CHECK: "medium",
-        OracleKind.SAVE: "low",
-        OracleKind.ATTACK: "low",
-        OracleKind.HARM: "low",
-        OracleKind.RECOVERY: "low",
-        OracleKind.RETREAT: "low",
+        OracleKind.YES_NO: "minimal",
+        OracleKind.PLAYER_ACTION: "minimal",
+        OracleKind.RANDOM_EVENT: "low",
+        OracleKind.SCENE_CHECK: "low",
+        OracleKind.SAVE: "minimal",
+        OracleKind.ATTACK: "minimal",
+        OracleKind.HARM: "minimal",
+        OracleKind.RECOVERY: "minimal",
+        OracleKind.RETREAT: "minimal",
     }
 
 
@@ -74,12 +74,12 @@ def _default_narration_reasoning_budgets() -> dict[ReasoningEffort, int]:
     # `medium`). These numbers just cap how much token budget each
     # effort tier may spend in that reasoning channel.
     return {
-        "minimal": 300,
-        "low": 600,
-        "medium": 1200,
-        "high": 1800,
-        "xhigh": 2400,
-        "default": 600,
+        "minimal": 180,
+        "low": 450,
+        "medium": 900,
+        "high": 1200,
+        "xhigh": 1800,
+        "default": 450,
     }
 
 
