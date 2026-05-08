@@ -190,7 +190,7 @@ function applyStageEvent(
 // them, and they never round-trip through `memory.json`.
 export interface ClientNote {
   id: string;
-  kind: "help" | "error" | "info" | "explanation";
+  kind: "help" | "error" | "info" | "explanation" | "oracle_preview";
   text: string;
   created_at: string;
   // OOC explainer-only: the player's question, preserved verbatim. We
@@ -502,7 +502,14 @@ class GameStore {
   }
 
   async askYesNo(question: string, likelihood: Likelihood): Promise<void> {
-    await this.#runWithRoll((signal) => api.askYesNo(question, likelihood, signal));
+    const cleaned = question.trim();
+    if (!cleaned) return;
+    const outcome = await this.#call(
+      (signal) => api.previewYesNo(cleaned, likelihood, signal),
+      { cancelLabel: "Stop preview" },
+    );
+    if (outcome === null) return;
+    this.#oraclePreviewNote(cleaned, outcome);
   }
 
   async randomEvent(): Promise<void> {
@@ -944,6 +951,34 @@ class GameStore {
       },
     ];
     saveOocNotes(this.activeSaveId, this.notes);
+  }
+
+  #oraclePreviewNote(question: string, outcome: OracleOutcome): void {
+    const answer = outcome.answer ?? outcome.summary;
+    const roll = outcome.rolls[0];
+    const lines = [
+      "**Oracle preview**",
+      "",
+      `**Answer:** ${answer}`,
+      `**Likelihood:** ${outcome.likelihood ?? "Even odds"}`,
+    ];
+    if (outcome.probability !== null) {
+      lines.push(`**Adjusted chance:** ${outcome.probability}%`);
+    }
+    if (roll !== undefined) {
+      lines.push(`**Roll:** ${roll.result} / ${roll.sides}`);
+    }
+    lines.push("", "_This does not commit the turn or advance the scene._");
+    this.notes = [
+      ...this.notes,
+      {
+        id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        kind: "oracle_preview",
+        text: lines.join("\n"),
+        question,
+        created_at: new Date().toISOString(),
+      },
+    ];
   }
 
   // Pull the per-save OOC scrollback off localStorage and merge it

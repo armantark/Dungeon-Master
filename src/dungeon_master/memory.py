@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import Field
 
@@ -28,13 +28,14 @@ MAX_REVEALED_FACTS: Final[int] = 24
 MAX_OPEN_LOOPS: Final[int] = 10
 MAX_CALLBACKS: Final[int] = 8
 SALIENT_CALLBACK_THRESHOLD: Final[int] = 4
-CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 2
+CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 3
 
 
 class TurnMemory(StrictModel):
     turn_index: int = Field(ge=1)
     oracle_outcome_id: str = Field(min_length=1)
     scene_key: str = Field(min_length=1)
+    scene_number: int = Field(ge=1)
     scene_label: str = Field(min_length=1)
     scene_status: SceneStatus
     player_input: str = Field(min_length=1)
@@ -50,6 +51,7 @@ class TurnMemory(StrictModel):
 
 class SceneMemory(StrictModel):
     scene_key: str = Field(min_length=1)
+    scene_number: int = Field(ge=1)
     scene_label: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     status: SceneStatus
@@ -133,6 +135,7 @@ class MemoryState(StrictModel):
     current_scene_summary: str = "No compacted scene summary yet."
     active_encounter_summary: str = ""
     recent_turn_summaries: list[TurnMemory] = Field(default_factory=list)
+    current_scene_turns: list[TurnMemory] = Field(default_factory=list)
     scene_summaries: list[SceneMemory] = Field(default_factory=list)
     thread_memory: list[ThreadMemory] = Field(default_factory=list)
     npc_memory: list[NPCMemory] = Field(default_factory=list)
@@ -149,10 +152,17 @@ class CommittedTurnMemory(StrictModel):
     execution_context: str = ""
 
 
+class ConversationMessage(StrictModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1)
+
+
 class PlannerMemoryContext(StrictModel):
     scene_summary: str = ""
     active_encounter_summary: str = ""
     inventory_summary: str = ""
+    scene_messages: list[ConversationMessage] = Field(default_factory=list)
+    campaign_chronicle: list[str] = Field(default_factory=list)
     open_loops: list[str] = Field(default_factory=list)
     relevant_memory: list[str] = Field(default_factory=list)
     revealed_facts: list[str] = Field(default_factory=list)
@@ -165,6 +175,11 @@ class PlannerMemoryContext(StrictModel):
             sections.append(f"Active encounter: {self.active_encounter_summary}")
         if self.inventory_summary:
             sections.append(f"Carried gear: {self.inventory_summary}")
+        if self.campaign_chronicle:
+            sections.append(
+                "Campaign chronicle:\n"
+                + "\n".join(f"- {item}" for item in self.campaign_chronicle),
+            )
         if self.open_loops:
             sections.append("Open loops:\n" + "\n".join(f"- {item}" for item in self.open_loops))
         if self.relevant_memory:
@@ -249,7 +264,9 @@ class NPCUpdateMemoryContext(StrictModel):
 class NarrativeMemoryContext(StrictModel):
     scene_summary: str = ""
     active_encounter_summary: str = ""
+    scene_messages: list[ConversationMessage] = Field(default_factory=list)
     recent_turns: list[str] = Field(default_factory=list)
+    campaign_chronicle: list[str] = Field(default_factory=list)
     open_loops: list[str] = Field(default_factory=list)
     relevant_memory: list[str] = Field(default_factory=list)
     revealed_facts: list[str] = Field(default_factory=list)
@@ -261,6 +278,11 @@ class NarrativeMemoryContext(StrictModel):
             sections.append(f"Current scene summary: {self.scene_summary}")
         if self.active_encounter_summary:
             sections.append(f"Active encounter: {self.active_encounter_summary}")
+        if self.campaign_chronicle:
+            sections.append(
+                "Campaign chronicle:\n"
+                + "\n".join(f"- {item}" for item in self.campaign_chronicle),
+            )
         if self.recent_turns:
             sections.append(
                 "Recent turn summaries:\n" + "\n".join(f"- {item}" for item in self.recent_turns),
@@ -329,6 +351,8 @@ class MemoryManager:
             scene_summary=memory.current_scene_summary,
             active_encounter_summary=memory.active_encounter_summary,
             inventory_summary=self._planner_inventory_summary(state, query),
+            scene_messages=self._scene_transcript_messages(memory.current_scene_turns),
+            campaign_chronicle=self._campaign_chronicle_lines(memory),
             open_loops=[loop.text for loop in memory.open_loops[:3]],
             relevant_memory=self._planner_memory_lines(state, memory, query),
             revealed_facts=self._planner_facts(memory, query),
@@ -346,7 +370,9 @@ class MemoryManager:
         return NarrativeMemoryContext(
             scene_summary=memory.current_scene_summary,
             active_encounter_summary=memory.active_encounter_summary,
+            scene_messages=self._scene_transcript_messages(memory.current_scene_turns),
             recent_turns=recent_turns,
+            campaign_chronicle=self._campaign_chronicle_lines(memory),
             open_loops=[loop.text for loop in memory.open_loops[:4]],
             relevant_memory=self._narrative_memory_lines(state, memory, outcome),
             revealed_facts=self._narrative_facts(memory, outcome),
@@ -448,20 +474,24 @@ class MemoryManager:
 
     def _apply_turn(self, memory: MemoryState, state: GameState, turn: CommittedTurnMemory) -> None:
         turn_index = memory.turn_count + 1
-        scene_key = state.current_scene
+        scene_number = self._scene_number_for_turn(memory, turn.outcome)
+        scene_key = _scene_key(scene_number)
+        scene_label = self._scene_label_for_turn(memory, state, turn.outcome, scene_number)
+        scene_status = self._scene_status_for_turn(memory, state, turn.outcome)
         thread_ids = self._thread_ids_for_outcome(turn.outcome)
         npc_ids = self._npc_ids_for_outcome(turn.outcome)
         turn_memory = TurnMemory(
             turn_index=turn_index,
             oracle_outcome_id=turn.outcome.id,
             scene_key=scene_key,
-            scene_label=state.current_scene,
-            scene_status=state.scene_status,
+            scene_number=scene_number,
+            scene_label=scene_label,
+            scene_status=scene_status,
             player_input=turn.player_input,
             oracle_kind=turn.outcome.kind,
             oracle_summary=turn.outcome.summary,
-            narrative_excerpt=_clip(turn.narrative_text, 220),
-            execution_context=_clip(turn.execution_context, 220),
+            narrative_excerpt=turn.narrative_text.strip(),
+            execution_context=turn.execution_context.strip(),
             related_thread_ids=thread_ids,
             related_npc_ids=npc_ids,
             related_location_keys=[scene_key],
@@ -470,6 +500,12 @@ class MemoryManager:
         memory.turn_count = turn_index
         memory.recent_turn_summaries.append(turn_memory)
         memory.recent_turn_summaries = memory.recent_turn_summaries[-MAX_RECENT_TURNS:]
+        if (
+            memory.current_scene_turns
+            and memory.current_scene_turns[-1].scene_key != turn_memory.scene_key
+        ):
+            memory.current_scene_turns = []
+        memory.current_scene_turns.append(turn_memory)
         self._update_scene_memory(memory, turn_memory)
         self._update_thread_memory(memory, state.threads, turn_memory)
         self._update_npc_memory(memory, state.npcs, turn_memory)
@@ -491,7 +527,7 @@ class MemoryManager:
     def _sync_canonical(self, memory: MemoryState, state: GameState) -> None:
         memory.schema_version = CURRENT_MEMORY_SCHEMA_VERSION
         memory.state_id = state.id
-        memory.current_scene_key = state.current_scene
+        memory.current_scene_key = _scene_key(state.scene_number)
         memory.active_location_key = state.current_scene
         memory.active_encounter_summary = _encounter_summary(state)
 
@@ -505,8 +541,13 @@ class MemoryManager:
             memory.scene_summaries.append(
                 SceneMemory(
                     scene_key=turn.scene_key,
+                    scene_number=turn.scene_number,
                     scene_label=turn.scene_label,
-                    summary=development,
+                    summary=self._scene_compaction(
+                        scene_label=turn.scene_label,
+                        scene_status=turn.scene_status,
+                        developments=[development],
+                    ),
                     status=turn.scene_status,
                     first_turn_index=turn.turn_index,
                     last_turn_index=turn.turn_index,
@@ -521,7 +562,11 @@ class MemoryManager:
         scene.visit_count += 1
         scene.recent_developments.append(development)
         scene.recent_developments = scene.recent_developments[-MAX_RECENT_DEVELOPMENTS:]
-        scene.summary = _clip(" ".join(scene.recent_developments[-2:]), 240)
+        scene.summary = self._scene_compaction(
+            scene_label=scene.scene_label,
+            scene_status=scene.status,
+            developments=scene.recent_developments,
+        )
 
     def _update_thread_memory(
         self,
@@ -699,19 +744,21 @@ class MemoryManager:
             )
 
     def _sync_location_cards(self, memory: MemoryState, state: GameState) -> None:
-        if any(card.location_key == state.current_scene for card in memory.location_memory):
+        current_scene_key = _scene_key(state.scene_number)
+        if any(card.location_key == current_scene_key for card in memory.location_memory):
             return
         memory.location_memory.append(
             LocationMemory(
-                location_key=state.current_scene,
+                location_key=current_scene_key,
                 label=state.current_scene,
                 summary=state.current_scene,
             ),
         )
 
     def _current_scene_summary(self, memory: MemoryState, state: GameState) -> str:
+        current_scene_key = _scene_key(state.scene_number)
         scene = next(
-            (item for item in memory.scene_summaries if item.scene_key == state.current_scene),
+            (item for item in memory.scene_summaries if item.scene_key == current_scene_key),
             None,
         )
         if scene is None:
@@ -733,9 +780,9 @@ class MemoryManager:
                 OpenLoop(
                     text=_thread_summary(thread, ""),
                     priority=4 if thread.stakes else 3,
-                    scene_key=state.current_scene,
+                    scene_key=_scene_key(state.scene_number),
                     related_thread_ids=[thread.id],
-                    related_location_keys=[state.current_scene],
+                    related_location_keys=[_scene_key(state.scene_number)],
                     last_touched_turn=self._thread_last_touched(memory, thread.id),
                 ),
             )
@@ -745,8 +792,8 @@ class MemoryManager:
                 OpenLoop(
                     text=f"Resolve the active encounter with {foes}.",
                     priority=5,
-                    scene_key=state.current_scene,
-                    related_location_keys=[state.current_scene],
+                    scene_key=_scene_key(state.scene_number),
+                    related_location_keys=[_scene_key(state.scene_number)],
                     last_touched_turn=memory.turn_count,
                 ),
             )
@@ -810,8 +857,9 @@ class MemoryManager:
         query: str,
     ) -> list[str]:
         lines: list[str] = []
+        current_scene_key = _scene_key(state.scene_number)
         location = next(
-            (item for item in memory.location_memory if item.location_key == state.current_scene),
+            (item for item in memory.location_memory if item.location_key == current_scene_key),
             None,
         )
         if location is not None:
@@ -881,8 +929,9 @@ class MemoryManager:
     ) -> list[str]:
         lines: list[str] = []
         direct_thread_ids = self._thread_ids_for_outcome(outcome)
+        current_scene_key = _scene_key(state.scene_number)
         location = next(
-            (item for item in memory.location_memory if item.location_key == state.current_scene),
+            (item for item in memory.location_memory if item.location_key == current_scene_key),
             None,
         )
         if location is not None:
@@ -965,6 +1014,109 @@ class MemoryManager:
             f"{candidate.text} ({candidate.reason})" for candidate in memory.callback_candidates
         ]
         return _dedupe_strings(direct + fallback)[:4]
+
+    def _scene_number_for_turn(self, memory: MemoryState, outcome: OracleOutcome) -> int:
+        if outcome.scene_number_snapshot is not None:
+            return outcome.scene_number_snapshot
+        if not memory.recent_turn_summaries:
+            return 1
+        previous = memory.recent_turn_summaries[-1].scene_number
+        if outcome.kind == OracleKind.SCENE_CHECK and outcome.scene_status is not None:
+            return previous + 1
+        return previous
+
+    def _scene_label_for_turn(
+        self,
+        memory: MemoryState,
+        state: GameState,
+        outcome: OracleOutcome,
+        scene_number: int,
+    ) -> str:
+        if outcome.scene_label_snapshot:
+            return outcome.scene_label_snapshot
+        if outcome.kind == OracleKind.SCENE_CHECK and outcome.question:
+            if outcome.scene_status == SceneStatus.ALTERED:
+                return f"Altered: {outcome.question}"
+            if outcome.scene_status == SceneStatus.INTERRUPTED:
+                return f"Interrupted before: {outcome.question}"
+            return outcome.question
+        if (
+            memory.current_scene_turns
+            and memory.current_scene_turns[-1].scene_number == scene_number
+        ):
+            return memory.current_scene_turns[-1].scene_label
+        return state.current_scene
+
+    def _scene_status_for_turn(
+        self,
+        memory: MemoryState,
+        state: GameState,
+        outcome: OracleOutcome,
+    ) -> SceneStatus:
+        if outcome.scene_status_snapshot is not None:
+            return outcome.scene_status_snapshot
+        if outcome.kind == OracleKind.SCENE_CHECK and outcome.scene_status is not None:
+            return outcome.scene_status
+        if memory.current_scene_turns:
+            return memory.current_scene_turns[-1].scene_status
+        return state.scene_status
+
+    def _scene_transcript_messages(
+        self,
+        turns: list[TurnMemory],
+    ) -> list[ConversationMessage]:
+        messages: list[ConversationMessage] = []
+        for turn in turns:
+            player_text = turn.player_input.strip()
+            if player_text:
+                messages.append(ConversationMessage(role="user", content=player_text))
+            assistant_parts = [f"Resolved outcome: {turn.oracle_summary}"]
+            if turn.execution_context:
+                assistant_parts.append(f"Backend context: {turn.execution_context}")
+            if turn.narrative_excerpt.strip():
+                assistant_parts.append(turn.narrative_excerpt.strip())
+            messages.append(
+                ConversationMessage(
+                    role="assistant",
+                    content="\n\n".join(part for part in assistant_parts if part),
+                ),
+            )
+        return messages
+
+    def _campaign_chronicle_lines(self, memory: MemoryState) -> list[str]:
+        lines = [
+            self._render_scene_chronicle(scene)
+            for scene in memory.scene_summaries
+            if scene.scene_key != memory.current_scene_key
+        ]
+        return lines[-3:]
+
+    def _render_scene_chronicle(self, scene: SceneMemory) -> str:
+        return _clip(f"Scene {scene.scene_number}: {scene.summary}", 320)
+
+    def _scene_compaction(
+        self,
+        *,
+        scene_label: str,
+        scene_status: SceneStatus,
+        developments: list[str],
+    ) -> str:
+        if not developments:
+            return f"The scene remained focused on {scene_label} ({scene_status.value})."
+        first = developments[0]
+        latest = developments[-1]
+        if first == latest:
+            return _clip(
+                f"The scene centered on {scene_label} ({scene_status.value}). {latest}",
+                420,
+            )
+        return _clip(
+            (
+                f"The scene centered on {scene_label} ({scene_status.value}). "
+                f"It opened with {first} The latest development was {latest}"
+            ),
+            420,
+        )
 
     def _thread_ids_for_outcome(self, outcome: OracleOutcome) -> list[str]:
         if outcome.referenced_thread_ids:
@@ -1079,6 +1231,10 @@ def _encounter_summary(state: GameState) -> str:
     ]
     foes = ", ".join(living[:4]) if living else "no standing foes"
     return f"Combat is active in round {state.encounter.round_number} against {foes}."
+
+
+def _scene_key(scene_number: int) -> str:
+    return f"scene_{scene_number}"
 
 
 def _fact_salience(kind: OracleKind) -> int:

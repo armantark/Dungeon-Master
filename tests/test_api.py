@@ -60,6 +60,7 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     RetreatOutcome,
+    SceneStatus,
 )
 from dungeon_master.narrative import (
     CompletionDelta,
@@ -104,14 +105,16 @@ class FakeNarrative:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         del cancel_token
         suffix = f" / ctx {execution_context}" if execution_context else ""
         memory_suffix = " / mem yes" if memory_context else ""
+        scene_suffix = " / scene yes" if scene_messages else ""
         return (
             f"FAKE: {outcome.summary} / {player_input} / chaos {state.chaos_factor}"
-            f"{suffix}{memory_suffix}"
+            f"{suffix}{memory_suffix}{scene_suffix}"
         )
 
 
@@ -124,6 +127,7 @@ class ThoughtfulNarrative(FakeNarrative):
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NarrativeResult:
         del cancel_token
@@ -134,6 +138,7 @@ class ThoughtfulNarrative(FakeNarrative):
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
             ),
             thinking=f"Thought about {outcome.kind}.",
         )
@@ -146,6 +151,7 @@ class ThoughtfulNarrative(FakeNarrative):
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, NarrativeResult]:
         del cancel_token
@@ -157,6 +163,7 @@ class ThoughtfulNarrative(FakeNarrative):
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
             ),
         )
         return self.generate_result(
@@ -165,6 +172,7 @@ class ThoughtfulNarrative(FakeNarrative):
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
         )
 
 
@@ -181,6 +189,7 @@ class BlockingThoughtfulNarrative(ThoughtfulNarrative):
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, NarrativeResult]:
         yield CompletionDelta(thinking=f"Thought about {outcome.kind}.")
@@ -195,6 +204,7 @@ class BlockingThoughtfulNarrative(ThoughtfulNarrative):
                 player_input,
                 execution_context=execution_context,
                 memory_context=memory_context,
+                scene_messages=scene_messages,
             ),
         )
         return self.generate_result(
@@ -203,6 +213,7 @@ class BlockingThoughtfulNarrative(ThoughtfulNarrative):
             player_input,
             execution_context=execution_context,
             memory_context=memory_context,
+            scene_messages=scene_messages,
         )
 
 
@@ -1184,6 +1195,22 @@ def test_oracle_yes_no(tmp_path: Path) -> None:
     assert payload["oracle_history"][0]["kind"] == "yes_no"
 
 
+def test_oracle_yes_no_preview_returns_non_canonical_outcome(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/oracle/yes-no/preview",
+            json={"question": "Does anything stir?", "likelihood": "Even odds"},
+        )
+        state = client.get("/api/state").json()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "yes_no"
+    assert payload["question"] == "Does anything stir?"
+    assert state["oracle_history"] == []
+    assert all(event["title"] != "Oracle answer" for event in state["action_log"])
+
+
 def test_random_event_uses_generated_tables(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         response = client.post("/api/oracle/random-event")
@@ -1204,6 +1231,42 @@ def test_scene_check_advances_scene(tmp_path: Path) -> None:
         )
     state = response.json()
     assert state["scene_number"] >= 2
+
+
+def test_scene_check_same_scene_does_not_increment_scene_number(tmp_path: Path) -> None:
+    class SameSceneOracle(OracleEngine):
+        def check_scene(self, state: GameState, expected_scene: str) -> OracleOutcome:
+            return OracleOutcome(
+                kind=OracleKind.SCENE_CHECK,
+                summary=f"expected: {expected_scene}",
+                question=expected_scene,
+                chaos_factor=state.chaos_factor,
+                scene_status=SceneStatus.EXPECTED,
+            )
+
+    store = StateStore(tmp_path / "game_state.json")
+    state = sample_state()
+    state.current_scene = "The ossuary chapel."
+    state.scene_status = SceneStatus.EXPECTED
+    store.save(state, create_checkpoint=False)
+    service = GameService(
+        store=store,
+        oracle=SameSceneOracle(),
+        narrative=FakeNarrative(),
+        explainer=FakeExplainer(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakePlayableCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+    with TestClient(create_app(service=service)) as client:
+        response = client.post(
+            "/api/oracle/scene-check",
+            json={"expected_scene": "The ossuary chapel."},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["scene_number"] == 1
 
 
 def test_submit_action_records_player_then_narrative(tmp_path: Path) -> None:

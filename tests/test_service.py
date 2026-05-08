@@ -78,14 +78,16 @@ class FakeNarrative:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
         del cancel_token
         suffix = f" / ctx {execution_context}" if execution_context else ""
         memory_suffix = " / mem yes" if memory_context else ""
+        scene_suffix = " / scene yes" if scene_messages else ""
         return (
             f"FAKE: {outcome.summary} / {player_input} / chaos {state.chaos_factor}"
-            f"{suffix}{memory_suffix}"
+            f"{suffix}{memory_suffix}{scene_suffix}"
         )
 
 
@@ -498,9 +500,10 @@ class CountingNarrative:
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
-        del cancel_token, execution_context, memory_context
+        del cancel_token, execution_context, memory_context, scene_messages
         self.calls += 1
         return f"GEN {self.calls}: {outcome.summary} / {player_input} / chaos {state.chaos_factor}"
 
@@ -514,9 +517,10 @@ class SlowStreamingNarrative(FakeNarrative):
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, str]:
-        del state, outcome, player_input, execution_context, memory_context
+        del state, outcome, player_input, execution_context, memory_context, scene_messages
         yield CompletionDelta(thinking="Working...")
         while True:
             if cancel_token is not None:
@@ -1836,9 +1840,18 @@ def test_service_reveals_hidden_npc_named_in_narration(tmp_path: Path) -> None:
             *,
             execution_context: str | None = None,
             memory_context: str | None = None,
+            scene_messages: list[dict[str, str]] | None = None,
             cancel_token: CancellationToken | None = None,
         ) -> str:
-            del state, outcome, player_input, execution_context, memory_context, cancel_token
+            del (
+                state,
+                outcome,
+                player_input,
+                execution_context,
+                memory_context,
+                scene_messages,
+                cancel_token,
+            )
             return "The Hierophant steps from the ash-dark arch and finally speaks."
 
     store = StateStore(tmp_path / "game_state.json")
@@ -1881,9 +1894,18 @@ def test_service_promotes_visible_descriptor_npc_when_true_name_is_narrated(
             *,
             execution_context: str | None = None,
             memory_context: str | None = None,
+            scene_messages: list[dict[str, str]] | None = None,
             cancel_token: CancellationToken | None = None,
         ) -> str:
-            del state, outcome, player_input, execution_context, memory_context, cancel_token
+            del (
+                state,
+                outcome,
+                player_input,
+                execution_context,
+                memory_context,
+                scene_messages,
+                cancel_token,
+            )
             return "The Hierophant lifts the ash veil and finally offers his true name."
 
     store = StateStore(tmp_path / "game_state.json")
