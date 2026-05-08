@@ -1,5 +1,6 @@
 from collections.abc import Callable, Generator
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -12,6 +13,7 @@ from dungeon_master.campaign import (
 )
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
 from dungeon_master.continuity_classifier import ContinuityUpdateScope
+from dungeon_master.memory import MemoryState
 from dungeon_master.models import (
     NPC,
     AttackStance,
@@ -45,11 +47,15 @@ from dungeon_master.models import (
     ThreadStatus,
 )
 from dungeon_master.narrative import CompletionDelta, NarrativeConfig
-from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdateResult
+from dungeon_master.npc_updater import (
+    GeneratedNPCUpdateBatch,
+    LegacyNPCRosterRepairResult,
+    NPCUpdateResult,
+)
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.service import GameService
 from dungeon_master.state_store import StateStore
-from dungeon_master.thread_updater import ThreadUpdateResult
+from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
 from dungeon_master.turn_router import (
     PlannedTurnOp,
     PlannedTurnOpKind,
@@ -281,11 +287,42 @@ class FakeThreadUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
-        del execution_context, memory_context, cancel_token
+        generated = self.generate_thread_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if generated is None:
+            return ThreadUpdateResult()
+        return self.apply_generated_updates(state, generated)
+
+    def generate_thread_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        del state, execution_context, memory_context, cancel_token
         self.calls.append((player_input, outcome.summary))
+        return GeneratedThreadUpdateBatch()
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedThreadUpdateBatch,
+    ) -> ThreadUpdateResult:
+        del generated
+        latest_outcome = state.oracle_history[-1]
         if self._mutate is None:
             return ThreadUpdateResult()
-        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, outcome))
+        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, latest_outcome))
 
 
 class FakeNpcUpdater:
@@ -308,11 +345,42 @@ class FakeNpcUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NPCUpdateResult:
-        del execution_context, memory_context, cancel_token
+        generated = self.generate_npc_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if generated is None:
+            return NPCUpdateResult()
+        return self.apply_generated_updates(state, generated)
+
+    def generate_npc_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedNPCUpdateBatch | None:
+        del state, execution_context, memory_context, cancel_token
         self.calls.append((player_input, outcome.summary))
+        return GeneratedNPCUpdateBatch()
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedNPCUpdateBatch,
+    ) -> NPCUpdateResult:
+        del generated
+        latest_outcome = state.oracle_history[-1]
         if self._mutate is None:
             return NPCUpdateResult()
-        return NPCUpdateResult(touched_npc_ids=self._mutate(state, outcome))
+        return NPCUpdateResult(touched_npc_ids=self._mutate(state, latest_outcome))
 
     def reseed_legacy_roster(
         self,
@@ -324,6 +392,77 @@ class FakeNpcUpdater:
     ) -> LegacyNPCRosterRepairResult:
         del state, memory_context, cancel_token, use_model
         return self._repair or LegacyNPCRosterRepairResult()
+
+
+class ParallelThreadUpdater(FakeThreadUpdater):
+    def __init__(
+        self,
+        *,
+        started: Event,
+        other_started: Event,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+    ) -> None:
+        super().__init__(mutate=mutate)
+        self._started = started
+        self._other_started = other_started
+
+    def generate_thread_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        generated = super().generate_thread_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        self._started.set()
+        assert self._other_started.wait(0.5)
+        return generated
+
+
+class ParallelNpcUpdater(FakeNpcUpdater):
+    def __init__(
+        self,
+        *,
+        started: Event,
+        other_started: Event,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+        repair: LegacyNPCRosterRepairResult | None = None,
+    ) -> None:
+        super().__init__(mutate=mutate, repair=repair)
+        self._started = started
+        self._other_started = other_started
+
+    def generate_npc_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedNPCUpdateBatch | None:
+        generated = super().generate_npc_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        self._started.set()
+        assert self._other_started.wait(0.5)
+        return generated
 
 
 class FakeContinuityClassifier:
@@ -1919,7 +2058,10 @@ def test_stream_cancel_discards_inflight_turn_state(tmp_path: Path) -> None:
         cancel_token=token,
     )
     first = next(stream)
-    assert first.thinking == "Working..."
+    assert first.stage is not None
+
+    thinking_delta = next(delta for delta in stream if delta.thinking)
+    assert thinking_delta.thinking == "Working..."
 
     token.cancel()
     with pytest.raises(RequestCancelledError):
@@ -1931,3 +2073,84 @@ def test_stream_cancel_discards_inflight_turn_state(tmp_path: Path) -> None:
     assert after.oracle_history == before.oracle_history
     assert not store.events_path.exists()
     assert not store.turn_checkpoints_dir.exists()
+
+
+def test_continuity_parallelizes_thread_and_npc_generation_when_scope_is_both(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_started = Event()
+    npc_started = Event()
+
+    def mutate_thread(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = GameThread(
+            title="The bellringer marks a debt",
+            stakes="If ignored, the abbey's watchers close in.",
+        )
+        state.threads.append(created)
+        return (created.id,)
+
+    def mutate_npc(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        created = NPC(
+            name="Brother Sava",
+            role="Bellringer",
+            disposition="watchful",
+        )
+        state.npcs.append(created)
+        return (created.id,)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.BOTH),
+        thread_updater=ParallelThreadUpdater(
+            started=thread_started,
+            other_started=npc_started,
+            mutate=mutate_thread,
+        ),
+        npc_updater=ParallelNpcUpdater(
+            started=npc_started,
+            other_started=thread_started,
+            mutate=mutate_npc,
+        ),
+    )
+
+    state = service.submit_player_action("I ask the bellringer to name his price.")
+
+    assert any(thread.title == "The bellringer marks a debt" for thread in state.threads)
+    assert any(npc.name == "Brother Sava" for npc in state.npcs)
+
+
+def test_streamed_player_action_reuses_memory_sidecar_load_before_narration(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    load_calls = 0
+    original_load_memory_or_none = store.load_memory_or_none
+
+    def counting_load_memory_or_none() -> MemoryState | None:
+        nonlocal load_calls
+        load_calls += 1
+        return original_load_memory_or_none()
+
+    store.load_memory_or_none = counting_load_memory_or_none  # type: ignore[method-assign]
+
+    stream = service.stream_submit_player_action("I wait in silence.")
+    for _ in stream:
+        pass
+
+    assert load_calls == 3

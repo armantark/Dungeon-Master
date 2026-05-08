@@ -299,7 +299,7 @@ router = APIRouter(prefix="/api")
 # (or after) deltas to signal a backend-authored failure.
 
 # Lifecycle order (per the streaming-types contract):
-#   meta -> thinking_delta* -> content_delta* -> (final_state|final_payload|error)
+#   meta -> stage* -> thinking_delta* -> content_delta* -> (final_state|final_payload|error)
 
 
 def _ndjson(event: object) -> str:
@@ -336,6 +336,17 @@ def _error_event(
     )
 
 
+def _stage_event(stage_id: str, label: str, status: str) -> str:
+    return _ndjson(
+        {
+            "type": "stage",
+            "stage_id": stage_id,
+            "label": label,
+            "status": status,
+        },
+    )
+
+
 def _stream_game_state(  # noqa: C901
     service_generator: Generator[CompletionDelta, None, GameState],
     *,
@@ -358,13 +369,19 @@ def _stream_game_state(  # noqa: C901
     want the full trace immediately rather than re-reading state.
     """
 
-    def event_stream() -> Generator[str, None, None]:
+    def event_stream() -> Generator[str, None, None]:  # noqa: C901
         yield _meta_event(route, request_id)
         last_thinking = ""
         try:
             generator = service_generator
             while True:
                 delta = next(generator)
+                if delta.stage is not None:
+                    yield _stage_event(
+                        delta.stage.stage_id,
+                        delta.stage.label,
+                        delta.stage.status.value,
+                    )
                 if delta.thinking:
                     last_thinking += delta.thinking
                     yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
@@ -440,6 +457,12 @@ def _stream_setup_payload(  # noqa: PLR0913
         try:
             while True:
                 delta = next(service_generator)
+                if delta.stage is not None:
+                    yield _stage_event(
+                        delta.stage.stage_id,
+                        delta.stage.label,
+                        delta.stage.status.value,
+                    )
                 if delta.thinking:
                     yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
                 if delta.content:
