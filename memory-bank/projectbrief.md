@@ -54,3 +54,20 @@ The app should therefore evolve from "oracle-only" into a hybrid: a deterministi
 ## Source Material
 
 The raw source note is preserved in `memory-bank/Trying to find a TTRPG community on Discord that i.md`. It records the full exploration from Discord community search to AI game master architecture.
+
+## Workflow Rules (read this before touching git)
+
+**This is a solo project.** The user's global rule says "Do not commit/push to main without my explicit approval, start a branch for new features/bugfixes" — but that rule has an explicit exception: it can be ignored when the project is definitively solo, evidenced by docs and/or commit history. **This project qualifies.** Evidence:
+
+- Single-user FastAPI app bound to `127.0.0.1`, lives only on the user's machine and at most their personal GitHub (see `productContext.md` and `activeContext.md`).
+- Commit history on `main` is exclusively the user / Cursor agent collaboration on this same project.
+- The user has explicitly confirmed multiple times that the solo exception applies here.
+
+**Therefore, on this repo:**
+
+- Commit directly to `main`. Do **not** spin up `feature/*` branches at the start of a chat.
+- Commit early and commit often — at minimum once per turn that produces real changes.
+- Push to `origin/main` after each commit unless the user says otherwise.
+- Do not ask "should I commit this?" — just commit it with a clear message and keep going.
+
+If a future chat thread starts spawning a feature branch, that is a regression of this rule. Stop, re-read this section, and switch back to committing on `main`.

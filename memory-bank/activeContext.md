@@ -1,5 +1,9 @@
 # Active Context
 
+## Workflow Reminder (solo project — commit straight to main)
+
+This project is solo. The user has explicitly invoked the solo-project exception to the global "do not commit/push to main without approval" rule. **Do not spin up feature branches on this repo.** Commit directly to `main`, commit early and often (at minimum once per turn that produces real changes), and push to `origin/main` after each commit. See `projectbrief.md` → "Workflow Rules" for the full rationale.
+
 ## Current Focus
 
 The active task has moved from planning to building a fully fledged personal agentic TTRPG/AI game-master system.
