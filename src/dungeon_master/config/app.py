@@ -62,13 +62,24 @@ def _default_narration_reasoning_by_task() -> dict[OracleKind, ReasoningEffort]:
 
 
 def _default_narration_reasoning_budgets() -> dict[ReasoningEffort, int]:
+    # Kimi K2.6 tends to spend a conspicuous amount of time in the
+    # reasoning channel before it starts prose. We therefore bias the
+    # narration budgets lower than the original "quality-first" pass:
+    # ordinary turns should get enough structured thought to stay
+    # grounded, but not enough room to spiral into repetitive visible
+    # trace text before writing the actual scene.
+    #
+    # The route-specific effort mapping above remains the real quality
+    # dial (most narration is `low`; scene checks / random events are
+    # `medium`). These numbers just cap how much token budget each
+    # effort tier may spend in that reasoning channel.
     return {
-        "minimal": 700,
-        "low": 1500,
-        "medium": 3000,
-        "high": 3000,
-        "xhigh": 3000,
-        "default": 1500,
+        "minimal": 300,
+        "low": 600,
+        "medium": 1200,
+        "high": 1800,
+        "xhigh": 2400,
+        "default": 600,
     }
 
 
