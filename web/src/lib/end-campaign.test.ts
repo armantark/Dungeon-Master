@@ -36,6 +36,7 @@ function endedState(overrides: Partial<GameState>): GameState {
     campaign_end_reason: overrides.campaign_end_reason ?? "retirement",
     campaign_ended_at: overrides.campaign_ended_at ?? null,
     campaign_end_summary: overrides.campaign_end_summary ?? null,
+    party_members: [],
     npc_roster_version: 2,
     setting_notes: "",
     player_notes: "",

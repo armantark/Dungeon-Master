@@ -63,6 +63,24 @@ Walk through this from a clean state (delete `data/game_state.json` if you want 
 16. Refresh the browser. Confirm the current campaign/setup state persists exactly as it was.
 17. If you are testing a pre-Cairn character/save, start or reload the campaign once and confirm the backend has backfilled `state.character.cairn` on the next `/api/state` response. This is the one-time migration path that preserves the authored sheet instead of asking the player to recreate it.
 
+## Party Folio Smoke
+
+Use this once a save has at least one active companion, hireling, or animal in
+`state.party_members`.
+
+1. Open an active campaign with one active party member.
+1. Confirm the left folio shows a tab strip with the protagonist plus the active
+   party member(s).
+1. Click each tab. Confirm the identity plate, Cairn readout, burden meter, and
+   inventory list all switch to that actor.
+1. Confirm inactive party members do not appear as tabs.
+1. Make a companion-attributed action in natural language (for example, ask the
+   companion to attack or transfer an item by name). Expand the resulting
+   receipt and confirm it shows the actor name when the backend attributes the
+   Cairn resolution.
+1. Refresh the page. Confirm the selected save still loads and the tab strip
+   renders from canonical `party_members`.
+
 ## Streaming Smoke Test (combat-streaming branch)
 
 These checks exercise the NDJSON streaming transport, the provisional DM bubble, the persisted thinking pane, the detach/reattach contract, and the combat tracker. They assume the backend has shipped its half of the contract (`/api/turn/stream`, `/api/action/stream`, `/api/messages/{id}/regenerate/stream`, `/api/campaign/start/stream`, `/api/character/quiz/stream`, `/api/character/draft/stream`, `/api/character/draft/quizzed/stream`, and `GET /api/requests/{request_id}/stream` for reattach). If the backend hasn't shipped any given endpoint, the frontend transparently falls back to the unary version — confirm the fallback path also still works.

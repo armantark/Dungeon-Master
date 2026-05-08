@@ -285,6 +285,8 @@ export interface CairnResolution {
   target: number | null;
   success: boolean | null;
   rest_kind: CairnRestKind | null;
+  actor_id: string | null;
+  actor_name: string | null;
   item_id: string | null;
   item_name: string | null;
   item_power_kind: CairnItemPowerKind | null;
@@ -352,6 +354,18 @@ export interface CharacterSheet {
   condition: string;
   inventory: InventoryItem[];
   cairn: CairnCharacterState;
+}
+
+export type PartyMemberKind = "companion" | "hireling" | "animal";
+
+export interface PartyMember {
+  id: string;
+  kind: PartyMemberKind;
+  sheet: CharacterSheet;
+  npc_id: string | null;
+  active: boolean;
+  loyalty: string;
+  notes: string;
 }
 
 export interface CharacterTemplatesResponse {
@@ -562,6 +576,10 @@ export interface GameState {
   campaign_ended_at: string | null;
   campaign_end_summary: string | null;
   character?: CharacterSheet;
+  // Party harness v1. Active companions/hirelings/animals wrap full
+  // CharacterSheets so the folio can render their Cairn stats and
+  // inventory through the same read-only components as the protagonist.
+  party_members: PartyMember[];
   // F-16: monotonic version of the visible/hidden NPC roster split.
   // The backend stamps `2` on any save it has migrated into the
   // hidden-cast contract; older saves load as `1` and are reseeded

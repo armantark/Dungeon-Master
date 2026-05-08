@@ -299,11 +299,11 @@ Character state pattern:
 - Frontend rendering of Cairn state lives in a small dedicated module:
   - `web/src/lib/cairn.ts` — pure formatting helpers (defaults, render gating, burden tier, status priority, ability / stance / rest-kind labels, item tag labels, and the receipt headline switch). No inference, no mutation. Exhaustive Vitest coverage in `cairn.test.ts`.
   - `web/src/components/CairnReadout.svelte` — read-only stat / burden / statuses / skills / abilities / (optional) build-notes block. Surface-agnostic so it can sit inside the folio's iron rail and above the editor's parchment surface.
-  - `CharacterFolio.svelte` hosts the readout for active play and renders per-item tag chips + equipped/primary badges.
-  - `MechanicalReceipt.svelte` is exhaustive over `OracleKind` (TS will fail at build time when a new kind is added without a branch) and surfaces structured Cairn fields in the body when `outcome.cairn` is populated.
+- `CharacterFolio.svelte` hosts the readout for active play and now renders the player plus active `GameState.party_members` as switchable folio tabs. Each tab uses the same `CharacterSheet` rendering path, so companion HP/STR/DEX/WIL, burden, item powers, equipped badges, and inventory tags never fork into a parallel NPC-card UI.
+- `MechanicalReceipt.svelte` is exhaustive over `OracleKind` (TS will fail at build time when a new kind is added without a branch) and surfaces structured Cairn fields in the body when `outcome.cairn` is populated, including optional `actor_name` attribution for companion-driven mechanics.
   - `Inspector.svelte` adds a collapsed "Cairn build notes" drawer that is hidden when the character is unset or has no notes.
   - `CharacterEditor.svelte` shows the read-only Cairn block above the editor only when the draft is already backfilled (`character.cairn.source !== "unset"`).
-- The frontend Cairn pass is intentionally **read-only**. Mutations (`/api/cairn/attack`, `/harm`, `/recover`, `/equip`) stay backend-only until a follow-up explicit-controls pass binds them to UI affordances. Cairn slash commands are deliberately not added: `save` is already covered by the LLM-backed `/api/turn` router, and the other Cairn actions are GM-side / fiddly-inventory operations that don't read naturally as prose.
+- The frontend Cairn/party pass is intentionally **read-only**. Companion recruitment, item transfer, named-actor attacks/saves/harm/recovery, and inventory changes still flow through the existing chat-first `/api/turn` planner; the folio tabs are an evidence surface, not a second control panel.
 
 Regeneration pattern:
 

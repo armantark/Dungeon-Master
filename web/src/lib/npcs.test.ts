@@ -81,6 +81,7 @@ function state(overrides: Partial<GameState>): GameState {
     campaign_end_reason: null,
     campaign_ended_at: null,
     campaign_end_summary: null,
+    party_members: overrides.party_members ?? [],
     npc_roster_version: 2,
     setting_notes: "",
     player_notes: "",

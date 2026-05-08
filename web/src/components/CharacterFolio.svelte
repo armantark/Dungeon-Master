@@ -21,25 +21,95 @@ readout is purely read-only here; no buttons mutate state from this rail.
     itemPowerTitle,
     itemTagLabels,
   } from "../lib/cairn";
-  import type { CharacterSheet, GameState, InventoryItem } from "../lib/types";
+  import type {
+    CharacterSheet,
+    GameState,
+    InventoryItem,
+    PartyMember,
+  } from "../lib/types";
   import CairnReadout from "./CairnReadout.svelte";
 
   type Props = { state: GameState };
   const { state: gs }: Props = $props();
 
-  const character = $derived.by<CharacterSheet>(() => {
-    return gs.character ?? {
-      name: "Unnamed wanderer",
-      archetype: "Unknown wanderer",
-      epithet: gs.player_notes,
-      backstory: gs.player_notes,
-      drive: "Survive the next turning of the wheel.",
-      flaw: "Too much remains undefined.",
-      condition: "Unrecorded.",
-      inventory: [],
-      cairn: defaultCairnCharacterState(),
-    };
+  type FolioActor = {
+    id: string;
+    role: "player" | PartyMember["kind"];
+    tabLabel: string;
+    sheet: CharacterSheet;
+    member: PartyMember | null;
+  };
+
+  let selectedActorId = $state("player");
+
+  const fallbackCharacter = $derived.by<CharacterSheet>(() => ({
+    name: "Unnamed wanderer",
+    archetype: "Unknown wanderer",
+    epithet: gs.player_notes,
+    backstory: gs.player_notes,
+    drive: "Survive the next turning of the wheel.",
+    flaw: "Too much remains undefined.",
+    condition: "Unrecorded.",
+    inventory: [],
+    cairn: defaultCairnCharacterState(),
+  }));
+
+  const displayLabel = (sheet: CharacterSheet, fallback: string): string => {
+    const name = sheet.name.trim();
+    if (name !== "") return name;
+    const epithet = sheet.epithet.trim();
+    if (epithet !== "") return epithet;
+    return fallback;
+  };
+
+  const roleLabel = (role: FolioActor["role"]): string => {
+    switch (role) {
+      case "player":
+        return "Protagonist";
+      case "companion":
+        return "Companion";
+      case "hireling":
+        return "Hireling";
+      case "animal":
+        return "Animal";
+    }
+  };
+
+  const actors = $derived.by<FolioActor[]>(() => {
+    const playerSheet = gs.character ?? fallbackCharacter;
+    const party = gs.party_members
+      .filter((member) => member.active)
+      .map((member) => ({
+        id: member.id,
+        role: member.kind,
+        tabLabel: displayLabel(member.sheet, roleLabel(member.kind)),
+        sheet: member.sheet,
+        member,
+      }));
+
+    return [
+      {
+        id: "player",
+        role: "player",
+        tabLabel: displayLabel(playerSheet, "You"),
+        sheet: playerSheet,
+        member: null,
+      },
+      ...party,
+    ];
   });
+
+  $effect(() => {
+    if (!actors.some((actor) => actor.id === selectedActorId)) {
+      selectedActorId = "player";
+    }
+  });
+
+  const selectedActor = $derived.by<FolioActor>(() => {
+    return actors.find((actor) => actor.id === selectedActorId) ?? actors[0]!;
+  });
+
+  const character = $derived(selectedActor.sheet);
 
   const inventory = $derived.by<InventoryItem[]>(() => {
     if (character.inventory.length > 0) return character.inventory;
@@ -80,10 +150,33 @@ readout is purely read-only here; no buttons mutate state from this rail.
   -->
   <div class="folio__layout">
   <div class="folio__col folio__col--identity">
+    {#if actors.length > 1}
+      <nav class="party-tabs" aria-label="Party folio">
+        {#each actors as actor (actor.id)}
+          <button
+            class:party-tabs__button--active={actor.id === selectedActor.id}
+            type="button"
+            aria-pressed={actor.id === selectedActor.id}
+            onclick={() => {
+              selectedActorId = actor.id;
+            }}
+          >
+            <span class="party-tabs__role pixel">{roleLabel(actor.role)}</span>
+            <span class="party-tabs__name">{actor.tabLabel}</span>
+          </button>
+        {/each}
+      </nav>
+    {/if}
+
     <div class="plate">
-      <span class="kicker">{character.archetype}</span>
+      <span class="kicker">{roleLabel(selectedActor.role)} · {character.archetype}</span>
       <h2>{character.name}</h2>
       <p class="epithet">{character.epithet || character.backstory || gs.player_notes}</p>
+      {#if selectedActor.member?.loyalty || selectedActor.member?.notes}
+        <p class="party-note">
+          {selectedActor.member.loyalty || selectedActor.member.notes}
+        </p>
+      {/if}
     </div>
 
     <section class="condition">
@@ -213,7 +306,7 @@ readout is purely read-only here; no buttons mutate state from this rail.
   .folio__layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
     height: 100%;
     min-height: 0;
   }
@@ -228,12 +321,75 @@ readout is purely read-only here; no buttons mutate state from this rail.
   .folio__col {
     display: contents;
   }
+  .party-tabs,
   .plate,
   .condition,
   .mechanics,
   .inventory {
     padding: 0.7rem 0.8rem;
     border-bottom: var(--rule-hair);
+  }
+  .party-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-content: flex-start;
+    overflow-y: auto;
+    max-height: 7.2rem;
+    scrollbar-gutter: stable;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--ink-bruise) 34%, transparent),
+        rgba(0, 0, 0, 0.12)
+      );
+  }
+  .party-tabs button {
+    flex: 1 1 7.5rem;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.12rem;
+    padding: 0.35rem 0.45rem;
+    text-align: left;
+    border-color: color-mix(in oklab, var(--gold-tarnished) 38%, transparent);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--ink-deep) 92%, var(--rust-blood)),
+        rgba(0, 0, 0, 0.38)
+      );
+    color: var(--paper-bone);
+  }
+  .party-tabs button:hover,
+  .party-tabs button:focus-visible {
+    border-color: var(--gold-tarnished);
+    color: var(--paper-warm);
+  }
+  .party-tabs button.party-tabs__button--active {
+    border-color: var(--gold-bright);
+    color: var(--paper-warm);
+    box-shadow:
+      inset 2px 0 0 var(--gold-bright),
+      inset 0 0 18px color-mix(in oklab, var(--gold-tarnished) 18%, transparent);
+  }
+  .party-tabs__role {
+    color: var(--gold-tarnished);
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .party-tabs__name {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: 0.02em;
   }
   .plate h2 {
     font-size: 1.18rem;
@@ -253,6 +409,14 @@ readout is purely read-only here; no buttons mutate state from this rail.
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+  .party-note {
+    margin: 0.45rem 0 0;
+    padding-left: 0.5rem;
+    border-left: 2px solid color-mix(in oklab, var(--green-verdigris) 60%, transparent);
+    color: var(--paper-stained);
+    font-size: 0.8rem;
+    line-height: 1.28;
   }
   /*
    * Condition + Drive are always vertically stacked. The clamp keeps
@@ -452,6 +616,7 @@ readout is purely read-only here; no buttons mutate state from this rail.
     }
     .folio__col--identity {
       border-right: var(--rule-hair);
+      overflow: hidden;
     }
     .folio__col--ledger {
       overflow: hidden;

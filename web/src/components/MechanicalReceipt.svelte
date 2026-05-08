@@ -242,6 +242,10 @@ and add a Cairn-specific dl block with the resolution snapshot.
 
       {#if isCairnKind && cairn !== null}
         <dl class="cairn">
+          {#if cairn.actor_name != null}
+            <dt>Actor</dt>
+            <dd>{cairn.actor_name}</dd>
+          {/if}
           {#if initiatorLabel !== null}
             <!--
               F-05: surface who opened the fight inside the receipt so

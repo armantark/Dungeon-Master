@@ -66,6 +66,8 @@ function emptyCairnResolution(): CairnResolution {
     target: null,
     success: null,
     rest_kind: null,
+    actor_id: null,
+    actor_name: null,
     item_id: null,
     item_name: null,
     item_power_kind: null,
