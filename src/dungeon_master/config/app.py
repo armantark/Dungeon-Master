@@ -49,37 +49,31 @@ class TaskProfile:
 
 def _default_narration_reasoning_by_task() -> dict[OracleKind, ReasoningEffort]:
     return {
-        OracleKind.YES_NO: "minimal",
-        OracleKind.PLAYER_ACTION: "minimal",
-        OracleKind.RANDOM_EVENT: "low",
-        OracleKind.SCENE_CHECK: "low",
-        OracleKind.SAVE: "minimal",
-        OracleKind.ATTACK: "minimal",
-        OracleKind.HARM: "minimal",
-        OracleKind.RECOVERY: "minimal",
-        OracleKind.RETREAT: "minimal",
+        OracleKind.YES_NO: "none",
+        OracleKind.PLAYER_ACTION: "none",
+        OracleKind.RANDOM_EVENT: "minimal",
+        OracleKind.SCENE_CHECK: "minimal",
+        OracleKind.SAVE: "none",
+        OracleKind.ATTACK: "none",
+        OracleKind.HARM: "none",
+        OracleKind.RECOVERY: "none",
+        OracleKind.RETREAT: "none",
     }
 
 
 def _default_narration_reasoning_budgets() -> dict[ReasoningEffort, int]:
-    # Kimi K2.6 tends to spend a conspicuous amount of time in the
-    # reasoning channel before it starts prose. We therefore bias the
-    # narration budgets lower than the original "quality-first" pass:
-    # ordinary turns should get enough structured thought to stay
-    # grounded, but not enough room to spiral into repetitive visible
-    # trace text before writing the actual scene.
-    #
-    # The route-specific effort mapping above remains the real quality
-    # dial (most narration is `low`; scene checks / random events are
-    # `medium`). These numbers just cap how much token budget each
-    # effort tier may spend in that reasoning channel.
+    # Kimi/OpenRouter can occasionally stream corrupted multilingual/code
+    # fragments through the reasoning channel for minutes before first prose.
+    # Ordinary narration therefore runs with reasoning disabled; these caps
+    # exist only for the few task profiles that still deliberately request a
+    # small amount of model reasoning.
     return {
-        "minimal": 180,
-        "low": 450,
-        "medium": 900,
-        "high": 1200,
-        "xhigh": 1800,
-        "default": 450,
+        "minimal": 64,
+        "low": 160,
+        "medium": 360,
+        "high": 720,
+        "xhigh": 1200,
+        "default": 160,
     }
 
 
@@ -105,24 +99,27 @@ class LLMProfiles:
         default_factory=lambda: TaskProfile(
             temperature=0.05,
             max_tokens=1600,
-            reasoning_effort="low",
-            reasoning_max_tokens=700,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=64,
+            reasoning_exclude=True,
         ),
     )
     thread_updater: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.05,
             max_tokens=1800,
-            reasoning_effort="low",
-            reasoning_max_tokens=700,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=96,
+            reasoning_exclude=True,
         ),
     )
     npc_updater: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.05,
             max_tokens=1800,
-            reasoning_effort="low",
-            reasoning_max_tokens=700,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=96,
+            reasoning_exclude=True,
         ),
     )
     legacy_npc_repair: TaskProfile = field(

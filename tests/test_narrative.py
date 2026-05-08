@@ -58,9 +58,9 @@ def test_default_narrative_config_uses_openrouter_kimi(monkeypatch: pytest.Monke
     assert config.model == DEFAULT_MODEL
     assert config.api_key == "test-key"
     assert config.reasoning_policy == DEFAULT_REASONING_POLICY
-    # We default to streaming reasoning back so the UI can show a live
-    # "thinking..." chip while Kimi K2.6 spends 60-180s on internal
-    # deliberation. Set LITELLM_EXCLUDE_REASONING=true to opt out.
+    # Keep the runtime knob false for compatibility with task profiles that
+    # still intentionally expose reasoning; ordinary narration disables it at
+    # the profile level to avoid raw provider reasoning gibberish in chat.
     assert config.exclude_reasoning is False
     assert config.temperature == 1.25
     assert config.max_tokens == 4500
@@ -112,12 +112,8 @@ def test_narrative_engine_passes_task_based_reasoning_to_litellm() -> None:
     assert result == "The abbey waits."
     assert completion.model == DEFAULT_MODEL
     assert completion.api_key == "test-key"
-    assert completion.reasoning_effort == "low"
-    # OpenRouter forbids combining `effort` and `max_tokens` in the nested
-    # reasoning dict, so we surface `effort` only via the top-level
-    # `reasoning_effort` alias and keep `max_tokens` here for deterministic
-    # budget control.
-    assert completion.reasoning == {"max_tokens": 450, "exclude": True}
+    assert completion.reasoning_effort == "minimal"
+    assert completion.reasoning == {"max_tokens": 64, "exclude": True}
 
 
 def test_completion_logs_llm_trace(
@@ -347,7 +343,7 @@ def test_narrative_engine_allows_fixed_medium_reasoning() -> None:
     engine.generate(state, outcome, "I enter the hospice.")
 
     assert completion.reasoning_effort == "medium"
-    assert completion.reasoning == {"max_tokens": 900, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 360, "exclude": True}
 
 
 def test_narrative_stream_raises_on_cancellation_without_fallback() -> None:
