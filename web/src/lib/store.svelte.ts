@@ -12,7 +12,7 @@ import { api, ApiError, StreamTransportError } from "./api";
 import { loadOocNotes, saveOocNotes } from "./ooc-storage";
 import { parseTurn, SLASH_HELP, type AcquireVerb } from "./slash";
 import type { StreamHandlers, StreamResult } from "./streaming";
-import type { StreamRoute } from "./streaming-types";
+import type { StreamRoute, StreamStageStatus } from "./streaming-types";
 import type {
   CampaignEndReason,
   CharacterQuiz,
@@ -36,6 +36,24 @@ type RollPhase = "idle" | "rolling" | "settling";
 // provisional DM bubble before any tokens arrive ("composing a scene
 // check…"); `requestId` is surfaced in error toasts so the player can
 // reference a specific run if they file an issue.
+// One pre-narration stage as the chat surface sees it. We mirror the
+// backend's `stage` NDJSON frame shape (stage_id, label, status) so
+// the StageChecklist component can render whatever the backend
+// declares without a second mapping table on this side.
+//
+// `order` is the index a stage_id was first observed at; we sort the
+// rendered checklist by it so the visual order matches the order the
+// backend bootstrapped them in (which is the canonical pipeline
+// order). Storing the index — rather than a Map<stage_id, status> —
+// is the cheapest way to keep stable order across status updates
+// without re-deriving from the bootstrap frame on every flip.
+export interface StageProgress {
+  stageId: string;
+  label: string;
+  status: StreamStageStatus;
+  order: number;
+}
+
 interface StreamingState {
   active: boolean;
   route: StreamRoute | null;
@@ -46,6 +64,11 @@ interface StreamingState {
   // deltas. We pin the deterministic outcome here so the receipt can
   // render even mid-stream without waiting for the final state.
   pendingOutcome: OracleOutcome | null;
+  // Ordered backend pre-narration checklist. Empty while no stages
+  // have been observed; populated by the bootstrap frame the
+  // backend emits at stream open and updated in place by subsequent
+  // `stage` events that flip status to active/done/skipped.
+  stages: StageProgress[];
 }
 
 /**
@@ -95,7 +118,51 @@ function emptyStreamingState(): StreamingState {
     content: "",
     thinking: "",
     pendingOutcome: null,
+    stages: [],
   };
+}
+
+/**
+ * Apply a single backend `stage` frame to an ordered StageProgress
+ * list. We update in place when the stage_id is already known
+ * (preserving its `order`) and append otherwise. Returning a new
+ * array — rather than mutating the input — is the contract Svelte 5
+ * runes need to pick up the change without us reaching into nested
+ * proxy fields.
+ *
+ * Why we don't dedupe by checking equal status: Svelte's reactivity
+ * is based on identity for the array itself, and a no-op status flip
+ * is rare enough that the extra branch isn't worth complicating the
+ * call site.
+ */
+function applyStageEvent(
+  stages: readonly StageProgress[],
+  stage: { stage_id: string; label: string; status: StreamStageStatus },
+): StageProgress[] {
+  const idx = stages.findIndex((s) => s.stageId === stage.stage_id);
+  if (idx === -1) {
+    return [
+      ...stages,
+      {
+        stageId: stage.stage_id,
+        label: stage.label,
+        status: stage.status,
+        order: stages.length,
+      },
+    ];
+  }
+  const next = stages.slice();
+  const existing = next[idx]!;
+  next[idx] = {
+    stageId: existing.stageId,
+    // The label may legitimately update mid-stream if the backend
+    // refines a stage's display string between bootstrap and active;
+    // taking the latest keeps us from pinning a stale string.
+    label: stage.label,
+    status: stage.status,
+    order: existing.order,
+  };
+  return next;
 }
 
 // Inline "system message" that the chat surfaces alongside server events.
@@ -933,6 +1000,12 @@ class GameStore {
           requestId: event.request_id,
         };
       },
+      onStage: (event) => {
+        this.streaming = {
+          ...this.streaming,
+          stages: applyStageEvent(this.streaming.stages, event),
+        };
+      },
       onMechanics: (event) => {
         this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
         this.pendingOracle = event.outcome;
@@ -1071,6 +1144,13 @@ class GameStore {
           ...this.streaming,
           route: event.route,
           requestId: event.request_id,
+        };
+      },
+      onStage: (event) => {
+        observedAnyEvent = true;
+        this.streaming = {
+          ...this.streaming,
+          stages: applyStageEvent(this.streaming.stages, event),
         };
       },
       onThinkingDelta: (event) => {

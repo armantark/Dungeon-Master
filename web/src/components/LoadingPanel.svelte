@@ -11,6 +11,7 @@ floating one.
 -->
 <script lang="ts">
   import CollapsedThinking from "./CollapsedThinking.svelte";
+  import StageChecklist from "./StageChecklist.svelte";
   import { game } from "../lib/store.svelte";
 
   type Props = {
@@ -69,6 +70,18 @@ floating one.
       <button class="ghost" onclick={onCancel}>{cancelLabel}</button>
     {/if}
   </div>
+
+  {#if showStream && game.streaming.stages.length > 0}
+    <!--
+      Setup flows (campaign start, character draft/quiz) route through
+      the same NDJSON contract as gameplay turns, so when the backend
+      emits stage frames for those routes the panel surfaces them
+      above the thinking strip. We frame=false because the panel
+      already provides the bordered-card framing — doubling the
+      borders looks like a layout glitch.
+    -->
+    <StageChecklist stages={game.streaming.stages} framed={false} />
+  {/if}
 
   {#if showStream && game.streaming.active}
     <CollapsedThinking

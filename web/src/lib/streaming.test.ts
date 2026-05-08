@@ -267,4 +267,39 @@ describe("consumeStream", () => {
     vi.unstubAllGlobals();
     expect(calls).toEqual(["meta", "thinking", "content", "final"]);
   });
+
+  it("dispatches stage events through onStage in pipeline order", async () => {
+    // The backend bootstraps a `stage` frame for each pre-narration step
+    // at stream open (status=pending or skipped) and then flips each
+    // step to active/done as it works through them. The transport must
+    // surface every frame in the order the server sent it so the
+    // checklist UI can mirror the pipeline.
+    const lines = [
+      JSON.stringify({ type: "meta", request_id: "r", route: "player_action" }),
+      JSON.stringify({ type: "stage", stage_id: "planning_turn", label: "Planning turn", status: "skipped" }),
+      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "pending" }),
+      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "active" }),
+      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "done" }),
+      JSON.stringify({ type: "content_delta", text: "Ash falls." }),
+      JSON.stringify({ type: "final_state", state: { id: "g" }, thinking: null }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(streamFromChunks([lines.join("\n") + "\n"])),
+    );
+
+    const stageCalls: Array<{ stage_id: string; status: string }> = [];
+    const result = await consumeStream("/api/turn/stream", {
+      onStage: (event) => stageCalls.push({ stage_id: event.stage_id, status: event.status }),
+    });
+    vi.unstubAllGlobals();
+
+    expect(result.kind).toBe("final");
+    expect(stageCalls).toEqual([
+      { stage_id: "planning_turn", status: "skipped" },
+      { stage_id: "preparing_narration", status: "pending" },
+      { stage_id: "preparing_narration", status: "active" },
+      { stage_id: "preparing_narration", status: "done" },
+    ]);
+  });
 });
