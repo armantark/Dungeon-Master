@@ -83,6 +83,15 @@ TURN_STREAM_STAGE_LABELS: dict[str, str] = {
     "reconciling_continuity": "Reconciling continuity",
 }
 TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
+PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}
+
+
+@dataclass(frozen=True)
+class ServiceActor:
+    id: str
+    name: str
+    sheet: CharacterSheet
+    is_player: bool
 
 # Map between the wire-stream enum (`narrative.StreamStageStatus`) and
 # the persisted enum (`models.StageStatus`). The two are intentionally
@@ -1573,18 +1582,26 @@ class GameService:
                 continue
 
             if op.kind == PlannedTurnOpKind.ACQUIRE_ITEM:
+                actor = self._character_for_actor_name(state, op.actor_name)
                 step_summaries.append(
                     self._cairn.acquire_items(
                         state,
                         text=op.text,
+                        actor_id=None if actor.is_player else actor.id,
                         cancel_token=cancel_token,
                     ),
                 )
                 continue
 
             if op.kind == PlannedTurnOpKind.USE_ITEM and op.item_name is not None:
-                item_id = self._require_item_id_from_name(state.character, op.item_name)
-                item_outcome = self._cairn.use_item(state, item_id=item_id, intent=op.text)
+                actor = self._character_for_actor_name(state, op.actor_name)
+                item_id = self._require_item_id_from_name(actor.sheet, op.item_name)
+                item_outcome = self._cairn.use_item(
+                    state,
+                    item_id=item_id,
+                    intent=op.text,
+                    actor_id=None if actor.is_player else actor.id,
+                )
                 if primary_outcome is None:
                     primary_outcome = item_outcome
                     oracle_title = "Item use"
@@ -1592,16 +1609,41 @@ class GameService:
                 continue
 
             if op.kind == PlannedTurnOpKind.DROP_ITEM and op.item_name is not None:
-                item_id = self._require_item_id_from_name(state.character, op.item_name)
-                step_summaries.append(self._cairn.drop_item(state, item_id=item_id))
+                actor = self._character_for_actor_name(state, op.actor_name)
+                item_id = self._require_item_id_from_name(actor.sheet, op.item_name)
+                step_summaries.append(
+                    self._cairn.drop_item(
+                        state,
+                        item_id=item_id,
+                        actor_id=None if actor.is_player else actor.id,
+                    ),
+                )
+                continue
+
+            if op.kind == PlannedTurnOpKind.TRANSFER_ITEM and op.item_name is not None:
+                step_summaries.append(
+                    self._transfer_item_between_actors(
+                        state,
+                        item_name=op.item_name,
+                        source_actor_name=op.source_actor_name,
+                        target_actor_name=op.target_actor_name,
+                    ),
+                )
                 continue
 
             if op.kind == PlannedTurnOpKind.EQUIP and op.item_name is not None:
-                item_id = self._require_item_id_from_name(state.character, op.item_name)
+                actor = self._character_for_actor_name(state, op.actor_name)
+                item_id = self._require_item_id_from_name(actor.sheet, op.item_name)
                 equipped = True if op.equipped is None else op.equipped
-                self._cairn.set_item_equipped(state, item_id=item_id, equipped=equipped)
+                self._cairn.set_item_equipped(
+                    state,
+                    item_id=item_id,
+                    equipped=equipped,
+                    actor_id=None if actor.is_player else actor.id,
+                )
+                actor_context = "" if actor.is_player else f" for {actor.name}"
                 step_summaries.append(
-                    f"Equipment updated: {op.item_name} "
+                    f"Equipment updated{actor_context}: {op.item_name} "
                     f"{'equipped' if equipped else 'unequipped'}.",
                 )
                 continue
@@ -1628,18 +1670,26 @@ class GameService:
                 continue
 
             if op.kind == PlannedTurnOpKind.SAVE and op.ability is not None:
-                primary_outcome = self._cairn.resolve_save(state, op.ability, op.text)
+                actor = self._character_for_actor_name(state, op.actor_name)
+                primary_outcome = self._cairn.resolve_save(
+                    state,
+                    op.ability,
+                    op.text,
+                    actor_id=None if actor.is_player else actor.id,
+                )
                 oracle_title = "Cairn save"
                 step_summaries.append(f"Save resolved: {primary_outcome.summary}")
                 continue
 
             if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is not None:
+                actor = self._character_for_actor_name(state, op.actor_name)
                 primary_outcome = self._cairn.resolve_attack(
                     state,
                     target_name=op.target_name,
                     target_armor=0,
-                    weapon_item_id=self._item_id_from_name(state.character, op.item_name),
+                    weapon_item_id=self._item_id_from_name(actor.sheet, op.item_name),
                     stance=op.stance or AttackStance.NORMAL,
+                    actor_id=None if actor.is_player else actor.id,
                     cancel_token=cancel_token,
                 )
                 oracle_title = "Attack resolution"
@@ -1647,12 +1697,14 @@ class GameService:
                 continue
 
             if op.kind == PlannedTurnOpKind.HARM:
+                actor = self._character_for_actor_name(state, op.actor_name)
                 primary_outcome = self._cairn.suffer_harm(
                     state,
                     amount=op.harm_amount or 1,
                     source=op.harm_source or op.text,
                     in_combat=op.in_combat if op.in_combat is not None else True,
                     armor_applies=(op.armor_applies if op.armor_applies is not None else True),
+                    actor_id=None if actor.is_player else actor.id,
                 )
                 oracle_title = "Harm resolution"
                 step_summaries.append(f"Harm resolved: {primary_outcome.summary}")
@@ -1670,7 +1722,12 @@ class GameService:
                 continue
 
             if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is not None:
-                primary_outcome = self._cairn.recover(state, op.rest_kind)
+                actor = self._character_for_actor_name(state, op.actor_name)
+                primary_outcome = self._cairn.recover(
+                    state,
+                    op.rest_kind,
+                    actor_id=None if actor.is_player else actor.id,
+                )
                 oracle_title = "Recovery"
                 step_summaries.append(f"Recovery resolved: {primary_outcome.summary}")
                 continue
@@ -1710,6 +1767,83 @@ class GameService:
             f"Checked carried gear ({state.character.cairn.slots_used}/"
             f"{state.character.cairn.slots_total} slots): {names}."
         )
+
+    def _transfer_item_between_actors(
+        self,
+        state: GameState,
+        *,
+        item_name: str,
+        source_actor_name: str | None,
+        target_actor_name: str | None,
+    ) -> str:
+        source = self._character_for_actor_name(state, source_actor_name)
+        target = self._character_for_actor_name(state, target_actor_name)
+        if source.id == target.id:
+            message = "Cannot transfer an item to the same actor."
+            raise ValueError(message)
+        item_id = self._require_item_id_from_name(source.sheet, item_name)
+        item = next(
+            (candidate for candidate in source.sheet.inventory if candidate.id == item_id),
+            None,
+        )
+        if item is None:
+            message = f"Unknown inventory item: {item_name}"
+            raise ValueError(message)
+        source.sheet.inventory = [
+            candidate for candidate in source.sheet.inventory if candidate.id != item_id
+        ]
+        if item.cairn.equipped:
+            item.cairn.equipped = False
+        target.sheet.inventory.append(item)
+        self._recompute_party_burden(source.sheet, target.sheet)
+        return f"Transferred {item.name} from {source.name} to {target.name}."
+
+    def _character_for_actor_name(
+        self,
+        state: GameState,
+        actor_name: str | None,
+    ) -> ServiceActor:
+        cleaned = (actor_name or "").strip().lower()
+        if (
+            not cleaned
+            or cleaned in PLAYER_ACTOR_ALIASES
+            or cleaned == state.character.name.lower()
+        ):
+            return ServiceActor(
+                id="player",
+                name=state.character.name,
+                sheet=state.character,
+                is_player=True,
+            )
+        for member in state.party_members:
+            label = member.display_label()
+            label_lower = label.lower()
+            sheet_name = member.sheet.name.lower()
+            if cleaned in {member.id.lower(), label_lower, sheet_name}:
+                return ServiceActor(
+                    id=member.id,
+                    name=label,
+                    sheet=member.sheet,
+                    is_player=False,
+                )
+            if cleaned in label_lower or label_lower in cleaned:
+                return ServiceActor(
+                    id=member.id,
+                    name=label,
+                    sheet=member.sheet,
+                    is_player=False,
+                )
+        message = f"Unknown party actor: {actor_name}"
+        raise ValueError(message)
+
+    def _recompute_party_burden(self, *sheets: CharacterSheet) -> None:
+        for sheet in sheets:
+            cairn = sheet.cairn
+            slots_used = cairn.fatigue + sum(item.cairn.slots for item in sheet.inventory)
+            cairn.slots_used = slots_used
+            cairn.overloaded = slots_used >= cairn.slots_total
+            if cairn.overloaded:
+                cairn.hp = 0
 
     def _search_scene_summary(self, step_text: str) -> str:
         return f"Searched the immediate scene carefully: {step_text}."

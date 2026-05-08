@@ -287,6 +287,36 @@ def test_classifier_can_return_inventory_acquisition_plan() -> None:
     assert routed.equipped is True
 
 
+def test_classifier_can_return_inventory_transfer_plan() -> None:
+    def transfer_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.TRANSFER_ITEM,
+                    text=text,
+                    item_name="Test map",
+                    source_actor_name="player",
+                    target_actor_name="Brother Sava",
+                ),
+            ),
+        )
+
+    router = TurnRouter(classifier=transfer_classifier)
+
+    planned = router.plan("I hand the test map to Brother Sava.")
+    routed = router.route("I hand the test map to Brother Sava.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert planned.ops[0].kind == PlannedTurnOpKind.TRANSFER_ITEM
+    assert planned.ops[0].source_actor_name == "player"
+    assert planned.ops[0].target_actor_name == "Brother Sava"
+    assert routed.item_name == "Test map"
+    assert routed.source_actor_name == "player"
+    assert routed.target_actor_name == "Brother Sava"
+
+
 def test_classifier_can_return_holy_relic_use_plan() -> None:
     def relic_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
         return TurnPlan(

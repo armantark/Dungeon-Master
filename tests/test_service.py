@@ -48,6 +48,7 @@ from dungeon_master.models import (
     NPCStatus,
     OracleKind,
     OracleOutcome,
+    PartyMember,
     RetreatOutcome,
     StageStatus,
     ThreadStatus,
@@ -623,7 +624,15 @@ class FakeCairnEngine:
         state.character.cairn.slots_used = len(state.character.inventory)
         return True
 
-    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+    def resolve_save(
+        self,
+        state: GameState,
+        ability: CairnAbility,
+        reason: str,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         return OracleOutcome(
             kind=OracleKind.SAVE,
             summary=f"{ability.value} save passed: {reason}",
@@ -639,9 +648,10 @@ class FakeCairnEngine:
         target_armor: int,
         weapon_item_id: str | None,
         stance: AttackStance,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
-        del cancel_token
+        del actor_id, cancel_token
         return OracleOutcome(
             kind=OracleKind.ATTACK,
             summary=f"Attack against {target_name}.",
@@ -656,7 +666,7 @@ class FakeCairnEngine:
             ),
         )
 
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -664,8 +674,9 @@ class FakeCairnEngine:
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
-        del in_combat, armor_applies
+        del actor_id, in_combat, armor_applies
         state.character.cairn.hp = max(0, state.character.cairn.hp - amount)
         state.character.cairn.str_score = min(
             state.character.cairn.str_score,
@@ -725,7 +736,14 @@ class FakeCairnEngine:
             ),
         )
 
-    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+    def recover(
+        self,
+        state: GameState,
+        kind: CairnRestKind,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         state.character.cairn.hp = state.character.cairn.max_hp
         return OracleOutcome(
             kind=OracleKind.RECOVERY,
@@ -750,7 +768,15 @@ class FakeCairnEngine:
             ),
         )
 
-    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+    def set_item_equipped(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        equipped: bool,
+        actor_id: str | None = None,
+    ) -> None:
+        del actor_id
         for item in state.character.inventory:
             item.cairn.equipped = item.id == item_id if equipped else False
         if equipped:
@@ -761,9 +787,10 @@ class FakeCairnEngine:
         state: GameState,
         *,
         text: str,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
-        del cancel_token
+        del actor_id, cancel_token
         lantern = InventoryItem(
             name="Pilgrim lantern",
             details="Taken during play.",
@@ -790,7 +817,15 @@ class FakeCairnEngine:
         )
         return "Acquired Pilgrim lantern, Purse of old silver."
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
+    def use_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        intent: str,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         for item in list(state.character.inventory):
             if item.id != item_id:
                 continue
@@ -835,7 +870,14 @@ class FakeCairnEngine:
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
 
-    def drop_item(self, state: GameState, *, item_id: str) -> str:
+    def drop_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        actor_id: str | None = None,
+    ) -> str:
+        del actor_id
         for item in list(state.character.inventory):
             if item.id != item_id:
                 continue
@@ -1239,6 +1281,65 @@ def test_service_player_turn_executes_inventory_acquisition_plan(tmp_path: Path)
         "Purse of old silver",
     ]
     assert "Acquired Pilgrim lantern, Purse of old silver." in state.action_log[1].content
+
+
+def test_service_player_turn_transfers_inventory_to_companion(tmp_path: Path) -> None:
+    def transfer_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.TRANSFER_ITEM,
+                    text=text,
+                    item_name="Test map",
+                    source_actor_name="player",
+                    target_actor_name="Brother Sava",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=transfer_classifier),
+    )
+    state = service.load_state()
+    state.character.cairn.source = CairnMechanicsSource.EXPLICIT
+    state.character.inventory[1].cairn = CairnItemState(
+        source=CairnMechanicsSource.EXPLICIT,
+        slots=1,
+    )
+    state.character.cairn.slots_used = 2
+    state.party_members.append(
+        PartyMember(
+            sheet=CharacterSheet(
+                name="Brother Sava",
+                cairn=CairnCharacterState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    hp=3,
+                    max_hp=3,
+                ),
+            ),
+        ),
+    )
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    next_state = service.submit_player_turn("I hand the test map to Brother Sava.")
+
+    assert [item.name for item in next_state.character.inventory] == ["Test knife"]
+    assert [item.name for item in next_state.party_members[0].sheet.inventory] == ["Test map"]
+    assert next_state.character.cairn.slots_used == 1
+    assert next_state.party_members[0].sheet.cairn.slots_used == 1
+    assert (
+        "Transferred Test map from Test Wanderer to Brother Sava."
+        in next_state.action_log[1].content
+    )
 
 
 def test_service_player_turn_uses_holy_relic_as_structured_outcome(tmp_path: Path) -> None:

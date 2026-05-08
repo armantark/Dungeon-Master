@@ -52,6 +52,7 @@ class PlannedTurnOpKind(StrEnum):
     INSPECT_INVENTORY = "inspect_inventory"
     SEARCH_SCENE = "search_scene"
     ACQUIRE_ITEM = "acquire_item"
+    TRANSFER_ITEM = "transfer_item"
     USE_ITEM = "use_item"
     DROP_ITEM = "drop_item"
     NARRATE = "narrate"
@@ -67,6 +68,9 @@ class PlannedTurnOp:
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    actor_name: str | None = None
+    source_actor_name: str | None = None
+    target_actor_name: str | None = None
     equipped: bool | None = None
     harm_amount: int | None = None
     harm_source: str | None = None
@@ -91,6 +95,9 @@ class RoutedTurn:
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    actor_name: str | None = None
+    source_actor_name: str | None = None
+    target_actor_name: str | None = None
     equipped: bool | None = None
     harm_amount: int | None = None
     harm_source: str | None = None
@@ -108,6 +115,9 @@ class GeneratedPlannedTurnOp(StrictModel):
     stance: AttackStance | None = None
     rest_kind: CairnRestKind | None = None
     item_name: str | None = None
+    actor_name: str | None = None
+    source_actor_name: str | None = None
+    target_actor_name: str | None = None
     equipped: bool | None = None
     harm_amount: int | None = Field(default=None, ge=0)
     harm_source: str | None = None
@@ -199,6 +209,8 @@ Allowed op kinds:
   immediate area without definitely transitioning scenes
 - acquire_item: the player is explicitly taking, looting, receiving, buying,
   or otherwise adding a concrete item or bundle to their carried gear now
+- transfer_item: an existing carried item is being moved between the player
+  and a named party member, hireling, animal, or companion
 - use_item: the player is explicitly drinking, lighting, applying,
   consuming, reading, invoking, praying with, or otherwise using a carried item
 - drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
@@ -221,7 +233,7 @@ Rules:
   because the stable public outcome kind remains `harm`.
 - If ops contain only `equip`, `route` may be `equip`.
 - If ops contain only `inspect_inventory`, `search_scene`, `acquire_item`, `use_item`,
-  `drop_item`, or `narrate`, route must be `player_action`.
+  `transfer_item`, `drop_item`, or `narrate`, route must be `player_action`.
 - Use `save` only when the player is attempting one concrete risky action right now.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
 - If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
@@ -233,6 +245,9 @@ Rules:
 - If kind is `acquire_item`, use it only when the text supports adding gear
   to inventory immediately. Preserve the player's wording; do not invent a
   full item list in the planner itself.
+- If kind is `transfer_item`, include `item_name`, `source_actor_name`, and
+  `target_actor_name`. Use "player" for the main character when needed.
+- If another action is performed by a named party member, include `actor_name`.
 - If kind is `use_item` or `drop_item`, include `item_name`.
 - A prayer by itself is usually `narrate` or an oracle/save if risk is explicit.
   A prayer that explicitly invokes a carried icon, relic, scroll, prayer book,
@@ -251,7 +266,7 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "ops": [\n'
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
-    'enemy_opener | harm | recovery | equip | retreat | acquire_item | '
+    'enemy_opener | harm | recovery | equip | retreat | acquire_item | transfer_item | '
     'inspect_inventory | search_scene | use_item | drop_item",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
@@ -260,6 +275,9 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '      "stance": "normal | impaired | enhanced | null",\n'
     '      "rest_kind": "breather | full_rest | week_recovery | null",\n'
     '      "item_name": "string or null",\n'
+    '      "actor_name": "string or null",\n'
+    '      "source_actor_name": "string or null",\n'
+    '      "target_actor_name": "string or null",\n'
     '      "equipped": "true | false | null",\n'
     '      "harm_amount": "integer or null",\n'
     '      "harm_source": "string or null",\n'
@@ -446,6 +464,9 @@ class TurnRouter:
                     stance=op.stance,
                     rest_kind=op.rest_kind,
                     item_name=op.item_name,
+                    actor_name=op.actor_name,
+                    source_actor_name=op.source_actor_name,
+                    target_actor_name=op.target_actor_name,
                     equipped=op.equipped,
                     harm_amount=op.harm_amount,
                     harm_source=op.harm_source,
@@ -511,14 +532,21 @@ class TurnRouter:
             PlannedTurnOpKind.EQUIP,
             PlannedTurnOpKind.USE_ITEM,
             PlannedTurnOpKind.DROP_ITEM,
+            PlannedTurnOpKind.TRANSFER_ITEM,
         ) and op.item_name is None:
             message = f"{op.kind.value} ops require an item_name."
+            raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.TRANSFER_ITEM and (
+            op.source_actor_name is None or op.target_actor_name is None
+        ):
+            message = "transfer_item ops require source_actor_name and target_actor_name."
             raise ValueError(message)
         if op.kind in (
             PlannedTurnOpKind.INSPECT_INVENTORY,
             PlannedTurnOpKind.SEARCH_SCENE,
             PlannedTurnOpKind.ACQUIRE_ITEM,
             PlannedTurnOpKind.USE_ITEM,
+            PlannedTurnOpKind.TRANSFER_ITEM,
             PlannedTurnOpKind.DROP_ITEM,
             PlannedTurnOpKind.NARRATE,
         ) and route != TurnRoute.PLAYER_ACTION:
@@ -535,6 +563,9 @@ class TurnRouter:
             stance=op.stance,
             rest_kind=op.rest_kind,
             item_name=op.item_name,
+            actor_name=op.actor_name,
+            source_actor_name=op.source_actor_name,
+            target_actor_name=op.target_actor_name,
             equipped=op.equipped,
             harm_amount=op.harm_amount,
             harm_source=op.harm_source or op.target_name,
@@ -564,6 +595,9 @@ class TurnRouter:
             stance=routed.stance,
             rest_kind=routed.rest_kind,
             item_name=routed.item_name,
+            actor_name=routed.actor_name,
+            source_actor_name=routed.source_actor_name,
+            target_actor_name=routed.target_actor_name,
             equipped=routed.equipped,
             harm_amount=routed.harm_amount,
             harm_source=routed.harm_source,
@@ -582,6 +616,9 @@ class TurnRouter:
             stance=primary.stance,
             rest_kind=primary.rest_kind,
             item_name=primary.item_name,
+            actor_name=primary.actor_name,
+            source_actor_name=primary.source_actor_name,
+            target_actor_name=primary.target_actor_name,
             equipped=primary.equipped,
             harm_amount=primary.harm_amount,
             harm_source=primary.harm_source,
