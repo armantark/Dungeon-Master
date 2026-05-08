@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator
 from pathlib import Path
 from threading import Event
+from typing import cast
 
 import pytest
 
@@ -1672,6 +1673,36 @@ def test_service_continuity_classifier_can_skip_both_updaters(tmp_path: Path) ->
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
+def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater()
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    updated = service.submit_player_turn("I study the icon and pray for intercession.")
+
+    assert classifier.calls == []
+    assert thread_updater.calls == []
+    assert npc_updater.calls == []
+    assert updated.oracle_history[-1].kind == OracleKind.PLAYER_ACTION
+    assert updated.oracle_history[-1].referenced_thread_ids == []
+    assert updated.oracle_history[-1].referenced_npc_ids == []
+
+
 def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
 
@@ -2208,7 +2239,7 @@ def _consume_stream(generator: Generator[CompletionDelta, None, GameState]) -> G
         try:
             next(generator)
         except StopIteration as stop:
-            return stop.value
+            return cast("GameState", stop.value)
 
 
 def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
@@ -2246,6 +2277,35 @@ def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
         assert timing.started_at is not None
         assert timing.completed_at is not None
         assert timing.completed_at >= timing.started_at
+
+
+def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
+    tmp_path: Path,
+) -> None:
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    final = _consume_stream(
+        service.stream_submit_player_turn("I study the icon and pray for intercession."),
+    )
+    by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
+
+    assert classifier.calls == []
+    for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
+        timing = by_id[skipped_id]
+        assert timing.status == StageStatus.SKIPPED
+        assert timing.started_at is None
+        assert timing.completed_at is None
+    assert by_id["streaming_narration"].status == StageStatus.DONE
 
 
 def test_streamed_player_action_marks_skipped_stages(tmp_path: Path) -> None:

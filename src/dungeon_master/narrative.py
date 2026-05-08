@@ -562,11 +562,13 @@ LITELLM_RETRYABLE_ERRORS = (
 
 def _completion(request: CompletionRequest) -> ModelResponse:
     _raise_if_cancelled(request.cancel_token)
-    # We pass both `reasoning_effort` (OpenAI-style alias) and `reasoning`
-    # (OpenRouter-native nested config) because LiteLLM normalizes them
-    # differently per provider. `drop_params=True` makes LiteLLM silently
-    # drop whichever the chosen provider does not accept, instead of
-    # raising `UnsupportedParamsError` and forcing us to branch by model.
+    # OpenRouter rejects/ignores useful budget control when both the
+    # top-level effort alias and nested `reasoning.max_tokens` are present.
+    # Prefer the deterministic token cap when we have one; otherwise keep the
+    # effort alias for providers that only understand that shape.
+    reasoning_effort = (
+        None if "max_tokens" in request.reasoning else request.reasoning_effort
+    )
     started = time.perf_counter()
     response = litellm_completion(
         model=request.model,
@@ -577,7 +579,7 @@ def _completion(request: CompletionRequest) -> ModelResponse:
         stream=request.stream,
         api_key=request.api_key,
         base_url=request.base_url,
-        reasoning_effort=request.reasoning_effort,
+        reasoning_effort=reasoning_effort,
         reasoning=request.reasoning,
         extra_headers=request.extra_headers,
         response_format=request.response_format,

@@ -158,6 +158,38 @@ def test_completion_logs_llm_trace(
     )
 
 
+def test_completion_prefers_reasoning_token_cap_over_effort_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> ModelResponse:
+        captured.update(kwargs)
+        return ModelResponse(
+            choices=[{"message": {"role": "assistant", "content": "The abbey waits."}}],
+        )
+
+    monkeypatch.setattr("dungeon_master.narrative.litellm_completion", fake_completion)
+    request = CompletionRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "hello"}],
+        temperature=0.1,
+        max_tokens=32,
+        timeout=1.0,
+        stream=False,
+        api_key=None,
+        base_url=None,
+        reasoning_effort="minimal",
+        reasoning={"max_tokens": 180, "exclude": False},
+        extra_headers=None,
+    )
+
+    _completion(request)
+
+    assert captured["reasoning_effort"] is None
+    assert captured["reasoning"] == {"max_tokens": 180, "exclude": False}
+
+
 def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     completion = RecordingCompletion()
     state = sample_state()

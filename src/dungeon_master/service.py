@@ -156,6 +156,7 @@ class ExecutedTurn:
     outcome: OracleOutcome
     oracle_title: str | None
     execution_context: str | None = None
+    pre_narration_continuity: bool = True
 
 
 @dataclass(frozen=True)
@@ -1207,6 +1208,7 @@ class GameService:
             outcome=executed.outcome,
             oracle_title=executed.oracle_title,
             execution_context=executed.execution_context,
+            pre_narration_continuity=executed.pre_narration_continuity,
         )
         return state
 
@@ -1364,6 +1366,7 @@ class GameService:
             oracle_title=executed.oracle_title,
             queued_events=queued_events,
             execution_context=executed.execution_context,
+            pre_narration_continuity=executed.pre_narration_continuity,
             cancel_token=cancel_token,
             tracker=tracker,
         ))
@@ -1619,7 +1622,15 @@ class GameService:
             outcome=primary_outcome,
             oracle_title=oracle_title,
             execution_context=execution_context,
+            pre_narration_continuity=self._plan_needs_pre_narration_continuity(plan),
         )
+
+    def _plan_needs_pre_narration_continuity(self, plan: TurnPlan) -> bool:
+        # Pure narration plans have not resolved any durable fact yet. Running
+        # the expensive thread/NPC updater before the narrator answers only
+        # makes the turn slower; newly narrated canon is captured after prose
+        # by the normal committed-turn memory path.
+        return any(op.kind is not PlannedTurnOpKind.NARRATE for op in plan.ops)
 
     def _inspect_inventory_summary(self, state: GameState) -> str:
         inventory = state.character.inventory
@@ -1644,7 +1655,7 @@ class GameService:
             return None
         return "Executed backend steps:\n" + "\n".join(f"- {summary}" for summary in step_summaries)
 
-    def _commit_oracle_turn(
+    def _commit_oracle_turn(  # noqa: PLR0913
         self,
         *,
         state: GameState,
@@ -1652,6 +1663,7 @@ class GameService:
         outcome: OracleOutcome,
         oracle_title: str | None,
         execution_context: str | None = None,
+        pre_narration_continuity: bool = True,
     ) -> None:
         working_memory = self._load_turn_memory_state(state)
         self._stamp_scene_snapshot(state, outcome)
@@ -1661,6 +1673,7 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            pre_narration_continuity=pre_narration_continuity,
         )
         terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
@@ -1731,6 +1744,7 @@ class GameService:
         oracle_title: str | None,
         queued_events: list[GameEvent],
         execution_context: str | None = None,
+        pre_narration_continuity: bool = True,
         cancel_token: CancellationToken | None = None,
         tracker: StageTimingTracker | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
@@ -1745,6 +1759,7 @@ class GameService:
             cancel_token=cancel_token,
             working_memory=working_memory,
             tracker=tracker,
+            pre_narration_continuity=pre_narration_continuity,
         )
         terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
@@ -2240,7 +2255,12 @@ class GameService:
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
         working_memory: MemoryState | None = None,
+        pre_narration_continuity: bool = True,
     ) -> MemoryState:
+        if not pre_narration_continuity:
+            self._apply_thread_references(outcome, ())
+            self._apply_npc_references(state, outcome, ())
+            return self._memory_for_state(state, existing_memory=working_memory)
         scope = self._continuity_classifier.classify_update_scope(
             state,
             player_input=player_input,
@@ -2334,8 +2354,20 @@ class GameService:
         cancel_token: CancellationToken | None = None,
         working_memory: MemoryState | None = None,
         tracker: StageTimingTracker | None = None,
+        pre_narration_continuity: bool = True,
     ) -> Generator[CompletionDelta, None, MemoryState]:
         memory = self._memory_for_state(state, existing_memory=working_memory)
+        if not pre_narration_continuity:
+            yield self._stage_delta(
+                "classifying_continuity",
+                StreamStageStatus.SKIPPED,
+                tracker=tracker,
+            )
+            yield self._stage_delta("updating_threads", StreamStageStatus.SKIPPED, tracker=tracker)
+            yield self._stage_delta("updating_npcs", StreamStageStatus.SKIPPED, tracker=tracker)
+            self._apply_thread_references(outcome, ())
+            self._apply_npc_references(state, outcome, ())
+            return memory
         yield self._stage_delta("classifying_continuity", StreamStageStatus.ACTIVE, tracker=tracker)
         scope = self._continuity_classifier.classify_update_scope(
             state,
