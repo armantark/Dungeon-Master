@@ -5,6 +5,11 @@ import {
   cairnHeadline,
   defaultCairnCharacterState,
   defaultCairnItemState,
+  hasItemPower,
+  itemEffectLabel,
+  itemPowerKindLabel,
+  itemPowerSummary,
+  itemPowerTitle,
   formatAbility,
   formatBurden,
   formatCombatInitiator,
@@ -61,6 +66,14 @@ function emptyCairnResolution(): CairnResolution {
     target: null,
     success: null,
     rest_kind: null,
+    item_id: null,
+    item_name: null,
+    item_power_kind: null,
+    item_effect_kind: null,
+    effect_summary: null,
+    uses_before: null,
+    uses_after: null,
+    recharge_condition: null,
     attack_stance: null,
     weapon_item_id: null,
     weapon_name: null,
@@ -72,6 +85,10 @@ function emptyCairnResolution(): CairnResolution {
     hp_after: null,
     str_before: null,
     str_after: null,
+    dex_before: null,
+    dex_after: null,
+    wil_before: null,
+    wil_after: null,
     fatigue_before: null,
     fatigue_after: null,
     scar_result: null,
@@ -106,6 +123,19 @@ describe("default factories", () => {
     expect(item.armor_bonus).toBe(0);
     expect(item.uses).toBeNull();
     expect(item.equipped).toBe(false);
+    expect(item.power).toEqual({
+      kind: "none",
+      name: "",
+      summary: "",
+      effect: "none",
+      effect_amount: 1,
+      effect_ability: null,
+      clears_condition: null,
+      recharge_condition: "",
+      requires_wil_save_in_danger: false,
+      adds_fatigue: false,
+      consumed_on_use: false,
+    });
   });
 });
 
@@ -250,6 +280,41 @@ describe("itemTagLabel / itemTagLabels", () => {
   });
 });
 
+describe("item power helpers", () => {
+  it("suppresses mundane power blocks", () => {
+    const power = defaultCairnItemState().power;
+    expect(hasItemPower(power)).toBe(false);
+    expect(itemPowerTitle(power)).toBeNull();
+    expect(itemPowerSummary(power)).toBeNull();
+  });
+
+  it("labels known power and effect variants", () => {
+    expect(itemPowerKindLabel("holy_relic")).toBe("Holy relic");
+    expect(itemPowerKindLabel("spellbook")).toBe("Spellbook");
+    expect(itemEffectLabel("restore_attribute")).toBe("Restore attribute");
+    expect(itemEffectLabel("ward_or_pacify")).toBe("Ward or pacify");
+  });
+
+  it("formats explicit item powers without inferring from prose", () => {
+    const power = {
+      ...defaultCairnItemState().power,
+      kind: "holy_relic" as const,
+      name: "Icon of Saint Brindle",
+      summary: "Restore WIL by 2 when invoked in honest distress.",
+      effect: "restore_attribute" as const,
+      effect_amount: 2,
+      effect_ability: "WIL" as const,
+      requires_wil_save_in_danger: true,
+    };
+
+    expect(hasItemPower(power)).toBe(true);
+    expect(itemPowerTitle(power)).toBe("Holy relic · Icon of Saint Brindle");
+    expect(itemPowerSummary(power)).toBe(
+      "Restore WIL by 2 when invoked in honest distress.",
+    );
+  });
+});
+
 describe("formatAbility / formatStance / formatRestKind", () => {
   it("handles every CairnAbility variant", () => {
     for (const ability of CAIRN_ABILITIES) {
@@ -287,6 +352,21 @@ describe("cairnHeadline", () => {
     for (const kind of oracleKinds) {
       expect(cairnHeadline(makeOutcome(kind))).toBeNull();
     }
+  });
+
+  it("formats item-use player actions when the backend supplies Cairn fields", () => {
+    const outcome = makeOutcome("player_action", {
+      ...emptyCairnResolution(),
+      item_name: "Icon of Saint Brindle",
+      item_power_kind: "holy_relic",
+      item_effect_kind: "restore_attribute",
+      uses_before: 2,
+      uses_after: 1,
+    });
+
+    expect(cairnHeadline(outcome)).toBe(
+      "Item · Icon of Saint Brindle · Holy relic · uses 2->1",
+    );
   });
 
   it("returns null-safe headlines when cairn is missing for a Cairn kind", () => {

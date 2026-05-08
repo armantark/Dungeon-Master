@@ -42,7 +42,7 @@ type RollPhase = "idle" | "rolling" | "settling";
 // provisional DM bubble before any tokens arrive ("composing a scene
 // check…"); `requestId` is surfaced in error toasts so the player can
 // reference a specific run if they file an issue.
-// One pipeline stage as the chat surface sees it. We mirror the
+// One backend stage as the chat surface sees it. We mirror the
 // backend's `stage` NDJSON frame shape (stage_id, label, status) so
 // the StageChecklist component can render whatever the backend
 // declares without a second mapping table on this side.
@@ -81,11 +81,13 @@ interface StreamingState {
   // alongside the existing provisional bubble without the feed
   // having to learn a second source of truth.
   resuming: boolean;
-  // Ordered backend pipeline checklist. Empty while no stages have
-  // been observed; populated by the bootstrap frame the backend emits
-  // at stream open and updated in place by subsequent `stage` events
-  // that flip status to active/done/skipped, even if a late stage
-  // lands after prose has already started.
+  // Ordered backend checklist. Empty while no stages have been
+  // observed; populated by the bootstrap frame the backend emits at
+  // stream open and updated in place by subsequent `stage` events
+  // that flip status to active/done/skipped. Hybrid continuity can
+  // append a late reconciliation stage after prose has already
+  // started streaming, so this list intentionally models the whole
+  // visible pipeline rather than only the pre-narration slice.
   stages: StageProgress[];
 }
 

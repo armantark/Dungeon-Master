@@ -16,9 +16,9 @@
 //   stage           zero or many, ordered backend pipeline progress
 //                   updates (planner, mechanics, continuity classifier,
 //                   thread/NPC updaters, narration prep, and any
-//                   post-prose reconciliation step). Lets the UI render
-//                   a live checklist instead of staring at a blank
-//                   composing strip.
+//                   post-prose continuity reconciliation). Lets the UI
+//                   render a live checklist instead of staring at a
+//                   blank composing strip.
 //   mechanics_ready zero or one, deterministic Cairn/oracle resolution
 //                   resolved before any prose token streams
 //   oracle_outcome  alias of mechanics_ready when the resolution comes

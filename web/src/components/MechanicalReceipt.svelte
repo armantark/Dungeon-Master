@@ -23,6 +23,8 @@ and add a Cairn-specific dl block with the resolution snapshot.
     formatRestKind,
     formatStance,
     isAmbushOpener,
+    itemEffectLabel,
+    itemPowerKindLabel,
   } from "../lib/cairn";
   import {
     npcDisplayLabel,
@@ -61,7 +63,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
       case "scene_check":
         return `Scene · ${outcome.scene_status ?? "?"}`;
       case "player_action":
-        return "No roll";
+        return cairnHeadline(outcome) ?? "No roll";
       case "save":
       case "attack":
       case "harm":
@@ -83,7 +85,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
       case "retreat":
         return "cairn";
       case "player_action":
-        return "system";
+        return outcome.cairn?.item_name == null ? "system" : "cairn";
       case "yes_no":
       case "random_event":
       case "scene_check":
@@ -101,7 +103,8 @@ and add a Cairn-specific dl block with the resolution snapshot.
       || outcome.kind === "attack"
       || outcome.kind === "harm"
       || outcome.kind === "recovery"
-      || outcome.kind === "retreat",
+      || outcome.kind === "retreat"
+      || (outcome.kind === "player_action" && outcome.cairn?.item_name != null),
   );
 
   // F-05 surfacing.
@@ -137,7 +140,11 @@ and add a Cairn-specific dl block with the resolution snapshot.
         true to what just happened. The underlying outcome.kind stays
         "harm" — this is presentational only.
       -->
-      {ambush ? "ambush" : outcome.kind.replace("_", " ")}
+      {outcome.kind === "player_action" && outcome.cairn?.item_name != null
+        ? "item"
+        : ambush
+          ? "ambush"
+          : outcome.kind.replace("_", " ")}
     </span>
     <span class="line pixel">{headline}</span>
     <span class="chev pixel">{open ? "▾" : "▸"}</span>
@@ -260,6 +267,30 @@ and add a Cairn-specific dl block with the resolution snapshot.
             <dt>Result</dt>
             <dd class="pixel">{cairn.success ? "Passed" : "Failed"}</dd>
           {/if}
+          {#if cairn.item_name != null}
+            <dt>Item</dt>
+            <dd>{cairn.item_name}</dd>
+          {/if}
+          {#if cairn.item_power_kind != null}
+            <dt>Power</dt>
+            <dd class="pixel">{itemPowerKindLabel(cairn.item_power_kind)}</dd>
+          {/if}
+          {#if cairn.item_effect_kind != null}
+            <dt>Effect</dt>
+            <dd class="pixel">{itemEffectLabel(cairn.item_effect_kind)}</dd>
+          {/if}
+          {#if cairn.effect_summary != null}
+            <dt>Effect summary</dt>
+            <dd>{cairn.effect_summary}</dd>
+          {/if}
+          {#if cairn.uses_before != null}
+            <dt>Uses</dt>
+            <dd class="pixel">{cairn.uses_before} → {cairn.uses_after ?? 0}</dd>
+          {/if}
+          {#if cairn.recharge_condition != null && cairn.recharge_condition !== ""}
+            <dt>Recharge</dt>
+            <dd>{cairn.recharge_condition}</dd>
+          {/if}
           {#if cairn.attack_stance !== null}
             <dt>Stance</dt>
             <dd class="pixel">{formatStance(cairn.attack_stance)}</dd>
@@ -291,6 +322,14 @@ and add a Cairn-specific dl block with the resolution snapshot.
           {#if cairn.str_before !== null && cairn.str_after !== null && cairn.str_before !== cairn.str_after}
             <dt>STR</dt>
             <dd class="pixel">{cairn.str_before} → {cairn.str_after}</dd>
+          {/if}
+          {#if cairn.dex_before != null && cairn.dex_after != null && cairn.dex_before !== cairn.dex_after}
+            <dt>DEX</dt>
+            <dd class="pixel">{cairn.dex_before} → {cairn.dex_after}</dd>
+          {/if}
+          {#if cairn.wil_before != null && cairn.wil_after != null && cairn.wil_before !== cairn.wil_after}
+            <dt>WIL</dt>
+            <dd class="pixel">{cairn.wil_before} → {cairn.wil_after}</dd>
           {/if}
           {#if cairn.fatigue_before !== null && cairn.fatigue_after !== null && cairn.fatigue_before !== cairn.fatigue_after}
             <dt>Fatigue</dt>

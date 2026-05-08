@@ -145,6 +145,34 @@ export const CAIRN_ITEM_TAGS: readonly CairnItemTag[] = [
   "utility",
 ] as const;
 
+export type CairnItemPowerKind =
+  | "none"
+  | "spellbook"
+  | "scroll"
+  | "relic"
+  | "holy_relic";
+
+export type CairnItemEffectKind =
+  | "none"
+  | "restore_hp"
+  | "restore_attribute"
+  | "clear_condition"
+  | "enhance_attack"
+  | "impair_target"
+  | "force_save"
+  | "reveal_sign"
+  | "create_safe_passage"
+  | "ward_or_pacify"
+  | "extraordinary_aid"
+  | "resurrect";
+
+export type CairnConditionKey =
+  | "deprived"
+  | "critically_wounded"
+  | "doomed"
+  | "paralyzed"
+  | "delirious";
+
 export interface Roll {
   sides: number;
   result: number;
@@ -173,11 +201,27 @@ export interface NPC {
   status: NPCStatus;
 }
 
+export interface CairnItemPower {
+  kind: CairnItemPowerKind;
+  name: string;
+  summary: string;
+  effect: CairnItemEffectKind;
+  effect_amount: number;
+  effect_ability: CairnAbility | null;
+  clears_condition: CairnConditionKey | null;
+  recharge_condition: string;
+  requires_wil_save_in_danger: boolean;
+  adds_fatigue: boolean;
+  consumed_on_use: boolean;
+}
+
 // Mirrors `CairnItemState` in models.py. `weapon_damage_die` is the d-side
 // for the item's weapon roll (4–12 in models.py); `armor_bonus` adds to
 // the wearer's armor pool (0–3); `uses` is null for unlimited consumables
 // (e.g. lanterns aren't consumed per scene), or a positive count for
-// charge-tracked items.
+// charge-tracked items. `power` is the backend's typed Cairn item-power
+// contract for spellbooks, scrolls, relics, and holy relics; renderers
+// must use it as data, never infer powers from item prose.
 export interface CairnItemState {
   source: CairnMechanicsSource;
   backfill_version: number;
@@ -187,6 +231,7 @@ export interface CairnItemState {
   armor_bonus: number;
   uses: number | null;
   equipped: boolean;
+  power: CairnItemPower;
 }
 
 export interface InventoryItem {
@@ -240,6 +285,14 @@ export interface CairnResolution {
   target: number | null;
   success: boolean | null;
   rest_kind: CairnRestKind | null;
+  item_id: string | null;
+  item_name: string | null;
+  item_power_kind: CairnItemPowerKind | null;
+  item_effect_kind: CairnItemEffectKind | null;
+  effect_summary: string | null;
+  uses_before: number | null;
+  uses_after: number | null;
+  recharge_condition: string | null;
   attack_stance: AttackStance | null;
   weapon_item_id: string | null;
   weapon_name: string | null;
@@ -251,6 +304,10 @@ export interface CairnResolution {
   hp_after: number | null;
   str_before: number | null;
   str_after: number | null;
+  dex_before: number | null;
+  dex_after: number | null;
+  wil_before: number | null;
+  wil_after: number | null;
   fatigue_before: number | null;
   fatigue_after: number | null;
   // Combat-context fields published when the resolution belongs to an

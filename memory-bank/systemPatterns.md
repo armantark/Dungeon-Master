@@ -171,6 +171,7 @@ That means the mechanics scope is now:
 - automatically backfill those mechanics from the already-authored character sheet and generated opening state so the user does not have to redo character creation
 - keep the LLM out of canonical math, roll resolution, item modifiers, and state mutation
 - in the current backend implementation, the above is realized as a separate `CairnEngine` (`src/dungeon_master/cairn.py`) that sits beside `OracleEngine`, not inside it
+- Cairn item powers are now typed, item-bound mechanics rather than a generic buff system. `CairnItemState.power` can mark an item as a spellbook, scroll, relic, or holy relic with a bounded effect vocabulary (`restore_attribute`, `clear_condition`, `enhance_attack`, `reveal_sign`, `ward_or_pacify`, etc.), optional charges/uses, recharge text, spellbook Fatigue, and WIL-save risk under danger/deprivation. This keeps prayer/intercession close to Cairn 2e's item/relic philosophy: a plain prayer remains fiction/oracle/save territory, while a carried holy icon can matter mechanically only through its typed holy-relic effect.
 
 The preferred pattern is now:
 

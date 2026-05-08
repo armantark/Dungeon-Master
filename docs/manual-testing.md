@@ -77,14 +77,12 @@ These checks exercise the NDJSON streaming transport, the provisional DM bubble,
 8. Trigger combat in narrative (`I attack the marauder.`). Confirm the top StatusStrip grows a `Combat · Round 1 · DEX save to act` badge, the inspector auto-shows a default-open `Combat` drawer with the foe's HP/Armor/STR/DEX/WIL, the foe's HP bar tier shifts colors as they take damage, and the headline drops the `DEX save to act` suffix once the player is marked ready.
 9. When all foes drop to 0 HP, confirm the encounter clears: the StatusStrip combat badge disappears, and the inspector either hides the drawer entirely or shows the cleared summary.
 10. Start a streamed turn, then refresh the page before the model finishes. Confirm:
-
-    - The provisional DM bubble re-appears within a beat of the bootstrap completing, with the meta tag reading `resuming…` (verdigris accent) instead of `streaming…`.
-    - Prose continues to stream into that bubble until the canonical event lands.
-    - The final committed `state.action_log` contains the finished narrative exactly once.
-    - If the turn shape includes a late continuity stage, the resumed checklist preserves that stage and its status transitions instead of dropping it after the first content token.
-    - localStorage key `dm.stream-resume.<save_id>` is cleared after the final lands. (Inspect via DevTools → Application → Local Storage.)
-    - If you start another turn, refresh, and wait more than 10 minutes before reloading, the descriptor TTL evicts itself silently and the next bootstrap behaves like a normal cold start.
-
+   - The provisional DM bubble re-appears within a beat of the bootstrap completing, with the meta tag reading `resuming…` (verdigris accent) instead of `streaming…`.
+   - Prose continues to stream into that bubble until the canonical event lands.
+   - The final committed `state.action_log` contains the finished narrative exactly once.
+   - If the turn shape includes a late continuity stage, the resumed checklist preserves that stage and its status transitions instead of dropping it after the first content token.
+   - localStorage key `dm.stream-resume.<save_id>` is cleared after the final lands. (Inspect via DevTools → Application → Local Storage.)
+   - If you start another turn, refresh, and wait more than 10 minutes before reloading, the descriptor TTL evicts itself silently and the next bootstrap behaves like a normal cold start.
 11. With the backend console visible (or logs captured), confirm each streamed turn emits one `turn.router ...` line, one `continuity.classifier ...` line when pre-narration continuity actually runs, and one `llm.call ...` line per model request. The minimum useful fields are `route`, `profile`, `request_id`, token counts when available, and `duration_ms`. Set `DM_LOG_LEVEL=INFO` in `.env` if those lines are not visible.
 12. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
 
@@ -148,6 +146,20 @@ curl -s -X POST http://127.0.0.1:8000/api/cairn/recover \
 ```
 
 Confirm the latest `oracle_history` entry has `kind: "recovery"` and HP is restored if the character is not deprived.
+
+## Cairn Item-Power UI Smoke
+
+Use an isolated save-library root when checking spellbook / scroll / relic /
+holy-relic rendering. The useful branches are:
+
+1. Inventory item shows its typed power title (for example `Holy relic · ...`),
+   summary, uses, and cost/risk chips such as `WIL in danger`.
+2. A structured item-use receipt collapses as an `item` receipt, not generic
+   `player_action`.
+3. Expanding the receipt shows item, power, effect, effect summary, uses,
+   recharge, and any HP/STR/DEX/WIL/Fatigue deltas.
+4. Reload an older save whose inventory items predate `cairn.power`; the folio
+   should render without crashing and simply omit the power block.
 
 ## Memory Sidecar Smoke
 

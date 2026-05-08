@@ -17,6 +17,8 @@ readout is purely read-only here; no buttons mutate state from this rail.
     defaultCairnCharacterState,
     defaultCairnItemState,
     hasCairnMechanics,
+    itemPowerSummary,
+    itemPowerTitle,
     itemTagLabels,
   } from "../lib/cairn";
   import type { CharacterSheet, GameState, InventoryItem } from "../lib/types";
@@ -109,6 +111,8 @@ readout is purely read-only here; no buttons mutate state from this rail.
       {#each inventory as item (item.id)}
         {@const tagLabels = itemTagLabels(item.cairn)}
         {@const showTags = showCairn && tagLabels.length > 0}
+        {@const powerTitle = itemPowerTitle(item.cairn.power)}
+        {@const powerSummary = itemPowerSummary(item.cairn.power)}
         <li class:item--equipped={item.cairn.equipped}>
           <div class="item__head">
             <strong>{item.name}</strong>
@@ -124,6 +128,14 @@ readout is purely read-only here; no buttons mutate state from this rail.
           {#if item.details}
             <span class="item__details">{item.details}</span>
           {/if}
+          {#if showCairn && powerTitle !== null}
+            <div class="item__power" aria-label="Item power">
+              <span class="item__power-title pixel">{powerTitle}</span>
+              {#if powerSummary !== null}
+                <span class="item__power-summary">{powerSummary}</span>
+              {/if}
+            </div>
+          {/if}
           {#if showTags}
             <ul class="item__tags" aria-label="Item tags">
               {#each tagLabels as label, idx (idx)}
@@ -136,7 +148,8 @@ readout is purely read-only here; no buttons mutate state from this rail.
             {@const armor = item.cairn.armor_bonus}
             {@const uses = item.cairn.uses}
             {@const slots = item.cairn.slots}
-            {#if die !== null || armor > 0 || uses !== null || slots !== 1}
+            {@const power = item.cairn.power}
+            {#if die !== null || armor > 0 || uses !== null || slots !== 1 || power?.adds_fatigue || power?.requires_wil_save_in_danger || power?.consumed_on_use}
               <ul class="item__stats pixel" aria-label="Item mechanics">
                 {#if die !== null}
                   <li>Dmg d{die}</li>
@@ -149,6 +162,15 @@ readout is purely read-only here; no buttons mutate state from this rail.
                 {/if}
                 {#if slots !== 1}
                   <li>{slots} slots</li>
+                {/if}
+                {#if power?.adds_fatigue}
+                  <li>+Fatigue</li>
+                {/if}
+                {#if power?.requires_wil_save_in_danger}
+                  <li>WIL in danger</li>
+                {/if}
+                {#if power?.consumed_on_use}
+                  <li>Consumed</li>
                 {/if}
               </ul>
             {/if}
@@ -326,6 +348,31 @@ readout is purely read-only here; no buttons mutate state from this rail.
     color: var(--paper-shadow);
     font-size: 0.82rem;
     line-height: 1.32;
+  }
+  .item__power {
+    margin-top: 0.22rem;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid color-mix(in oklab, var(--green-verdigris) 36%, transparent);
+    background:
+      linear-gradient(
+        120deg,
+        color-mix(in oklab, var(--green-verdigris) 18%, transparent),
+        rgba(0, 0, 0, 0.26)
+      );
+    display: flex;
+    flex-direction: column;
+    gap: 0.16rem;
+  }
+  .item__power-title {
+    color: var(--gold-bright);
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .item__power-summary {
+    color: var(--paper-bone);
+    font-size: 0.78rem;
+    line-height: 1.25;
   }
   .item__tags {
     list-style: none;

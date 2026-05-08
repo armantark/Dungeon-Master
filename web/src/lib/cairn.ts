@@ -11,6 +11,10 @@ import type {
   AttackStance,
   CairnAbility,
   CairnCharacterState,
+  CairnConditionKey,
+  CairnItemEffectKind,
+  CairnItemPower,
+  CairnItemPowerKind,
   CairnItemState,
   CairnItemTag,
   CairnMechanicsSource,
@@ -69,6 +73,23 @@ export function defaultCairnItemState(): CairnItemState {
     armor_bonus: 0,
     uses: null,
     equipped: false,
+    power: defaultCairnItemPower(),
+  };
+}
+
+export function defaultCairnItemPower(): CairnItemPower {
+  return {
+    kind: "none",
+    name: "",
+    summary: "",
+    effect: "none",
+    effect_amount: 1,
+    effect_ability: null,
+    clears_condition: null,
+    recharge_condition: "",
+    requires_wil_save_in_danger: false,
+    adds_fatigue: false,
+    consumed_on_use: false,
   };
 }
 
@@ -185,6 +206,76 @@ export function itemTagLabels(item: CairnItemState): string[] {
   return item.tags.map(itemTagLabel);
 }
 
+// --- Item powers --------------------------------------------------------
+
+const POWER_KIND_LABEL: Record<CairnItemPowerKind, string> = {
+  none: "Mundane",
+  spellbook: "Spellbook",
+  scroll: "Scroll",
+  relic: "Relic",
+  holy_relic: "Holy relic",
+};
+
+const EFFECT_LABEL: Record<CairnItemEffectKind, string> = {
+  none: "No special effect",
+  restore_hp: "Restore HP",
+  restore_attribute: "Restore attribute",
+  clear_condition: "Clear condition",
+  enhance_attack: "Enhance attack",
+  impair_target: "Impair target",
+  force_save: "Force save",
+  reveal_sign: "Reveal sign",
+  create_safe_passage: "Create safe passage",
+  ward_or_pacify: "Ward or pacify",
+  extraordinary_aid: "Extraordinary aid",
+  resurrect: "Resurrect",
+};
+
+const CONDITION_LABEL: Record<CairnConditionKey, string> = {
+  deprived: "Deprived",
+  critically_wounded: "Critical",
+  doomed: "Doomed",
+  paralyzed: "Paralyzed",
+  delirious: "Delirious",
+};
+
+export function itemPowerKindLabel(kind: CairnItemPowerKind): string {
+  return POWER_KIND_LABEL[kind];
+}
+
+export function itemEffectLabel(effect: CairnItemEffectKind): string {
+  return EFFECT_LABEL[effect];
+}
+
+export function itemConditionLabel(condition: CairnConditionKey): string {
+  return CONDITION_LABEL[condition];
+}
+
+export function hasItemPower(
+  power: CairnItemPower | null | undefined,
+): power is CairnItemPower {
+  if (power == null) return false;
+  return power.kind !== "none" || power.effect !== "none";
+}
+
+export function itemPowerTitle(power: CairnItemPower | null | undefined): string | null {
+  if (!hasItemPower(power)) return null;
+  const name = power.name.trim();
+  const kind = itemPowerKindLabel(power.kind);
+  return name === "" ? kind : `${kind} · ${name}`;
+}
+
+export function itemPowerSummary(power: CairnItemPower | null | undefined): string | null {
+  if (!hasItemPower(power)) return null;
+  if (power.summary.trim() !== "") return power.summary.trim();
+  const parts = [itemEffectLabel(power.effect)];
+  if (power.effect_ability !== null) parts.push(power.effect_ability);
+  if (power.clears_condition !== null) parts.push(itemConditionLabel(power.clears_condition));
+  if (power.adds_fatigue) parts.push("Fatigue");
+  if (power.requires_wil_save_in_danger) parts.push("WIL risk");
+  return parts.join(" · ");
+}
+
 // --- Cairn-flavored receipt headlines ----------------------------------
 
 const ABILITY_LABEL: Record<CairnAbility, string> = {
@@ -223,6 +314,9 @@ export function formatRestKind(kind: CairnRestKind | null): string | null {
 // returns null, the receipt falls through to the existing oracle
 // headline branches.
 export function cairnHeadline(outcome: OracleOutcome): string | null {
+  if (outcome.kind === "player_action" && outcome.cairn?.item_name != null) {
+    return formatItemUseHeadline(outcome);
+  }
   switch (outcome.kind) {
     case "save":
       return formatSaveHeadline(outcome);
@@ -240,6 +334,19 @@ export function cairnHeadline(outcome: OracleOutcome): string | null {
     case "player_action":
       return null;
   }
+}
+
+function formatItemUseHeadline(outcome: OracleOutcome): string {
+  const cairn = outcome.cairn;
+  if (cairn === null) return "Item use";
+  const item = cairn.item_name ?? "item";
+  const power = cairn.item_power_kind === null
+    ? null
+    : itemPowerKindLabel(cairn.item_power_kind);
+  const uses = cairn.uses_before === null
+    ? null
+    : `uses ${cairn.uses_before}->${cairn.uses_after ?? 0}`;
+  return ["Item", item, power, uses].filter((part) => part !== null && part !== "").join(" · ");
 }
 
 function formatSaveHeadline(outcome: OracleOutcome): string {
