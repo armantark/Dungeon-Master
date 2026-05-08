@@ -20,9 +20,15 @@ MechanicalReceipt so the player can verify the dice on demand.
   import CollapsedThinking from "./CollapsedThinking.svelte";
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import MessageActions from "./MessageActions.svelte";
+  import StageChecklist from "./StageChecklist.svelte";
   import { liveTime } from "../lib/live-time.svelte";
   import { renderMarkdown } from "../lib/markdown";
-  import type { GameThread, NPC, OracleOutcome } from "../lib/types";
+  import {
+    formatRoundtripMs,
+    stageTimingsToProgress,
+    totalRoundtripMs,
+  } from "../lib/stage-timings";
+  import type { GameThread, NPC, OracleOutcome, StageTiming } from "../lib/types";
 
   type Props = {
     eventId: string;
@@ -31,26 +37,16 @@ MechanicalReceipt so the player can verify the dice on demand.
     timestamp?: string | null;
     outcome?: OracleOutcome | null;
     canRegenerate?: boolean;
-    // Persisted reasoning trace for this message. Optional because
-    // player/system messages never have one, and DM messages only have
-    // one once the backend persists thinking on `GameEvent`. Until
-    // then, this is null and the block doesn't render.
     thinking?: string | null;
-    // True only while the message is being streamed in. The chat feed
-    // uses this for the synthetic provisional DM bubble; persisted
-    // messages always render with `streaming = false`.
+    // Persisted pipeline timings for this message (narrative events
+    // only). When present the reasoning-trace strip surfaces a
+    // "Total · 12.4s" pill that stays visible even when collapsed,
+    // and expanding the trace shows a compact stage checklist above
+    // the text. Empty / undefined → no checklist, no pill — keeps
+    // legacy saves and non-narrative speakers rendering unchanged.
+    stageTimings?: readonly StageTiming[];
     streaming?: boolean;
-    // True only when the streaming bubble is for a stream we
-    // reattached to after a page reload (see lib/stream-resume.ts).
-    // Surfaces as a "resuming…" meta tag instead of "streaming…" so
-    // the player understands the bubble started its life on a
-    // previous page rather than just now. Ignored when
-    // `streaming === false`.
     resuming?: boolean;
-    // F-10 OOC explainer: the player's verbatim question, rendered
-    // as a `Q:` row above the answer. Only consulted when speaker is
-    // `ooc`; ignored otherwise so callers can leave it null without
-    // changing other layouts.
     question?: string | null;
     threads?: readonly GameThread[];
     npcs?: readonly NPC[];
@@ -63,12 +59,25 @@ MechanicalReceipt so the player can verify the dice on demand.
     outcome = null,
     canRegenerate = false,
     thinking = null,
+    stageTimings = [],
     streaming = false,
     resuming = false,
     question = null,
     threads = [],
     npcs = [],
   }: Props = $props();
+
+  // Derive the renderer-friendly progress shape and the total-roundtrip
+  // pill label up-front so the template stays declarative. Both
+  // collapse to empty when no timings are present, and downstream
+  // components already handle that gracefully.
+  const stageProgress = $derived(stageTimingsToProgress(stageTimings));
+  const totalSummary = $derived.by<string | null>(() => {
+    const ms = totalRoundtripMs(stageTimings);
+    if (ms === null) return null;
+    return `Total · ${formatRoundtripMs(ms)}`;
+  });
+  const hasTimings = $derived(stageTimings.length > 0);
 
   // Reactive relative-time label. We read `liveTime.now` (the shared
   // 5s tick) inside a $derived so every ChatMessage re-derives its
@@ -126,6 +135,17 @@ MechanicalReceipt so the player can verify the dice on demand.
     {/if}
   </div>
 
+  {#snippet stageHeader()}
+    <!--
+      Compact, frameless stage checklist embedded at the top of the
+      reasoning-trace expansion. We reuse the same renderer as the
+      live in-flight checklist so persisted and live timings look
+      identical — the only difference is `framed={false}` because
+      the trace already provides the panel border.
+    -->
+    <StageChecklist stages={stageProgress} framed={false} />
+  {/snippet}
+
   {#if speaker === "dm" || speaker === "ooc"}
     <!--
       OOC bubbles also surface the model's reasoning trace via the
@@ -134,11 +154,19 @@ MechanicalReceipt so the player can verify the dice on demand.
       DM bubbles already expose thinking; it doesn't break the
       no-mutation contract because the trace is ephemeral and never
       enters action_log.
+
+      `forceVisible` is set when we have stage timings even if the
+      model produced no reasoning text — the timings alone justify
+      keeping the strip on screen so the player can read the total
+      roundtrip and inspect per-stage breakdown.
     -->
     <CollapsedThinking
       text={thinking ?? ""}
       streaming={streaming && (thinking ?? "") !== ""}
-      hideWhenEmpty={!streaming}
+      hideWhenEmpty={!streaming && !hasTimings}
+      forceVisible={hasTimings && !streaming}
+      summary={totalSummary}
+      headerSnippet={hasTimings ? stageHeader : undefined}
     />
   {/if}
 

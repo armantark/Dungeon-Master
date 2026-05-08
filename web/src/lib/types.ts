@@ -419,6 +419,32 @@ export interface OracleOutcome {
   cairn: CairnResolution | null;
 }
 
+// Persisted mirror of `dungeon_master.models.StageStatus`. Identical
+// string set to `streaming-types.ts:StreamStageStatus` — the wire and
+// disk enums are kept structurally equal so the in-trace checklist and
+// the live checklist can share the same renderer without a mapping.
+export type StageStatus = "pending" | "active" | "done" | "skipped";
+
+// Persisted timing for one pre-narration pipeline stage. The backend
+// records it on the narrative `GameEvent` so the player can see the
+// per-stage and total roundtrip time even after a reload — the live
+// `streaming.stages` buffer goes away with the stream.
+//
+// Both timestamps are nullable on purpose:
+//   - `started_at === null` for stages that were skipped before they
+//     ran (e.g. action route bypasses planner / mechanics).
+//   - `completed_at === null` for stages that were still active when
+//     the stream cancelled.
+// "Both present" is the only shape that yields a real elapsed duration;
+// the renderer treats anything else as "no duration to show".
+export interface StageTiming {
+  stage_id: string;
+  label: string;
+  status: StageStatus;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 export interface GameEvent {
   id: string;
   created_at: string;
@@ -426,6 +452,15 @@ export interface GameEvent {
   title: string;
   content: string;
   oracle_outcome_id: string | null;
+  // F-11 stage-timing surface. Only narrative events carry non-empty
+  // arrays; legacy saves and player/oracle/system events default to
+  // empty. Optional in TS because older client builds don't know the
+  // field exists, but the wire payload always supplies a list.
+  stage_timings?: StageTiming[];
+  // Backend persists model reasoning alongside narrative events. We
+  // surfaced this in `ChatFeed.thinkingFor` via a defensive cast for a
+  // long time; typing it directly removes that hack.
+  thinking?: string;
 }
 
 // B-02 Campaign directives — the persistent OOC steering surface.

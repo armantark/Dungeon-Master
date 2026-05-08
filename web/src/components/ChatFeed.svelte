@@ -37,7 +37,7 @@ F-09 browsing behavior:
   import StageChecklist from "./StageChecklist.svelte";
   import { canRegenerateMessage } from "../lib/message-actions";
   import { game } from "../lib/store.svelte";
-  import type { GameState, GameEvent, OracleOutcome } from "../lib/types";
+  import type { GameState, GameEvent, OracleOutcome, StageTiming } from "../lib/types";
   import type { ClientNote } from "../lib/store.svelte";
 
   type Props = { state: GameState };
@@ -56,6 +56,10 @@ F-09 browsing behavior:
     timestamp: string;
     outcome?: OracleOutcome | null;
     thinking?: string | null;
+    // F-11 persisted stage timings. Only narrative events carry a
+    // non-empty list; the message component hides the checklist /
+    // total pill cleanly when this is empty.
+    stageTimings?: readonly StageTiming[];
     streaming?: boolean;
     // True only when the in-flight bubble was reattached after a
     // page reload. Surfaces as a "resuming…" tag in ChatMessage
@@ -68,12 +72,8 @@ F-09 browsing behavior:
     question?: string | null;
   };
 
-  // Read `event.thinking` as an optional extension. The backend pass
-  // adds a `thinking` field to GameEvent; until that lands, every
-  // message renders with `null` and the CollapsedThinking block hides
-  // itself. On merge this becomes a direct field read.
   function thinkingFor(event: GameEvent): string | null {
-    const ext = (event as unknown as { thinking?: string | null }).thinking;
+    const ext = event.thinking;
     return typeof ext === "string" && ext.trim() !== "" ? ext : null;
   }
 
@@ -92,6 +92,7 @@ F-09 browsing behavior:
           timestamp: event.created_at,
           outcome: findOutcome(outcomes, event.oracle_outcome_id),
           thinking: thinkingFor(event),
+          stageTimings: event.stage_timings ?? [],
         };
       case "player":
         return {
@@ -393,6 +394,7 @@ F-09 browsing behavior:
           timestamp={message.timestamp}
           outcome={message.outcome ?? null}
           thinking={message.thinking ?? null}
+          stageTimings={message.stageTimings ?? []}
           question={message.question ?? null}
           threads={gs.threads}
           npcs={gs.npcs}
