@@ -230,7 +230,14 @@ class CairnPort(Protocol):
     ) -> bool:
         raise NotImplementedError
 
-    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+    def resolve_save(
+        self,
+        state: GameState,
+        ability: CairnAbility,
+        reason: str,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
         raise NotImplementedError
 
     def resolve_attack(  # noqa: PLR0913

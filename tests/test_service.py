@@ -923,7 +923,7 @@ class FakeCairnEngine:
 
 
 class FatalFakeCairnEngine(FakeCairnEngine):
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -931,8 +931,9 @@ class FatalFakeCairnEngine(FakeCairnEngine):
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
-        del in_combat, armor_applies
+        del actor_id, in_combat, armor_applies
         state.character.cairn.hp = 0
         state.character.cairn.str_score = 0
         state.character.cairn.dead = True

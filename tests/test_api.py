@@ -490,7 +490,15 @@ class FakeCairnEngine:
         state.character.cairn.slots_used = len(state.character.inventory)
         return True
 
-    def set_item_equipped(self, state: GameState, *, item_id: str, equipped: bool) -> None:
+    def set_item_equipped(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        equipped: bool,
+        actor_id: str | None = None,
+    ) -> None:
+        del actor_id
         for item in state.character.inventory:
             item.cairn.equipped = item.id == item_id if equipped else False
         if equipped:
@@ -501,9 +509,10 @@ class FakeCairnEngine:
         state: GameState,
         *,
         text: str,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> str:
-        del cancel_token
+        del actor_id, cancel_token
         lantern = InventoryItem(
             name="Pilgrim lantern",
             details="Taken during play.",
@@ -530,7 +539,15 @@ class FakeCairnEngine:
         )
         return "Acquired Pilgrim lantern, Purse of old silver."
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
+    def use_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        intent: str,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         for item in list(state.character.inventory):
             if item.id != item_id:
                 continue
@@ -575,7 +592,14 @@ class FakeCairnEngine:
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
 
-    def drop_item(self, state: GameState, *, item_id: str) -> str:
+    def drop_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        actor_id: str | None = None,
+    ) -> str:
+        del actor_id
         for item in list(state.character.inventory):
             if item.id != item_id:
                 continue
@@ -585,6 +609,16 @@ class FakeCairnEngine:
             return f"Dropped {item.name}."
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
+
+    def backfill_companion_sheet(
+        self,
+        state: GameState,
+        authored: CharacterSheet,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterSheet:
+        del state, cancel_token
+        return authored
 
     def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
         state.encounter.active = False
@@ -604,7 +638,15 @@ class FakeCairnEngine:
 
 
 class FakePlayableCairnEngine(FakeCairnEngine):
-    def resolve_save(self, state: GameState, ability: CairnAbility, reason: str) -> OracleOutcome:
+    def resolve_save(
+        self,
+        state: GameState,
+        ability: CairnAbility,
+        reason: str,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         return OracleOutcome(
             kind=OracleKind.SAVE,
             summary=f"{ability.value} save passed: {reason}",
@@ -620,9 +662,10 @@ class FakePlayableCairnEngine(FakeCairnEngine):
         target_armor: int,
         weapon_item_id: str | None,
         stance: AttackStance,
+        actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
-        del cancel_token
+        del actor_id, cancel_token
         return OracleOutcome(
             kind=OracleKind.ATTACK,
             summary=f"Attack against {target_name}.",
@@ -637,7 +680,7 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             ),
         )
 
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -645,8 +688,9 @@ class FakePlayableCairnEngine(FakeCairnEngine):
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
-        del in_combat, armor_applies
+        del actor_id, in_combat, armor_applies
         state.character.cairn.hp = max(0, state.character.cairn.hp - amount)
         return OracleOutcome(
             kind=OracleKind.HARM,
@@ -702,7 +746,14 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             ),
         )
 
-    def recover(self, state: GameState, kind: CairnRestKind) -> OracleOutcome:
+    def recover(
+        self,
+        state: GameState,
+        kind: CairnRestKind,
+        *,
+        actor_id: str | None = None,
+    ) -> OracleOutcome:
+        del actor_id
         state.character.cairn.hp = state.character.cairn.max_hp
         return OracleOutcome(
             kind=OracleKind.RECOVERY,
@@ -713,7 +764,7 @@ class FakePlayableCairnEngine(FakeCairnEngine):
 
 
 class FatalPlayableCairnEngine(FakePlayableCairnEngine):
-    def suffer_harm(
+    def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -721,8 +772,9 @@ class FatalPlayableCairnEngine(FakePlayableCairnEngine):
         source: str,
         in_combat: bool,
         armor_applies: bool,
+        actor_id: str | None = None,
     ) -> OracleOutcome:
-        del in_combat, armor_applies
+        del actor_id, in_combat, armor_applies
         state.character.cairn.hp = 0
         state.character.cairn.str_score = 0
         state.character.cairn.dead = True
