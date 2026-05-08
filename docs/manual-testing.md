@@ -70,19 +70,23 @@ These checks exercise the NDJSON streaming transport, the provisional DM bubble,
 1. From an active campaign, send a freeform action like `I check the threshold for old wax.`. Confirm a provisional DM bubble appears immediately (no full-response wait), prose tokens stream into it letter by letter, the blinking caret tracks the latest token, and the bubble is replaced by the canonical event when the stream completes (no double-bubble flicker).
 2. While the stream is in flight, click `Stop response`. Confirm the bubble freezes wherever it was and the loading state clears. Sending another turn afterwards should work normally.
 3. Ask a yes/no question (`Will the door give? [unlikely]`). Confirm the receipt strip (`yes_no` tag, d100 roll) pins under the bubble when the canonical state lands. (Note: the backend currently emits `mechanics_ready` only as the trailing `final_state` rather than mid-stream; an early-pin event is a future enhancement, not a regression.)
-4. Open the `Reasoning trace` strip on the latest persisted DM message. Confirm the trace is collapsed by default, expands to show the model's thinking, is rendered in the engine (Alagard pixel) voice, and persists across a page refresh (the backend writes it onto the `GameEvent`).
-5. In the assist setup flow, type a concept and click `Begin interview`. Confirm the LoadingPanel surface shows a live `Thinking…` strip plus a tail-end preview of the model's prose as it streams. Cancel mid-stream with `Stop interview` and confirm the panel clears cleanly.
-6. Click `Generate draft` from the review screen. Confirm the same streaming surface appears — Thinking strip + prose preview — and the final draft lands in the editor when streaming completes.
-7. Trigger combat in narrative (`I attack the marauder.`). Confirm the top StatusStrip grows a `Combat · Round 1 · DEX save to act` badge, the inspector auto-shows a default-open `Combat` drawer with the foe's HP/Armor/STR/DEX/WIL, the foe's HP bar tier shifts colors as they take damage, and the headline drops the `DEX save to act` suffix once the player is marked ready.
-8. When all foes drop to 0 HP, confirm the encounter clears: the StatusStrip combat badge disappears, and the inspector either hides the drawer entirely or shows the cleared summary.
-9. Start a streamed turn, then refresh the page before the model finishes. Confirm:
-   - The provisional DM bubble re-appears within a beat of the bootstrap completing, with the meta tag reading `resuming…` (verdigris accent) instead of `streaming…`.
-   - Prose continues to stream into that bubble until the canonical event lands.
-   - The final committed `state.action_log` contains the finished narrative exactly once.
-   - localStorage key `dm.stream-resume.<save_id>` is cleared after the final lands. (Inspect via DevTools → Application → Local Storage.)
-   - If you start another turn, refresh, and wait more than 10 minutes before reloading, the descriptor TTL evicts itself silently and the next bootstrap behaves like a normal cold start.
-10. With the backend console visible (or logs captured), confirm each streamed turn emits one `turn.router ...` line, one `continuity.classifier ...` line, and one `llm.call ...` line per model request. The minimum useful fields are `route`, `profile`, `request_id`, token counts when available, and `duration_ms`. Set `DM_LOG_LEVEL=INFO` in `.env` if those lines are not visible.
-11. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
+4. For a build that includes the hybrid continuity pass, send a lore/clarification turn that may establish durable canon (`Do we know his name? Is he of legend?`). Confirm prose begins streaming first, and if the backend emits a late continuity stage (for example `Reconciling continuity`) it appears in the checklist after `Streaming narration` has begun rather than blocking prose. The turn should still end with a single `final_state`.
+5. Open the `Reasoning trace` strip on the latest persisted DM message. Confirm the trace is collapsed by default, expands to show the model's thinking, is rendered in the engine (Alagard pixel) voice, and persists across a page refresh (the backend writes it onto the `GameEvent`). If the turn included a late continuity stage, confirm the persisted checklist includes it with the correct order and timing.
+6. In the assist setup flow, type a concept and click `Begin interview`. Confirm the LoadingPanel surface shows a live `Thinking…` strip plus a tail-end preview of the model's prose as it streams. Cancel mid-stream with `Stop interview` and confirm the panel clears cleanly.
+7. Click `Generate draft` from the review screen. Confirm the same streaming surface appears — Thinking strip + prose preview — and the final draft lands in the editor when streaming completes.
+8. Trigger combat in narrative (`I attack the marauder.`). Confirm the top StatusStrip grows a `Combat · Round 1 · DEX save to act` badge, the inspector auto-shows a default-open `Combat` drawer with the foe's HP/Armor/STR/DEX/WIL, the foe's HP bar tier shifts colors as they take damage, and the headline drops the `DEX save to act` suffix once the player is marked ready.
+9. When all foes drop to 0 HP, confirm the encounter clears: the StatusStrip combat badge disappears, and the inspector either hides the drawer entirely or shows the cleared summary.
+10. Start a streamed turn, then refresh the page before the model finishes. Confirm:
+
+    - The provisional DM bubble re-appears within a beat of the bootstrap completing, with the meta tag reading `resuming…` (verdigris accent) instead of `streaming…`.
+    - Prose continues to stream into that bubble until the canonical event lands.
+    - The final committed `state.action_log` contains the finished narrative exactly once.
+    - If the turn shape includes a late continuity stage, the resumed checklist preserves that stage and its status transitions instead of dropping it after the first content token.
+    - localStorage key `dm.stream-resume.<save_id>` is cleared after the final lands. (Inspect via DevTools → Application → Local Storage.)
+    - If you start another turn, refresh, and wait more than 10 minutes before reloading, the descriptor TTL evicts itself silently and the next bootstrap behaves like a normal cold start.
+
+11. With the backend console visible (or logs captured), confirm each streamed turn emits one `turn.router ...` line, one `continuity.classifier ...` line when pre-narration continuity actually runs, and one `llm.call ...` line per model request. The minimum useful fields are `route`, `profile`, `request_id`, token counts when available, and `duration_ms`. Set `DM_LOG_LEVEL=INFO` in `.env` if those lines are not visible.
+12. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
 
 ## Live Model Smoke Test
 

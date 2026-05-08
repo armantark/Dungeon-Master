@@ -22,7 +22,7 @@ const ISO_T1500 = "2026-05-08T03:00:01.500Z";
 const ISO_T12500 = "2026-05-08T03:00:12.500Z";
 
 describe("stageTimingsToProgress", () => {
-  it("preserves stage_id, label, status, and original order", () => {
+  it("preserves stage_id, label, status, and original order, including late post-prose stages", () => {
     const timings: StageTiming[] = [
       {
         stage_id: "planning_turn",
@@ -37,6 +37,13 @@ describe("stageTimingsToProgress", () => {
         status: "done",
         started_at: ISO_T0,
         completed_at: ISO_T100,
+      },
+      {
+        stage_id: "reconciling_continuity",
+        label: "Reconciling continuity",
+        status: "done",
+        started_at: ISO_T100,
+        completed_at: ISO_T1500,
       },
     ];
     const progress = stageTimingsToProgress(timings);
@@ -57,6 +64,14 @@ describe("stageTimingsToProgress", () => {
         order: 1,
         startedAt: Date.parse(ISO_T0),
         completedAt: Date.parse(ISO_T100),
+      },
+      {
+        stageId: "reconciling_continuity",
+        label: "Reconciling continuity",
+        status: "done",
+        order: 2,
+        startedAt: Date.parse(ISO_T100),
+        completedAt: Date.parse(ISO_T1500),
       },
     ]);
   });

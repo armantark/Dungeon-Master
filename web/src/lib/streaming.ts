@@ -51,9 +51,11 @@ export class StreamTransportError extends Error {
 // backend to be backwards-compatible until the frontend catches up.
 export interface StreamHandlers {
   onMeta?: (event: Extract<StreamEvent, { type: "meta" }>) => void;
-  // Backend pre-narration stage progress. Bootstrap frames arrive in
-  // pipeline order at stream start (each pending or skipped) and the
-  // active/done frames follow as the backend works through them.
+  // Backend pipeline progress. Bootstrap frames arrive in pipeline
+  // order at stream start (each pending or skipped) and the active/done
+  // frames follow as the backend works through them. Some stages may
+  // happen after prose starts streaming but before the terminal
+  // `final_state` / `final_payload`.
   onStage?: (event: Extract<StreamEvent, { type: "stage" }>) => void;
   onMechanics?: (event: Extract<StreamEvent, { type: "mechanics_ready" }>) => void;
   onOracleOutcome?: (event: Extract<StreamEvent, { type: "oracle_outcome" }>) => void;

@@ -333,7 +333,7 @@ describe("GameStore setup streaming", () => {
     expect(game.isLoading).toBe(false);
   });
 
-  it("threads backend stage frames into the streaming.stages checklist in pipeline order", async () => {
+  it("threads backend stage frames into the streaming.stages checklist in pipeline order, including a late post-prose stage", async () => {
     // The backend emits an ordered `stage` bootstrap at stream open
     // (one frame per pipeline step, status `pending` or `skipped`) and
     // then flips each step to `active` and `done` as it works
@@ -341,6 +341,7 @@ describe("GameStore setup streaming", () => {
     //   - keep the bootstrap order stable as `order` indices,
     //   - update an existing stage in place (not append a duplicate)
     //     when a later frame flips its status,
+    //   - preserve a new stage appended after prose has already started,
     //   - clear the checklist when the stream finishes.
     const previousState: NonNullable<typeof game.state> = {
       id: "state_pre",
@@ -402,8 +403,16 @@ describe("GameStore setup streaming", () => {
           label: "Preparing narration",
           status: "active",
         });
+        handlers.onContentDelta?.({ type: "content_delta", text: "Ash falls." });
+        handlers.onStage?.({
+          type: "stage",
+          stage_id: "reconciling_continuity",
+          label: "Reconciling continuity",
+          status: "active",
+        });
         // Snapshot mid-stream so we can assert in-place updates and
-        // stable ordering before the stream completes.
+        // stable ordering before the stream completes, including a
+        // stage that arrived after prose was already flowing.
         observedDuringStream = getStages();
         handlers.onFinalState?.({ type: "final_state", state: finalState, thinking: null });
         return Promise.resolve({ kind: "final", final: { type: "final_state", state: finalState, thinking: null } } as never);
@@ -418,14 +427,17 @@ describe("GameStore setup streaming", () => {
       "planning_turn",
       "preparing_narration",
       "streaming_narration",
+      "reconciling_continuity",
     ]);
     // In-place updates kept the same `order` index for planning_turn
-    // even after two status flips (active, done).
-    expect(observedDuringStream!.map((s) => s.order)).toEqual([0, 1, 2]);
+    // even after two status flips (active, done), while the late
+    // post-prose stage appended at the tail.
+    expect(observedDuringStream!.map((s) => s.order)).toEqual([0, 1, 2, 3]);
     expect(observedDuringStream!.map((s) => s.status)).toEqual([
       "done",
       "active",
       "pending",
+      "active",
     ]);
     // The store always clears the streaming buffer at end-of-flight so
     // the checklist doesn't linger on the next idle composer state.

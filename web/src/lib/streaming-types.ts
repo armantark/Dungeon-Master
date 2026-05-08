@@ -13,11 +13,12 @@
 //
 // Recommended event names from the plan, in lifecycle order:
 //   meta            once, first frame, request id and routing intent
-//   stage           zero or many, ordered backend pre-narration progress
+//   stage           zero or many, ordered backend pipeline progress
 //                   updates (planner, mechanics, continuity classifier,
-//                   thread/NPC updaters, narration prep). Lets the UI
-//                   render a live checklist while the model thinks
-//                   instead of staring at a blank composing strip.
+//                   thread/NPC updaters, narration prep, and any
+//                   post-prose reconciliation step). Lets the UI render
+//                   a live checklist instead of staring at a blank
+//                   composing strip.
 //   mechanics_ready zero or one, deterministic Cairn/oracle resolution
 //                   resolved before any prose token streams
 //   oracle_outcome  alias of mechanics_ready when the resolution comes
@@ -80,11 +81,12 @@ export type StreamRoute =
 // types so the backend can distinguish "this came from the oracle
 // engine" (history-tracked) from "this came from the Cairn engine"
 // (mechanically authoritative). The frontend treats them identically.
-// Backend pre-narration stage progress. The backend emits one bootstrap
-// frame per stage at stream start (status `pending`, or `skipped` for
-// stages that don't apply to the current route — e.g. action endpoints
-// skip `planning_turn` and `resolving_mechanics`), then flips each
-// stage to `active` and `done` as it works through the pipeline.
+// Backend pipeline-stage progress. The backend emits one bootstrap frame
+// per stage at stream start (status `pending`, or `skipped` for stages
+// that don't apply to the current route — e.g. action endpoints skip
+// `planning_turn` and `resolving_mechanics`), then flips each stage to
+// `active` and `done` as it works through the turn lifecycle. Some
+// stages may occur after prose has already started streaming.
 //
 // Why an opaque `stage_id` plus a server-authored `label`:
 //   The backend owns the canonical stage taxonomy (see

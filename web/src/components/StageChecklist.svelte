@@ -1,13 +1,15 @@
 <!--
 @component
-StageChecklist — live backend pre-narration progress.
+StageChecklist — live backend pipeline progress.
 
 Why this exists: the model used to take several seconds before any
 prose token arrived because the turn pipeline runs a chain of
 LLM-backed steps (planner → mechanics → continuity classifier →
 thread/NPC updaters → narration prep) before the narrator actually
-streams. The chat surface had no way to surface that work, so a long
-turn felt like a freeze.
+streams. The hybrid continuity path can also add a short
+post-narration reconciliation step before the final state commits.
+The chat surface had no way to surface that work, so a long turn felt
+like a freeze.
 
 The backend now emits a typed `stage` NDJSON event for each step, in
 canonical pipeline order, with `pending` / `active` / `done` /

@@ -408,11 +408,12 @@ F-09 browsing behavior:
           <!--
             Stage checklist sits *above* the provisional bubble so the
             player has something to read while the backend is still in
-            its pre-narration steps (planner → mechanics → continuity →
-            updaters → narration prep). Once the narrator starts
-            streaming and `streaming_narration` flips to active, the
-            checklist remains visible but the focus naturally moves to
-            the prose tokens accumulating below.
+            its turn pipeline (planner → mechanics → continuity →
+            updaters → narration prep, plus any late continuity
+            reconciliation after prose starts). Once the narrator
+            starts streaming and `streaming_narration` flips to active,
+            the checklist remains visible but the focus naturally moves
+            to the prose tokens accumulating below.
           -->
           <StageChecklist stages={game.streaming.stages} />
         {/if}

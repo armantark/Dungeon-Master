@@ -268,12 +268,13 @@ describe("consumeStream", () => {
     expect(calls).toEqual(["meta", "thinking", "content", "final"]);
   });
 
-  it("dispatches stage events through onStage in pipeline order", async () => {
-    // The backend bootstraps a `stage` frame for each pre-narration step
+  it("dispatches stage events through onStage in pipeline order, including late stages after prose starts", async () => {
+    // The backend bootstraps a `stage` frame for each pipeline step
     // at stream open (status=pending or skipped) and then flips each
-    // step to active/done as it works through them. The transport must
-    // surface every frame in the order the server sent it so the
-    // checklist UI can mirror the pipeline.
+    // step to active/done as it works through them. A later
+    // reconciliation step may arrive after content_delta has already
+    // started streaming; the transport still has to preserve wire
+    // order so the checklist UI can mirror the real pipeline.
     const lines = [
       JSON.stringify({ type: "meta", request_id: "r", route: "player_action" }),
       JSON.stringify({ type: "stage", stage_id: "planning_turn", label: "Planning turn", status: "skipped" }),
@@ -281,6 +282,8 @@ describe("consumeStream", () => {
       JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "active" }),
       JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "done" }),
       JSON.stringify({ type: "content_delta", text: "Ash falls." }),
+      JSON.stringify({ type: "stage", stage_id: "reconciling_continuity", label: "Reconciling continuity", status: "active" }),
+      JSON.stringify({ type: "stage", stage_id: "reconciling_continuity", label: "Reconciling continuity", status: "done" }),
       JSON.stringify({ type: "final_state", state: { id: "g" }, thinking: null }),
     ];
     vi.stubGlobal(
@@ -300,6 +303,8 @@ describe("consumeStream", () => {
       { stage_id: "preparing_narration", status: "pending" },
       { stage_id: "preparing_narration", status: "active" },
       { stage_id: "preparing_narration", status: "done" },
+      { stage_id: "reconciling_continuity", status: "active" },
+      { stage_id: "reconciling_continuity", status: "done" },
     ]);
   });
 });

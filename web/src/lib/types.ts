@@ -425,9 +425,9 @@ export interface OracleOutcome {
 // the live checklist can share the same renderer without a mapping.
 export type StageStatus = "pending" | "active" | "done" | "skipped";
 
-// Persisted timing for one pre-narration pipeline stage. The backend
-// records it on the narrative `GameEvent` so the player can see the
-// per-stage and total roundtrip time even after a reload — the live
+// Persisted timing for one backend pipeline stage. The backend records
+// it on the narrative `GameEvent` so the player can see the per-stage
+// and total roundtrip time even after a reload — the live
 // `streaming.stages` buffer goes away with the stream.
 //
 // Both timestamps are nullable on purpose:
