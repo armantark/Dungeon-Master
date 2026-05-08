@@ -49,31 +49,30 @@ class TaskProfile:
 
 def _default_narration_reasoning_by_task() -> dict[OracleKind, ReasoningEffort]:
     return {
-        OracleKind.YES_NO: "none",
-        OracleKind.PLAYER_ACTION: "none",
-        OracleKind.RANDOM_EVENT: "minimal",
-        OracleKind.SCENE_CHECK: "minimal",
-        OracleKind.SAVE: "none",
-        OracleKind.ATTACK: "none",
-        OracleKind.HARM: "none",
-        OracleKind.RECOVERY: "none",
-        OracleKind.RETREAT: "none",
+        OracleKind.YES_NO: "minimal",
+        OracleKind.PLAYER_ACTION: "minimal",
+        OracleKind.RANDOM_EVENT: "low",
+        OracleKind.SCENE_CHECK: "low",
+        OracleKind.SAVE: "minimal",
+        OracleKind.ATTACK: "minimal",
+        OracleKind.HARM: "minimal",
+        OracleKind.RECOVERY: "minimal",
+        OracleKind.RETREAT: "minimal",
     }
 
 
 def _default_narration_reasoning_budgets() -> dict[ReasoningEffort, int]:
-    # Kimi/OpenRouter can occasionally stream corrupted multilingual/code
-    # fragments through the reasoning channel for minutes before first prose.
-    # Ordinary narration therefore runs with reasoning disabled; these caps
-    # exist only for the few task profiles that still deliberately request a
-    # small amount of model reasoning.
+    # OpenRouter's generic reasoning controls are not documented as a strict
+    # hard cap for Kimi K2.6, so these budgets act more like guidance than an
+    # absolute ceiling. Keep them large enough for short continuity reasoning,
+    # but small enough to discourage full hidden drafting before prose starts.
     return {
-        "minimal": 64,
-        "low": 160,
-        "medium": 360,
-        "high": 720,
-        "xhigh": 1200,
-        "default": 160,
+        "minimal": 300,
+        "low": 600,
+        "medium": 900,
+        "high": 1200,
+        "xhigh": 1800,
+        "default": 600,
     }
 
 

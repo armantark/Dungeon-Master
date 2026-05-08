@@ -58,9 +58,8 @@ def test_default_narrative_config_uses_openrouter_kimi(monkeypatch: pytest.Monke
     assert config.model == DEFAULT_MODEL
     assert config.api_key == "test-key"
     assert config.reasoning_policy == DEFAULT_REASONING_POLICY
-    # Keep the runtime knob false for compatibility with task profiles that
-    # still intentionally expose reasoning; ordinary narration disables it at
-    # the profile level to avoid raw provider reasoning gibberish in chat.
+    # Keep the runtime knob false so narration and any other profile can expose
+    # reasoning when requested; per-task budgets shape the amount of thinking.
     assert config.exclude_reasoning is False
     assert config.temperature == 1.25
     assert config.max_tokens == 4500
@@ -112,8 +111,8 @@ def test_narrative_engine_passes_task_based_reasoning_to_litellm() -> None:
     assert result == "The abbey waits."
     assert completion.model == DEFAULT_MODEL
     assert completion.api_key == "test-key"
-    assert completion.reasoning_effort == "minimal"
-    assert completion.reasoning == {"max_tokens": 64, "exclude": True}
+    assert completion.reasoning_effort == "low"
+    assert completion.reasoning == {"max_tokens": 600, "exclude": True}
 
 
 def test_completion_logs_llm_trace(
@@ -211,16 +210,32 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "Mirror the player's declared action before extending the scene." in system_prompt
     assert "The final user" in system_prompt
     assert "only active request to answer" in system_prompt
+    assert "ONLY ACTIVE REQUEST = THE FINAL NATIVE `user` MESSAGE" in system_prompt
+    assert "TREAT ALL XML-TAGGED CONTEXT BELOW AS SUPPLEMENTAL REFERENCE" in system_prompt
+    assert "Do not reopen or re-answer earlier transcript questions" in system_prompt
+    assert "You may reveal new lore" in system_prompt
+    assert "continuity reconciliation happens after your prose" in system_prompt
+    assert "Use reasoning to reconcile continuity and constraints" in system_prompt
     assert "especially a pronoun reference" in system_prompt
     assert "scene transcript and the most recent" in system_prompt
     assert "Address the player-character in second person" in system_prompt
     assert "latent threats as flavor" in system_prompt
     assert "hardened present-tense facts" in system_prompt
-    assert "Authoritative runtime context, not chat transcript:" in system_prompt
-    assert "For the final user message, write 1-2 compact paragraphs" in system_prompt
+    assert "Static character facts, injuries, and recurring motifs" in system_prompt
+    assert '<SUPPLEMENTAL_CONTEXT REFERENCE_ONLY="true"' in system_prompt
+    assert "<LATEST_USER_MESSAGE>" in system_prompt
+    assert "I check my supplies before leaving." in system_prompt
+    assert "<AUTHORITATIVE_RUNTIME_STATE>" in system_prompt
+    assert "<OUTPUT_INSTRUCTIONS>" in system_prompt
+    assert "FOR THE FINAL NATIVE USER MESSAGE ONLY" in system_prompt
+    assert "Treat the transcript above as resolved history" in system_prompt
+    assert "Do not repeatedly restate unchanged character motifs" in system_prompt
     assert "Use second person (`you`) for the player-character." in system_prompt
     assert "trust the most recent scene transcript and latest turn context" in system_prompt
     assert "Only harden facts that are supported by the supplied outcome/state." in system_prompt
+    assert "<PLAYER_NOTES>" in system_prompt
+    assert '"backstory":' in system_prompt
+    assert '"condition":' in system_prompt
     assert completion.messages[1] == {
         "role": "user",
         "content": "I check my supplies before leaving.",
@@ -255,7 +270,7 @@ def test_narrative_prompt_includes_bounded_memory_context() -> None:
 
     assert completion.messages is not None
     system_prompt = completion.messages[0]["content"]
-    assert "Bounded memory context:" in system_prompt
+    assert "<BOUNDED_MEMORY_CONTEXT>" in system_prompt
     assert "The abbey yard is wet with ash." in system_prompt
     assert completion.messages[1] == {"role": "user", "content": "I press into the abbey yard."}
 
@@ -285,7 +300,7 @@ def test_narrative_prompt_includes_campaign_directives_when_present() -> None:
 
     assert completion.messages is not None
     system_prompt = completion.messages[0]["content"]
-    assert "Campaign directives:" in system_prompt
+    assert "<CAMPAIGN_DIRECTIVES>" in system_prompt
     assert "Keep miracles subtle and costly." in system_prompt
     assert "The hierophant cannot speak first." in system_prompt
     assert completion.messages[1] == {
@@ -343,7 +358,7 @@ def test_narrative_engine_allows_fixed_medium_reasoning() -> None:
     engine.generate(state, outcome, "I enter the hospice.")
 
     assert completion.reasoning_effort == "medium"
-    assert completion.reasoning == {"max_tokens": 360, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 900, "exclude": True}
 
 
 def test_narrative_stream_raises_on_cancellation_without_fallback() -> None:

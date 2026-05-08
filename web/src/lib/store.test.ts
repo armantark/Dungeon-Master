@@ -156,6 +156,33 @@ describe("GameStore setup streaming", () => {
     expect(game.notes.some((n) => n.kind === "error" && n.text.includes("/loot"))).toBe(true);
   });
 
+  it("keeps composer text available when a backend turn submission fails", async () => {
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
+      (_text, handlers) => {
+        handlers.onError?.({
+          type: "error",
+          message: "Turn planning failed before any deterministic resolution could be chosen.",
+          code: "planning_failed",
+          state: null,
+        });
+        return Promise.resolve({
+          kind: "error",
+          event: {
+            type: "error",
+            message: "Turn planning failed before any deterministic resolution could be chosen.",
+            code: "planning_failed",
+            state: null,
+          },
+        } as never);
+      },
+    );
+
+    const consumed = await game.submit("I ask the patriarch's name.");
+
+    expect(consumed).toBe(false);
+    expect(game.error).toContain("Turn planning failed");
+  });
+
   it("routes /retire through endCampaign with reason=retirement and the typed summary", async () => {
     // The terminal-close commands deliberately bypass the planner and
     // hit /campaign/end directly, so we spy on the api method rather

@@ -48,6 +48,12 @@ Clarification and lore-check questions:
 - If the resolved turn already says a durable change happened (a name is
   disclosed, an NPC is introduced/retired/renamed, a thread advances/resolves),
   choose the matching updater scope. Otherwise, leave the answer to narration.
+- If a post-narration check includes generated narration, judge the actual prose
+  instead of speculating from the player question. Choose updater scope when the
+  narration newly establishes durable lore, a named or recurring person/faction,
+  a concrete destination, a resolved secret, or a thread/NPC status change.
+  Choose `none` when the narration only says the answer is unknown, unconfirmed,
+  subjective, atmospheric, or still a choice for later play.
 
 Be conservative.
 If you are uncertain whether the turn will materially change durable continuity,
@@ -68,6 +74,9 @@ Resolved oracle outcome:
 
 Executed backend steps (may be empty):
 <<EXECUTION_CONTEXT>>
+
+Generated narration, if this is a post-narration check:
+<<NARRATIVE_TEXT>>
 
 Current threads:
 <<THREADS>>
@@ -117,13 +126,14 @@ class ContinuityClassifier:
         self._config = config or NarrativeConfig.from_env()
         self._completion = completion_function
 
-    def classify_update_scope(
+    def classify_update_scope(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ContinuityUpdateScope:
         if not self._config.is_usable():
@@ -136,6 +146,7 @@ class ContinuityClassifier:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
         )
         profile = self._config.profiles.continuity_classifier
         request = CompletionRequest(
@@ -177,6 +188,7 @@ class ContinuityClassifier:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None,
+        narrative_text: str | None,
     ) -> str:
         return (
             CONTINUITY_CLASSIFIER_USER_PROMPT_TEMPLATE.replace(
@@ -187,6 +199,7 @@ class ContinuityClassifier:
             .replace("<<OUTCOME_KIND>>", outcome.kind.value)
             .replace("<<OUTCOME_SUMMARY>>", outcome.summary)
             .replace("<<EXECUTION_CONTEXT>>", execution_context or "(none)")
+            .replace("<<NARRATIVE_TEXT>>", _render_narrative_text(narrative_text))
             .replace("<<THREADS>>", _render_threads(state))
             .replace("<<VISIBLE_NPCS>>", _render_visible_npcs(state))
             .replace("<<HIDDEN_NPCS>>", _render_hidden_npcs(state))
@@ -286,6 +299,13 @@ def _render_hidden_npcs(state: GameState) -> str:
     if remaining > 0:
         lines.append(f"- ... {remaining} more")
     return "\n".join(lines)
+
+
+def _render_narrative_text(narrative_text: str | None) -> str:
+    text = (narrative_text or "").strip()
+    if not text:
+        return "(not generated yet)"
+    return text
 
 
 def _raise_empty_continuity_classifier_content_error() -> None:

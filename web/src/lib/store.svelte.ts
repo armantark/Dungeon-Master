@@ -713,7 +713,8 @@ class GameStore {
    * dispatches; falls back to a free-text player action.
    *
    * Returns true when the input was consumed (so the Composer can
-   * clear its buffer). Returns false on a no-op (empty input).
+   * clear its buffer). Returns false on a no-op or failed backend
+   * dispatch so the player can retry the same text without retyping.
    */
   async submit(rawText: string): Promise<boolean> {
     const parsed = parseTurn(rawText);
@@ -727,19 +728,19 @@ class GameStore {
         return true;
       case "reset":
         await this.reset();
-        return true;
+        break;
       case "chaos":
         await this.setChaos(parsed.value);
-        return true;
+        break;
       case "event":
         await this.randomEvent();
-        return true;
+        break;
       case "scene":
         await this.sceneCheck(parsed.expected);
-        return true;
+        break;
       case "ask":
         await this.askYesNo(parsed.question, parsed.likelihood);
-        return true;
+        break;
       case "retreat":
         // We deliberately translate `/retreat` into a free-text turn
         // rather than hitting the explicit `/api/cairn/retreat`
@@ -749,7 +750,7 @@ class GameStore {
         // classifies "I retreat" → RETREAT, so this is the same
         // behavior the player gets from typing it as prose.
         await this.submitTurn(buildRetreatPrompt(parsed.reason));
-        return true;
+        break;
       case "acquire":
         // Same funnel-through-the-planner reasoning as /retreat. The
         // explicit `/api/cairn/acquire` endpoint exists for callers
@@ -759,7 +760,7 @@ class GameStore {
         // as ACQUIRE_ITEM, so the slash and natural-language paths
         // converge on the exact same backend pipeline.
         await this.submitTurn(buildAcquirePrompt(parsed.verb, parsed.body));
-        return true;
+        break;
       case "explain":
         // F-10 OOC explainer. The question never round-trips through
         // the planner — the explainer is a separate, read-only LLM
@@ -768,7 +769,7 @@ class GameStore {
         // `action_log` and contaminate future memory rebuilds, which
         // is exactly what we don't want.
         await this.explain(parsed.question);
-        return true;
+        break;
       case "end":
         // F-06 terminal close. Unlike /retreat and /acquire, this
         // does *not* funnel through the planner — terminal-state
@@ -778,11 +779,12 @@ class GameStore {
         // backend writes a system event for the close so the chat
         // archive still has a closing beat.
         await this.endCampaign(parsed.reason, parsed.summary);
-        return true;
+        break;
       case "action":
         await this.submitTurn(parsed.text);
-        return true;
+        break;
     }
+    return this.error === null;
   }
 
   toggleInspector(): void {

@@ -495,19 +495,20 @@ class ParallelNpcUpdater(FakeNpcUpdater):
 class FakeContinuityClassifier:
     def __init__(self, scope: ContinuityUpdateScope) -> None:
         self._scope = scope
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, str | None]] = []
 
-    def classify_update_scope(
+    def classify_update_scope(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ContinuityUpdateScope:
         del state, execution_context, cancel_token
-        self.calls.append((player_input, outcome.summary))
+        self.calls.append((player_input, outcome.summary, narrative_text))
         return self._scope
 
 
@@ -2037,23 +2038,17 @@ def test_service_continuity_classifier_can_skip_both_updaters(tmp_path: Path) ->
 
     updated = service.submit_player_action("I keep moving and say nothing.")
 
-    assert classifier.calls == []
+    assert classifier.calls == [
+        (
+            "I keep moving and say nothing.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert thread_updater.calls == []
     assert npc_updater.calls == []
-    assert thread_updater.post_calls == [
-        (
-            "I keep moving and say nothing.",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
-    assert npc_updater.post_calls == [
-        (
-            "I keep moving and say nothing.",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
+    assert thread_updater.post_calls == []
+    assert npc_updater.post_calls == []
     assert updated.oracle_history[-1].referenced_thread_ids == []
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
@@ -2080,7 +2075,13 @@ def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
 
     updated = service.submit_player_turn("I study the icon and pray for intercession.")
 
-    assert classifier.calls == []
+    assert classifier.calls == [
+        (
+            "I study the icon and pray for intercession.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -2145,6 +2146,41 @@ def test_service_post_narration_continuity_can_touch_threads_and_npcs(
     assert updated.oracle_history[-1].referenced_npc_ids
 
 
+def test_service_post_narration_continuity_can_skip_when_narration_adds_no_lore(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater()
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.NONE)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    updated = service.submit_player_turn("Do we know the patriarch's name?")
+
+    assert classifier.calls == [
+        (
+            "Do we know the patriarch's name?",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert thread_updater.post_calls == []
+    assert npc_updater.post_calls == []
+    assert updated.oracle_history[-1].referenced_thread_ids == []
+    assert updated.oracle_history[-1].referenced_npc_ids == []
+
+
 def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
 
@@ -2185,13 +2221,7 @@ def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Pat
             updated.action_log[-1].content,
         ),
     ]
-    assert npc_updater.post_calls == [
-        (
-            "I accept the ferryman's warning.",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
+    assert npc_updater.post_calls == []
     assert updated.oracle_history[-1].referenced_thread_ids == [created.id]
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
@@ -2228,13 +2258,7 @@ def test_service_continuity_classifier_can_run_only_npc_updater(tmp_path: Path) 
     created = next(npc for npc in updated.npcs if npc.name == "Brother Vahagn")
     assert thread_updater.calls == []
     assert npc_updater.calls == []
-    assert thread_updater.post_calls == [
-        (
-            "I press the bell-ringer for the truth.",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
+    assert thread_updater.post_calls == []
     assert npc_updater.post_calls == [
         (
             "I press the bell-ringer for the truth.",
@@ -2770,7 +2794,13 @@ def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
     )
     by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
 
-    assert classifier.calls == []
+    assert classifier.calls == [
+        (
+            "I study the icon and pray for intercession.",
+            final.oracle_history[-1].summary,
+            final.action_log[-1].content,
+        ),
+    ]
     for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
         timing = by_id[skipped_id]
         assert timing.status == StageStatus.SKIPPED

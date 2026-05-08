@@ -530,13 +530,14 @@ class NPCUpdaterPort(Protocol):
 
 
 class ContinuityClassifierPort(Protocol):
-    def classify_update_scope(
+    def classify_update_scope(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ContinuityUpdateScope:
         raise NotImplementedError
@@ -2807,22 +2808,63 @@ class GameService:
         cancel_token: CancellationToken | None = None,
         working_memory: MemoryState | None = None,
     ) -> MemoryState:
+        scope = self._continuity_classifier.classify_update_scope(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            narrative_text=narrative_text,
+            cancel_token=cancel_token,
+        )
+        if scope is ContinuityUpdateScope.NONE:
+            return self._memory_for_state(state, existing_memory=working_memory)
         memory = self._memory_for_state(state, existing_memory=working_memory)
-        thread_context, memory = self._memory_context_for_thread_updater(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            working_memory=memory,
-        )
-        npc_context, _ = self._memory_context_for_npc_updater(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            working_memory=memory,
-        )
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            thread_future = executor.submit(
-                self._generate_thread_updates_for_turn,
+        thread_generated: GeneratedThreadUpdateBatch | None = None
+        npc_generated: GeneratedNPCUpdateBatch | None = None
+        if scope is ContinuityUpdateScope.BOTH:
+            thread_context, memory = self._memory_context_for_thread_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            npc_context, _ = self._memory_context_for_npc_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                thread_future = executor.submit(
+                    self._generate_thread_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    narrative_text=narrative_text,
+                    memory_context=thread_context,
+                    cancel_token=cancel_token,
+                )
+                npc_future = executor.submit(
+                    self._generate_npc_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    narrative_text=narrative_text,
+                    memory_context=npc_context,
+                    cancel_token=cancel_token,
+                )
+                thread_generated = thread_future.result()
+                npc_generated = npc_future.result()
+        elif scope is ContinuityUpdateScope.THREADS:
+            thread_context, memory = self._memory_context_for_thread_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            thread_generated = self._generate_thread_updates_for_turn(
                 state,
                 player_input=player_input,
                 outcome=outcome,
@@ -2831,8 +2873,14 @@ class GameService:
                 memory_context=thread_context,
                 cancel_token=cancel_token,
             )
-            npc_future = executor.submit(
-                self._generate_npc_updates_for_turn,
+        elif scope is ContinuityUpdateScope.NPCS:
+            npc_context, _ = self._memory_context_for_npc_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            npc_generated = self._generate_npc_updates_for_turn(
                 state,
                 player_input=player_input,
                 outcome=outcome,
@@ -2841,8 +2889,6 @@ class GameService:
                 memory_context=npc_context,
                 cancel_token=cancel_token,
             )
-            thread_generated = thread_future.result()
-            npc_generated = npc_future.result()
         touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
         touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
         self._apply_thread_references(outcome, touched_thread_ids)

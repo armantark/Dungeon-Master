@@ -118,6 +118,8 @@ def test_continuity_classifier_prompt_is_small_and_grounded() -> None:
     assert "known name, no known name, a title/descriptor only" in system_prompt
     assert "must not pre-answer that question" in system_prompt
     assert "pre-narration lookup" in completion.request.messages[0]["content"]
+    assert "Generated narration" in user_prompt
+    assert "(not generated yet)" in user_prompt
 
 
 def test_continuity_classifier_can_skip_clarification_lore_questions() -> None:
@@ -173,6 +175,36 @@ def test_continuity_classifier_prompt_distinguishes_resolved_disclosures() -> No
     system_prompt = " ".join(completion.request.messages[0]["content"].split())
     assert "If the resolved turn already says a durable change happened" in system_prompt
     assert "a name is disclosed" in system_prompt
+
+
+def test_continuity_classifier_prompt_uses_generated_narration_for_post_check() -> None:
+    completion = RecordingContinuityCompletion("both")
+    classifier = ContinuityClassifier(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=5,
+    )
+
+    scope = classifier.classify_update_scope(
+        state,
+        player_input="Do we know his name?",
+        outcome=outcome,
+        narrative_text="The lead icon names him Saint Vyr, first patriarch of the pass.",
+    )
+
+    assert scope == ContinuityUpdateScope.BOTH
+    assert completion.request is not None
+    user_prompt = completion.request.messages[1]["content"]
+    system_prompt = " ".join(completion.request.messages[0]["content"].split())
+    assert "Generated narration, if this is a post-narration check:" in user_prompt
+    assert "Saint Vyr" in user_prompt
+    assert "judge the actual prose" in system_prompt
+    assert "newly establishes durable lore" in system_prompt
 
 
 def test_continuity_classifier_logs_scope_and_traces_request(

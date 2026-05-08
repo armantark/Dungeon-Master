@@ -304,6 +304,17 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     "<<LIKELIHOOD>>\n"
 )
 
+TURN_ROUTER_REPAIR_SYSTEM_PROMPT = """You repair one failed turn-planner JSON payload.
+
+Return only valid JSON matching the supplied schema.
+Do not add prose, markdown fences, comments, or explanations.
+
+If the failed payload cannot be repaired confidently, return a conservative plan:
+- route: "player_action"
+- text: the original player turn
+- ops: one op with kind "narrate" and text equal to the original player turn
+"""
+
 
 class TurnRouter:
     def __init__(
@@ -371,10 +382,12 @@ class TurnRouter:
         )
 
         last_error: Exception | None = None
+        last_content: str = ""
         for attempt in range(self._config.max_retries + 1):
             try:
                 completed = complete_text(request, self._completion)
                 content = completed.content
+                last_content = content
                 if not content:
                     _raise_empty_route_content_error()
                 payload = extract_json_object(content)
@@ -394,15 +407,76 @@ class TurnRouter:
             else:
                 return plan
 
-        if last_error is None:
-            plan = self._fallback_plan(normalized)
-            self._log_plan_decision(plan, source="fallback")
-            return plan
-        message = (
-            "Turn planning failed before any deterministic resolution could be chosen. "
-            "Please retry or use an explicit command."
+        repaired = self._repair_generated_plan(
+            raw_content=last_content,
+            validation_error=last_error,
+            normalized_text=normalized,
+            likelihood=likelihood,
+            cancel_token=cancel_token,
         )
-        raise TurnPlanningError(message) from last_error
+        if repaired is not None:
+            self._log_plan_decision(repaired, source="repair")
+            return repaired
+
+        plan = self._fallback_plan(normalized)
+        self._log_plan_decision(
+            plan,
+            source="fallback" if last_error is None else "model_error_fallback",
+        )
+        return plan
+
+    def _repair_generated_plan(
+        self,
+        *,
+        raw_content: str,
+        validation_error: Exception | None,
+        normalized_text: str,
+        likelihood: Likelihood | None,
+        cancel_token: CancellationToken | None,
+    ) -> TurnPlan | None:
+        if not raw_content.strip() and validation_error is None:
+            return None
+        profile = self._config.profiles.turn_router
+        repair_payload = {
+            "schema": GeneratedTurnPlan.model_json_schema(),
+            "original_player_turn": normalized_text,
+            "explicit_likelihood_hint": likelihood.value if likelihood is not None else None,
+            "failed_payload": raw_content,
+            "validation_error": str(validation_error) if validation_error is not None else None,
+        }
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": TURN_ROUTER_REPAIR_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(repair_payload)},
+            ],
+            temperature=0.0,
+            max_tokens=profile.max_tokens,
+            timeout=self._config.timeout_seconds,
+            stream=True,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+            trace_route="turn_router.repair",
+            trace_profile="turn_router",
+        )
+        try:
+            completed = complete_text(request, self._completion)
+            payload = extract_json_object(completed.content)
+            parsed = GeneratedTurnPlan.model_validate_json(payload)
+            return self._normalize_generated_plan(parsed, normalized_text, likelihood)
+        except (
+            *LITELLM_RETRYABLE_ERRORS,
+            ValidationError,
+            json.JSONDecodeError,
+            EmptyRouteContentError,
+            ValueError,
+        ):
+            return None
 
     def route(
         self,

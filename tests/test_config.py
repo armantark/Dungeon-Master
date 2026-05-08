@@ -25,9 +25,9 @@ def test_app_config_uses_new_narration_defaults(monkeypatch: pytest.MonkeyPatch)
     assert config.llm.timeout_seconds == 600.0
     assert narration_profile.temperature == 1.25
     assert narration_profile.max_tokens == 4500
-    assert narration_profile.reasoning_effort == "none"
+    assert narration_profile.reasoning_effort == "minimal"
     assert narration_profile.reasoning(default_exclude=False) == {
-        "effort": "none",
+        "max_tokens": 300,
         "exclude": False,
     }
 
@@ -51,7 +51,7 @@ def test_llm_config_accepts_deprecated_narration_knobs(
     assert config.max_tokens == 5200
     assert narration_profile.temperature == 1.4
     assert narration_profile.max_tokens == 5200
-    assert narration_profile.reasoning_effort == "none"
+    assert narration_profile.reasoning_effort == "minimal"
 
 
 def test_llm_profiles_keep_structured_calls_low_temperature() -> None:
@@ -68,8 +68,8 @@ def test_llm_profiles_keep_structured_calls_low_temperature() -> None:
     )
 
     assert narration_profile.temperature == 1.35
-    assert narration_profile.reasoning_effort == "minimal"
-    assert narration_profile.reasoning_max_tokens == 64
+    assert narration_profile.reasoning_effort == "low"
+    assert narration_profile.reasoning_max_tokens == 600
     assert config.profiles.turn_router.temperature == 0.05
     assert config.profiles.turn_router.reasoning_effort == "minimal"
     assert config.profiles.turn_router.reasoning_max_tokens == 64

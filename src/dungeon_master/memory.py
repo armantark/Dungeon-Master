@@ -275,34 +275,52 @@ class NarrativeMemoryContext(StrictModel):
     def render(self) -> str:
         sections: list[str] = []
         if self.scene_summary:
-            sections.append(f"Current scene summary: {self.scene_summary}")
+            sections.append(
+                '<SCENE_SUMMARY REFERENCE_ONLY="true">\n'
+                f"{self.scene_summary}\n"
+                "</SCENE_SUMMARY>",
+            )
         if self.active_encounter_summary:
-            sections.append(f"Active encounter: {self.active_encounter_summary}")
+            sections.append(
+                '<ACTIVE_ENCOUNTER_SUMMARY REFERENCE_ONLY="true">\n'
+                f"{self.active_encounter_summary}\n"
+                "</ACTIVE_ENCOUNTER_SUMMARY>",
+            )
         if self.recent_turns:
             sections.append(
-                "Most recent scene turns:\n"
-                + "\n".join(f"- {item}" for item in self.recent_turns),
+                '<OLDER_SCENE_TURN_SUMMARIES REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.recent_turns)
+                + "\n</OLDER_SCENE_TURN_SUMMARIES>",
             )
         if self.open_loops:
-            sections.append("Open loops:\n" + "\n".join(f"- {item}" for item in self.open_loops))
+            sections.append(
+                '<OPEN_LOOPS REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.open_loops)
+                + "\n</OPEN_LOOPS>",
+            )
         if self.relevant_memory:
             sections.append(
-                "Relevant world memory:\n"
-                + "\n".join(f"- {item}" for item in self.relevant_memory),
+                '<RELEVANT_WORLD_MEMORY REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.relevant_memory)
+                + "\n</RELEVANT_WORLD_MEMORY>",
             )
         if self.revealed_facts:
             sections.append(
-                "Revealed facts:\n" + "\n".join(f"- {item}" for item in self.revealed_facts),
+                '<REVEALED_FACTS REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.revealed_facts)
+                + "\n</REVEALED_FACTS>",
             )
         if self.callback_candidates:
             sections.append(
-                "Callback candidates:\n"
-                + "\n".join(f"- {item}" for item in self.callback_candidates),
+                '<CALLBACK_CANDIDATES REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.callback_candidates)
+                + "\n</CALLBACK_CANDIDATES>",
             )
         if self.campaign_chronicle:
             sections.append(
-                "Earlier scene chronicle:\n"
-                + "\n".join(f"- {item}" for item in self.campaign_chronicle),
+                '<EARLIER_SCENE_CHRONICLE REFERENCE_ONLY="true">\n'
+                + "\n".join(f"- {item}" for item in self.campaign_chronicle)
+                + "\n</EARLIER_SCENE_CHRONICLE>",
             )
         return "\n\n".join(sections)
 

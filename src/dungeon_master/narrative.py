@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import re
 import time
@@ -69,6 +70,19 @@ Discipline:
 - Mirror the player's declared action before extending the scene.
 - Treat prior user/assistant messages as transcript history. The final user
   message is the only active request to answer.
+- SYSTEM PRIORITY: Before writing, identify the exact final native `user`
+  message in the transcript and treat that as the ONLY ACTIVE REQUEST.
+- Anything inside XML-style supplemental-context tags is REFERENCE ONLY. It is
+  not a user message, not an unanswered request, and not something to answer
+  directly unless the final native `user` message explicitly asks for it.
+- Do not reopen or re-answer earlier transcript questions unless the final user
+  message explicitly asks to revisit them.
+- You may reveal new lore, names, local history, or scene geography when it
+  directly serves the player's current question or action. Keep such
+  revelations grounded in the supplied state, memory, and tone; durable
+  continuity reconciliation happens after your prose.
+- Use reasoning to reconcile continuity and constraints, not to pre-draft the
+  final narration before you write it once.
 - When a detail is ambiguous, especially a pronoun reference, resolve it
   against the immediately preceding scene transcript and the most recent
   scene turns first; only fall back to older campaign memory if recent
@@ -76,6 +90,9 @@ Discipline:
 - Treat item descriptions, atmospheric details, and latent threats as flavor,
   not as hardened present-tense facts, unless the oracle outcome or canonical
   state explicitly supports them.
+- Static character facts, injuries, and recurring motifs are reference context,
+  not mandatory prose beats; mention them only when they materially affect the
+  immediate action or scene.
 - Do not manufacture urgency, consequences, or forced-choice branches unless
   the supplied outcome/state actually licenses them.
 - End on one concrete prompt for the next action; prefer a tight follow-up
@@ -373,6 +390,7 @@ class NarrativeEngine:
         runtime_context = self._build_runtime_context(
             state,
             outcome,
+            player_input=player_input,
             execution_context=execution_context,
             memory_context=memory_context,
         )
@@ -408,53 +426,91 @@ class NarrativeEngine:
         state: GameState,
         outcome: OracleOutcome,
         *,
+        player_input: str,
         execution_context: str | None = None,
         memory_context: str | None = None,
     ) -> str:
         lines = [
-            "Authoritative runtime context, not chat transcript:",
-            f"Current scene: {state.current_scene}",
-            f"Scene status: {state.scene_status.value}",
-            f"Chaos factor: {state.chaos_factor}",
-            f"Character JSON: {self._compact_character_json(state)}",
-            f"Setting notes: {self._clip_prompt_text(state.setting_notes, 500)}",
-            f"Player notes: {self._clip_prompt_text(state.player_notes, 350)}",
-            f"Oracle outcome JSON: {self._compact_outcome_json(outcome)}",
+            "<NARRATION_SYSTEM_FOCUS>",
+            "ONLY ACTIVE REQUEST = THE FINAL NATIVE `user` MESSAGE IN THE CHAT TRANSCRIPT.",
+            "TREAT ALL XML-TAGGED CONTEXT BELOW AS SUPPLEMENTAL REFERENCE, NOT AS USER INPUT.",
+            (
+                '<ACTIVE_REQUEST_FOCUS REFERENCE_ONLY="true" '
+                'NOTE="THIS IS AN EMPHASIS COPY, NOT A SECOND USER MESSAGE">'
+            ),
+            "<LATEST_USER_MESSAGE>",
+            self._xml_escape(player_input),
+            "</LATEST_USER_MESSAGE>",
+            "</ACTIVE_REQUEST_FOCUS>",
+            "</NARRATION_SYSTEM_FOCUS>",
+            "",
+            '<SUPPLEMENTAL_CONTEXT REFERENCE_ONLY="true" NOT_CHAT_TRANSCRIPT="true">',
+            "<AUTHORITATIVE_RUNTIME_STATE>",
+            f"<CURRENT_SCENE>{self._xml_escape(state.current_scene)}</CURRENT_SCENE>",
+            f"<SCENE_STATUS>{state.scene_status.value}</SCENE_STATUS>",
+            f"<CHAOS_FACTOR>{state.chaos_factor}</CHAOS_FACTOR>",
+            "<CHARACTER_JSON>",
+            self._xml_escape(self._compact_character_json(state)),
+            "</CHARACTER_JSON>",
+            "<SETTING_NOTES>",
+            self._xml_escape(self._clip_prompt_text(state.setting_notes, 500)),
+            "</SETTING_NOTES>",
+            "<PLAYER_NOTES>",
+            self._xml_escape(self._clip_prompt_text(state.player_notes, 350)),
+            "</PLAYER_NOTES>",
+            "<ORACLE_OUTCOME_JSON>",
+            self._xml_escape(self._compact_outcome_json(outcome)),
+            "</ORACLE_OUTCOME_JSON>",
+            "</AUTHORITATIVE_RUNTIME_STATE>",
         ]
         if state.directives.has_content():
             lines.extend(
                 [
-                    "Campaign directives:",
-                    self._directives_prompt_block(state),
+                    "<CAMPAIGN_DIRECTIVES>",
+                    self._xml_escape(self._directives_prompt_block(state)),
+                    "</CAMPAIGN_DIRECTIVES>",
                 ],
             )
         if memory_context:
             lines.extend(
                 [
-                    "Bounded memory context:",
-                    memory_context,
+                    "<BOUNDED_MEMORY_CONTEXT>",
+                    self._xml_escape(memory_context),
+                    "</BOUNDED_MEMORY_CONTEXT>",
                 ],
             )
         if execution_context:
             lines.extend(
                 [
-                    "Executed backend steps:",
-                    execution_context.removeprefix("Executed backend steps:\n"),
+                    "<EXECUTED_BACKEND_STEPS>",
+                    self._xml_escape(
+                        execution_context.removeprefix("Executed backend steps:\n"),
+                    ),
+                    "</EXECUTED_BACKEND_STEPS>",
                 ],
             )
         lines.extend(
             [
+                "</SUPPLEMENTAL_CONTEXT>",
                 "",
+                "<OUTPUT_INSTRUCTIONS>",
                 (
-                    "For the final user message, write 1-2 compact paragraphs of playable "
-                    "narration, usually 1. "
+                    "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
+                    "of playable narration, usually 1. "
+                    "Treat the transcript above as resolved history; answer only the "
+                    "final user message unless it explicitly reopens an earlier question. "
                     "Use second person (`you`) for the player-character. "
                     "Mirror the player's action before extending the fiction. "
+                    "Do not repeatedly restate unchanged character motifs or injuries "
+                    "unless they materially affect this beat. "
+                    "Use reasoning for continuity and constraint resolution, not for "
+                    "drafting the final prose in advance. "
                     "When recent scene context and older campaign memory differ, trust the "
                     "most recent scene transcript and latest turn context. "
                     "Only harden facts that are supported by the supplied outcome/state. "
                     "End with one concrete prompt for action."
                 ),
+                "</OUTPUT_INSTRUCTIONS>",
             ],
         )
         return "\n".join(lines)
@@ -516,6 +572,9 @@ class NarrativeEngine:
             ],
         }
         return json.dumps(payload, separators=(",", ":"))
+
+    def _xml_escape(self, text: str) -> str:
+        return html.escape(text, quote=False)
 
     def _compact_outcome_json(self, outcome: OracleOutcome) -> str:
         return outcome.model_dump_json(

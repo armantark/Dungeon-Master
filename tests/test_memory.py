@@ -402,6 +402,72 @@ def test_narrator_memory_uses_native_scene_transcript_without_duplicate_summarie
     assert all("Resolved outcome:" not in message.content for message in narrator.scene_messages)
 
 
+def test_narrator_memory_keeps_full_native_scene_transcript() -> None:
+    state = sample_state()
+    manager = MemoryManager()
+    memory = None
+    turns = [
+        (
+            "Has this chapel been my dwelling place?",
+            "This chapel was a shelter, not a home.",
+        ),
+        (
+            "Where does the road lead?",
+            "The ash-road descends toward distant tin spires.",
+        ),
+        (
+            "Let's go down the road then.",
+            "You turn from the chapel and start down the road.",
+        ),
+        (
+            "I study the bootprints in the ash.",
+            "Fresh prints run ahead of you toward the vale.",
+        ),
+    ]
+    latest_outcome: OracleOutcome | None = None
+    for player_input, narrative_text in turns:
+        latest_outcome = OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=narrative_text,
+            chaos_factor=state.chaos_factor,
+            scene_number_snapshot=1,
+            scene_label_snapshot=state.current_scene,
+            scene_status_snapshot=SceneStatus.EXPECTED,
+        )
+        memory = manager.update_from_turn(
+            state,
+            CommittedTurnMemory(
+                player_input=player_input,
+                outcome=latest_outcome,
+                narrative_text=narrative_text,
+            ),
+            memory=memory,
+        )
+
+    assert memory is not None
+    assert latest_outcome is not None
+    narrator = manager.retrieve_for_narrator(
+        state,
+        memory,
+        "I keep walking toward the spires.",
+        latest_outcome,
+    )
+
+    assert [message.role for message in narrator.scene_messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert narrator.scene_messages[0].content == "Has this chapel been my dwelling place?"
+    assert narrator.scene_messages[-2].content == "I study the bootprints in the ash."
+    assert narrator.recent_turns == []
+
+
 def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:
     state = sample_state()
     state.npcs[0].name = "The Hierophant"

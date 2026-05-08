@@ -8,7 +8,6 @@ from dungeon_master.turn_router import (
     PlannedTurnOpKind,
     RoutedTurn,
     TurnPlan,
-    TurnPlanningError,
     TurnRoute,
     TurnRouter,
 )
@@ -50,6 +49,28 @@ class BrokenRouterCompletion:
     def __call__(self, request: CompletionRequest) -> ModelResponse:
         del request
         return []  # type: ignore[return-value]
+
+
+class RepairingRouterCompletion:
+    def __init__(self) -> None:
+        self.requests: list[CompletionRequest] = []
+
+    def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.requests.append(request)
+
+        def _stream(content: str) -> list[dict[str, object]]:
+            return [{"choices": [{"delta": {"content": content}}]}]
+
+        if request.trace_route == "turn_router.repair":
+            return _stream(
+                '{"route":"player_action","text":"I listen at the abbey door.",'
+                '"ops":[{"kind":"narrate","text":"I listen at the abbey door.",'
+                '"likelihood":null,"ability":null,"target_name":null,'
+                '"stance":null,"rest_kind":null,"item_name":null,'
+                '"equipped":null,"harm_amount":null,"harm_source":null,'
+                '"armor_applies":null,"in_combat":null}]}',
+            )  # type: ignore[return-value]
+        return _stream("not json")  # type: ignore[return-value]
 
 
 def test_preserves_explicit_likelihood_hint_for_classifier() -> None:
@@ -424,7 +445,37 @@ def test_router_prompt_includes_bounded_memory_context() -> None:
     assert "Rain drums on the abbey gate." in user_prompt
 
 
-def test_router_raises_explicit_error_when_planning_fails() -> None:
+def test_router_repairs_invalid_model_json_before_safe_fallback() -> None:
+    completion = RepairingRouterCompletion()
+    router = TurnRouter(
+        config=NarrativeConfig(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://example.com",
+            exclude_reasoning=True,
+            max_retries=0,
+        ),
+        completion_function=completion,
+    )
+
+    plan = router.plan("I listen at the abbey door.")
+
+    assert plan.route == TurnRoute.PLAYER_ACTION
+    assert plan.ops == (
+        PlannedTurnOp(
+            kind=PlannedTurnOpKind.NARRATE,
+            text="I listen at the abbey door.",
+        ),
+    )
+    assert [request.trace_route for request in completion.requests] == [
+        "turn_router.plan",
+        "turn_router.repair",
+    ]
+
+
+def test_router_falls_back_to_narration_when_model_planning_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     router = TurnRouter(
         config=NarrativeConfig(
             model="test-model",
@@ -435,7 +486,19 @@ def test_router_raises_explicit_error_when_planning_fails() -> None:
         completion_function=BrokenRouterCompletion(),
     )
 
-    with pytest.raises(TurnPlanningError) as exc:
-        router.plan("I listen at the abbey door.")
+    caplog.set_level("INFO", logger="dungeon_master.trace")
+    plan = router.plan("I listen at the abbey door.")
 
-    assert "deterministic resolution" in str(exc.value)
+    assert plan.route == TurnRoute.PLAYER_ACTION
+    assert plan.text == "I listen at the abbey door."
+    assert plan.ops == (
+        PlannedTurnOp(
+            kind=PlannedTurnOpKind.NARRATE,
+            text="I listen at the abbey door.",
+        ),
+    )
+    assert any(
+        'turn.router route="player_action" source="model_error_fallback" ops="narrate"'
+        in message
+        for message in caplog.messages
+    )
