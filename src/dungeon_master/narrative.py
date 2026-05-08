@@ -67,6 +67,8 @@ Discipline:
 - Keep narration compact: usually one paragraph, at most two unless the oracle
   outcome or a scene transition genuinely needs more space.
 - Mirror the player's declared action before extending the scene.
+- Treat prior user/assistant messages as transcript history. The final user
+  message is the only active request to answer.
 - When a detail is ambiguous, especially a pronoun reference, resolve it
   against the immediately preceding scene transcript and the most recent
   scene turns first; only fall back to older campaign memory if recent
@@ -368,17 +370,16 @@ class NarrativeEngine:
         stream: bool,
         cancel_token: CancellationToken | None = None,
     ) -> CompletionRequest:
-        prompt = self._build_user_prompt(
+        runtime_context = self._build_runtime_context(
             state,
             outcome,
-            player_input,
             execution_context=execution_context,
             memory_context=memory_context,
         )
         messages: list[ChatMessage] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{runtime_context}"},
             *(scene_messages or []),
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": player_input},
         ]
         profile = self._config.profiles.narration_for(
             kind=outcome.kind,
@@ -402,17 +403,16 @@ class NarrativeEngine:
             trace_profile=f"narration.{outcome.kind.value}",
         )
 
-    def _build_user_prompt(
+    def _build_runtime_context(
         self,
         state: GameState,
         outcome: OracleOutcome,
-        player_input: str,
         *,
         execution_context: str | None = None,
         memory_context: str | None = None,
     ) -> str:
         lines = [
-            f"Player input: {player_input}",
+            "Authoritative runtime context, not chat transcript:",
             f"Current scene: {state.current_scene}",
             f"Scene status: {state.scene_status.value}",
             f"Chaos factor: {state.chaos_factor}",
@@ -446,7 +446,8 @@ class NarrativeEngine:
             [
                 "",
                 (
-                    "Write 1-2 compact paragraphs of playable narration, usually 1. "
+                    "For the final user message, write 1-2 compact paragraphs of playable "
+                    "narration, usually 1. "
                     "Use second person (`you`) for the player-character. "
                     "Mirror the player's action before extending the fiction. "
                     "When recent scene context and older campaign memory differ, trust the "

@@ -283,10 +283,8 @@ def test_memory_manager_keeps_full_current_scene_transcript() -> None:
         "assistant",
     ]
     assert planner.scene_messages[0].content == "I call to the ash-veiled bellringer."
-    assert "Resolved outcome: No: The bellringer will not answer plainly." in (
-        planner.scene_messages[-1].content
-    )
-    assert "The silence answers before the figure does." in planner.scene_messages[-1].content
+    assert planner.scene_messages[-1].content == "The silence answers before the figure does."
+    assert all("Resolved outcome:" not in message.content for message in planner.scene_messages)
 
 
 def test_memory_manager_compacts_prior_scenes_into_campaign_chronicle() -> None:
@@ -343,7 +341,7 @@ def test_memory_manager_compacts_prior_scenes_into_campaign_chronicle() -> None:
     assert any(line.startswith("Scene 1:") for line in narrator.campaign_chronicle)
 
 
-def test_narrator_memory_prefers_latest_current_scene_turns_first() -> None:
+def test_narrator_memory_uses_native_scene_transcript_without_duplicate_summaries() -> None:
     state = sample_state()
     manager = MemoryManager()
     first = OracleOutcome(
@@ -388,11 +386,20 @@ def test_narrator_memory_prefers_latest_current_scene_turns_first() -> None:
         second,
     )
 
-    assert narrator.recent_turns
-    assert narrator.recent_turns[0].startswith(
-        "Turn 2: Is the patriarch on the icon the same face again?",
+    assert narrator.recent_turns == []
+    assert [message.role for message in narrator.scene_messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert narrator.scene_messages[-2].content == (
+        "Is the patriarch on the icon the same face again?"
     )
-    assert "Narration: The same gaunt face haunts the icon" in narrator.recent_turns[0]
+    assert narrator.scene_messages[-1].content == (
+        "The same gaunt face haunts the icon and the chapel wall alike."
+    )
+    assert all("Resolved outcome:" not in message.content for message in narrator.scene_messages)
 
 
 def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:

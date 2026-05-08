@@ -211,18 +211,24 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
 
     assert completion.messages is not None
     system_prompt = completion.messages[0]["content"]
-    user_prompt = completion.messages[1]["content"]
     assert "usually one paragraph, at most two" in system_prompt
     assert "Mirror the player's declared action before extending the scene." in system_prompt
+    assert "The final user" in system_prompt
+    assert "only active request to answer" in system_prompt
     assert "especially a pronoun reference" in system_prompt
     assert "scene transcript and the most recent" in system_prompt
     assert "Address the player-character in second person" in system_prompt
     assert "latent threats as flavor" in system_prompt
     assert "hardened present-tense facts" in system_prompt
-    assert "Write 1-2 compact paragraphs of playable narration, usually 1." in user_prompt
-    assert "Use second person (`you`) for the player-character." in user_prompt
-    assert "trust the most recent scene transcript and latest turn context" in user_prompt
-    assert "Only harden facts that are supported by the supplied outcome/state." in user_prompt
+    assert "Authoritative runtime context, not chat transcript:" in system_prompt
+    assert "For the final user message, write 1-2 compact paragraphs" in system_prompt
+    assert "Use second person (`you`) for the player-character." in system_prompt
+    assert "trust the most recent scene transcript and latest turn context" in system_prompt
+    assert "Only harden facts that are supported by the supplied outcome/state." in system_prompt
+    assert completion.messages[1] == {
+        "role": "user",
+        "content": "I check my supplies before leaving.",
+    }
 
 
 def test_narrative_prompt_includes_bounded_memory_context() -> None:
@@ -252,9 +258,10 @@ def test_narrative_prompt_includes_bounded_memory_context() -> None:
     )
 
     assert completion.messages is not None
-    user_prompt = completion.messages[1]["content"]
-    assert "Bounded memory context:" in user_prompt
-    assert "The abbey yard is wet with ash." in user_prompt
+    system_prompt = completion.messages[0]["content"]
+    assert "Bounded memory context:" in system_prompt
+    assert "The abbey yard is wet with ash." in system_prompt
+    assert completion.messages[1] == {"role": "user", "content": "I press into the abbey yard."}
 
 
 def test_narrative_prompt_includes_campaign_directives_when_present() -> None:
@@ -281,10 +288,14 @@ def test_narrative_prompt_includes_campaign_directives_when_present() -> None:
     engine.generate(state, outcome, "I wait for the hierophant to answer.")
 
     assert completion.messages is not None
-    user_prompt = completion.messages[1]["content"]
-    assert "Campaign directives:" in user_prompt
-    assert "Keep miracles subtle and costly." in user_prompt
-    assert "The hierophant cannot speak first." in user_prompt
+    system_prompt = completion.messages[0]["content"]
+    assert "Campaign directives:" in system_prompt
+    assert "Keep miracles subtle and costly." in system_prompt
+    assert "The hierophant cannot speak first." in system_prompt
+    assert completion.messages[1] == {
+        "role": "user",
+        "content": "I wait for the hierophant to answer.",
+    }
 
 
 def test_narrative_prompt_compacts_character_payload() -> None:
@@ -309,10 +320,11 @@ def test_narrative_prompt_compacts_character_payload() -> None:
     engine.generate(state, outcome, "I check my knife and rations.")
 
     assert completion.messages is not None
-    user_prompt = completion.messages[1]["content"]
-    assert state.character.model_dump_json() not in user_prompt
-    assert '"inventory":' in user_prompt
-    assert '"name":"Test Wanderer"' in user_prompt
+    system_prompt = completion.messages[0]["content"]
+    assert state.character.model_dump_json() not in system_prompt
+    assert '"inventory":' in system_prompt
+    assert '"name":"Test Wanderer"' in system_prompt
+    assert completion.messages[1] == {"role": "user", "content": "I check my knife and rations."}
 
 
 def test_narrative_engine_allows_fixed_medium_reasoning() -> None:

@@ -367,11 +367,7 @@ class MemoryManager:
         outcome: OracleOutcome,
     ) -> NarrativeMemoryContext:
         query = player_input.lower()
-        scene_recent_turns = (
-            memory.current_scene_turns[-3:]
-            if memory.current_scene_turns
-            else memory.recent_turn_summaries[-3:]
-        )
+        scene_recent_turns = [] if memory.current_scene_turns else memory.recent_turn_summaries[-3:]
         recent_turns = [
             self._render_narrative_recent_turn(turn)
             for turn in reversed(scene_recent_turns)
@@ -1130,17 +1126,16 @@ class MemoryManager:
             player_text = turn.player_input.strip()
             if player_text:
                 messages.append(ConversationMessage(role="user", content=player_text))
-            assistant_parts = [f"Resolved outcome: {turn.oracle_summary}"]
-            if turn.execution_context:
-                assistant_parts.append(f"Backend context: {turn.execution_context}")
+            assistant_parts: list[str] = []
             if turn.narrative_excerpt.strip():
                 assistant_parts.append(turn.narrative_excerpt.strip())
-            messages.append(
-                ConversationMessage(
-                    role="assistant",
-                    content="\n\n".join(part for part in assistant_parts if part),
-                ),
-            )
+            if assistant_parts:
+                messages.append(
+                    ConversationMessage(
+                        role="assistant",
+                        content="\n\n".join(part for part in assistant_parts if part),
+                    ),
+                )
         return messages
 
     def _campaign_chronicle_lines(self, memory: MemoryState) -> list[str]:
