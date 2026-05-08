@@ -41,6 +41,7 @@ function resetGameStore(): void {
     thinking: "",
     pendingOutcome: null,
     resuming: false,
+    stages: [],
   };
   game.notes = [];
   game.inspectorOpen = false;
