@@ -190,6 +190,8 @@ class ExplainerEngine:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="explainer.answer",
+            trace_profile="explainer",
         )
 
     def _build_user_prompt(

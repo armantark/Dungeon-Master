@@ -20,6 +20,7 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.observability import log_decision
 
 
 class TurnRoute(StrEnum):
@@ -294,14 +295,20 @@ class TurnRouter:
         body, likelihood = self._strip_likelihood_hint(text)
         normalized = body.strip()
         if not normalized:
-            return self._fallback_plan(text.strip() or text)
+            plan = self._fallback_plan(text.strip() or text)
+            self._log_plan_decision(plan, source="empty")
+            return plan
 
         if self._classifier is not None:
             classified = self._classifier(normalized, likelihood)
-            return self._normalize_classifier_result(classified, normalized, likelihood)
+            plan = self._normalize_classifier_result(classified, normalized, likelihood)
+            self._log_plan_decision(plan, source="classifier")
+            return plan
 
         if not self._config.is_usable():
-            return self._fallback_plan(normalized)
+            plan = self._fallback_plan(normalized)
+            self._log_plan_decision(plan, source="no_model")
+            return plan
 
         prompt = (
             TURN_ROUTER_USER_PROMPT_TEMPLATE.replace("<<TURN>>", normalized)
@@ -326,6 +333,8 @@ class TurnRouter:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="turn_router.plan",
+            trace_profile="turn_router",
         )
 
         last_error: Exception | None = None
@@ -337,7 +346,8 @@ class TurnRouter:
                     _raise_empty_route_content_error()
                 payload = extract_json_object(content)
                 parsed = GeneratedTurnPlan.model_validate_json(payload)
-                return self._normalize_generated_plan(parsed, normalized, likelihood)
+                plan = self._normalize_generated_plan(parsed, normalized, likelihood)
+                self._log_plan_decision(plan, source="model")
             except (
                 *LITELLM_RETRYABLE_ERRORS,
                 ValidationError,
@@ -348,9 +358,13 @@ class TurnRouter:
                 last_error = exc
                 if attempt < self._config.max_retries:
                     time.sleep(0.4 * (attempt + 1))
+            else:
+                return plan
 
         if last_error is None:
-            return self._fallback_plan(normalized)
+            plan = self._fallback_plan(normalized)
+            self._log_plan_decision(plan, source="fallback")
+            return plan
         message = (
             "Turn planning failed before any deterministic resolution could be chosen. "
             "Please retry or use an explicit command."
@@ -366,6 +380,15 @@ class TurnRouter:
     ) -> RoutedTurn:
         return self._routed_turn_from_plan(
             self.plan(text, memory_context=memory_context, cancel_token=cancel_token),
+        )
+
+    def _log_plan_decision(self, plan: TurnPlan, *, source: str) -> None:
+        ops = ",".join(op.kind.value for op in plan.ops)
+        log_decision(
+            "turn.router",
+            route=plan.route.value,
+            source=source,
+            ops=ops,
         )
 
     def _fallback_plan(self, text: str) -> TurnPlan:

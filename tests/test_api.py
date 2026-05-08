@@ -7,14 +7,22 @@ serialization, and state-mutation contracts without spending tokens.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Generator
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
-from dungeon_master.api import create_app
+from dungeon_master.api import (
+    PlayerTurnRequest,
+    create_app,
+    reattach_request_stream,
+    submit_turn_stream,
+)
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -76,6 +84,8 @@ from dungeon_master.turn_router import (
 from tests.factories import sample_state
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from litellm.types.utils import ModelResponse
 
 
@@ -136,6 +146,44 @@ class ThoughtfulNarrative(FakeNarrative):
     ) -> Generator[CompletionDelta, None, NarrativeResult]:
         del cancel_token
         yield CompletionDelta(thinking=f"Thought about {outcome.kind}.")
+        yield CompletionDelta(
+            content=self.generate(
+                state,
+                outcome,
+                player_input,
+                execution_context=execution_context,
+                memory_context=memory_context,
+            ),
+        )
+        return self.generate_result(
+            state,
+            outcome,
+            player_input,
+            execution_context=execution_context,
+            memory_context=memory_context,
+        )
+
+
+class BlockingThoughtfulNarrative(ThoughtfulNarrative):
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+
+    def iter_stream(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, NarrativeResult]:
+        yield CompletionDelta(thinking=f"Thought about {outcome.kind}.")
+        self.started.set()
+        while not self.release.wait(timeout=0.01):
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
         yield CompletionDelta(
             content=self.generate(
                 state,
@@ -740,9 +788,10 @@ def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:
     return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=text)
 
 
-def _client(
+def _client(  # noqa: PLR0913
     tmp_path: Path,
     *,
+    narrative: FakeNarrative | ThoughtfulNarrative | BlockingThoughtfulNarrative | None = None,
     turn_router: TurnRouter | None = None,
     thread_updater: FakeThreadUpdater | None = None,
     npc_updater: FakeNpcUpdater | None = None,
@@ -751,7 +800,7 @@ def _client(
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
-        narrative=FakeNarrative(),
+        narrative=narrative or FakeNarrative(),
         explainer=explainer or FakeExplainer(),
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
@@ -761,6 +810,47 @@ def _client(
         npc_updater=npc_updater,
     )
     return TestClient(create_app(service=service))
+
+
+def _request_for_app(app: object, path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "app": app,
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "http_version": "1.1",
+        },
+    )
+
+
+async def _collect_stream_events(
+    iterator: object,
+    *,
+    limit: int | None = None,
+    release: Event | None = None,
+) -> list[dict[str, Any]]:
+    stream = cast("AsyncIterator[str]", iterator)
+    events: list[dict[str, Any]] = []
+    try:
+        async for line in stream:
+            if not line:
+                continue
+            events.append(cast("dict[str, Any]", json.loads(line)))
+            if release is not None and len(events) == 2:
+                release.set()
+            if limit is not None and len(events) >= limit:
+                break
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await aclose()
+    return events
 
 
 def _setup_client(tmp_path: Path) -> TestClient:
@@ -898,8 +988,8 @@ def test_select_save_endpoint_switches_the_active_state_store(tmp_path: Path) ->
     service = _library_service(tmp_path)
     library = SaveLibrary(tmp_path / "game_state.json")
 
-    first_id = library.create_save(create_state=service.new_setup_state(), select=True)
-    second_id = library.create_save(create_state=service.new_setup_state(), select=False)
+    first_id = library.create_save(create_state=sample_state(), select=True)
+    second_id = library.create_save(create_state=sample_state(), select=False)
 
     first_store = StateStore(library.state_path_for(first_id))
     first_state = first_store.load()
@@ -944,6 +1034,50 @@ def test_select_save_endpoint_rejects_switch_while_request_is_in_flight(
         response.json()["detail"]
         == "Cannot switch saves while a request is still in flight."
     )
+
+
+def test_reattach_request_stream_rejects_different_active_save(tmp_path: Path) -> None:
+    narrative = BlockingThoughtfulNarrative()
+    service = GameService(
+        store=StateStore(tmp_path / "seed_game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        explainer=FakeExplainer(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=SetupCharacterGenerator(),
+        cairn_engine=FakePlayableCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+    library = SaveLibrary(tmp_path / "game_state.json")
+    first_id = library.create_save(create_state=sample_state(), select=True)
+    second_id = library.create_save(create_state=sample_state(), select=False)
+
+    with TestClient(create_app(service=service, save_library=library)) as client:
+        app = cast("Any", client.app)
+        response = submit_turn_stream(
+            request=_request_for_app(app, "/api/turn/stream"),
+            svc=app.state.service,
+            registry=app.state.cancellation_registry,
+            session_registry=app.state.session_registry,
+            payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
+        )
+        initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=2))
+        request_id = cast("str", initial_events[0]["request_id"])
+        assert narrative.started.wait(timeout=1.0)
+        narrative.release.set()
+        resumed = reattach_request_stream(
+            request=_request_for_app(app, f"/api/requests/{request_id}/stream"),
+            request_id=request_id,
+            session_registry=app.state.session_registry,
+        )
+        resumed_events = asyncio.run(_collect_stream_events(resumed.body_iterator))
+        assert resumed_events[-1]["type"] == "final_state"
+        assert client.post("/api/library/select", json={"save_id": second_id}).status_code == 200
+        wrong_save = client.get(f"/api/requests/{request_id}/stream")
+
+    assert first_id != second_id
+    assert wrong_save.status_code == 409
+    assert wrong_save.json()["detail"] == "Request belongs to a different active save."
 
 
 def test_state_round_trip(tmp_path: Path) -> None:
@@ -1245,6 +1379,42 @@ def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     final = parsed[-1]
     assert final["state"]["action_log"][-1]["title"] == "Narrative response"
     assert final["thinking"] == "Thought about attack."
+
+
+def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> None:
+    narrative = BlockingThoughtfulNarrative()
+    with _client(tmp_path, narrative=narrative) as client:
+        app = cast("Any", client.app)
+        response = submit_turn_stream(
+            request=_request_for_app(app, "/api/turn/stream"),
+            svc=app.state.service,
+            registry=app.state.cancellation_registry,
+            session_registry=app.state.session_registry,
+            payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
+        )
+        initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=2))
+        meta, thinking = initial_events
+        request_id = cast("str", meta["request_id"])
+        assert meta["type"] == "meta"
+        assert thinking == {"type": "thinking_delta", "text": "Thought about attack."}
+        assert narrative.started.wait(timeout=1.0)
+        persisted_before = client.get("/api/state").json()
+        assert all(
+            event["title"] != "Narrative response" for event in persisted_before["action_log"]
+        )
+        resumed = reattach_request_stream(
+            request=_request_for_app(app, f"/api/requests/{request_id}/stream"),
+            request_id=request_id,
+            session_registry=app.state.session_registry,
+        )
+        resumed_events = asyncio.run(
+            _collect_stream_events(resumed.body_iterator, release=narrative.release),
+        )
+
+    assert resumed_events[0]["request_id"] == request_id
+    assert resumed_events[1] == thinking
+    assert resumed_events[-1]["type"] == "final_state"
+    assert resumed_events[-1]["state"]["action_log"][-1]["title"] == "Narrative response"
 
 
 def test_submit_turn_stream_emits_explicit_planning_error(tmp_path: Path) -> None:

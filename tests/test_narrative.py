@@ -11,6 +11,7 @@ from dungeon_master.narrative import (
     CompletionRequest,
     NarrativeConfig,
     NarrativeEngine,
+    _completion,
 )
 from tests.factories import sample_state
 
@@ -117,6 +118,44 @@ def test_narrative_engine_passes_task_based_reasoning_to_litellm() -> None:
     # `reasoning_effort` alias and keep `max_tokens` here for deterministic
     # budget control.
     assert completion.reasoning == {"max_tokens": 3000, "exclude": True}
+
+
+def test_completion_logs_llm_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fake_completion(**_: object) -> ModelResponse:
+        return ModelResponse(
+            choices=[{"message": {"role": "assistant", "content": "The abbey waits."}}],
+            usage={"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+        )
+
+    monkeypatch.setattr("dungeon_master.narrative.litellm_completion", fake_completion)
+    request = CompletionRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "hello"}],
+        temperature=0.1,
+        max_tokens=32,
+        timeout=1.0,
+        stream=False,
+        api_key=None,
+        base_url=None,
+        reasoning_effort="low",
+        reasoning={"exclude": True},
+        extra_headers=None,
+        trace_route="test.route",
+        trace_profile="test.profile",
+    )
+
+    caplog.set_level("INFO", logger="dungeon_master.trace")
+    _completion(request)
+
+    assert any(
+        'llm.call route="test.route" profile="test.profile" request_id=null '
+        'model="test-model" stream=false prompt_tokens=123 completion_tokens=45'
+        in message
+        for message in caplog.messages
+    )
 
 
 def test_narrative_prompt_prefers_compact_grounded_prose() -> None:

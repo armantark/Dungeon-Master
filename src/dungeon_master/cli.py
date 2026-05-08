@@ -10,6 +10,8 @@ import argparse
 
 import uvicorn
 
+from dungeon_master.observability import log_level_from_env
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="dungeon-master")
@@ -26,13 +28,14 @@ def main() -> None:
         help="Enable autoreload for backend development.",
     )
     args = parser.parse_args()
+    log_level = log_level_from_env().lower()
 
     uvicorn.run(
         "dungeon_master.api:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        log_level="info",
+        log_level=log_level,
     )
 
 

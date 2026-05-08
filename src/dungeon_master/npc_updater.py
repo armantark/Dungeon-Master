@@ -274,6 +274,8 @@ class NPCUpdater:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="npc_updater.apply",
+            trace_profile="npc_updater",
         )
 
         try:
@@ -313,6 +315,8 @@ class NPCUpdater:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="npc_updater.legacy_repair",
+            trace_profile="legacy_npc_repair",
         )
         try:
             payload = self._complete_json(request)

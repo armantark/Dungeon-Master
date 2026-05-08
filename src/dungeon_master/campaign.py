@@ -764,6 +764,8 @@ class CharacterGenerator:
             reasoning=templates_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
+            trace_route="character.templates",
+            trace_profile="character_templates",
         )
         try:
             completed = self._complete_json(request)
@@ -809,6 +811,8 @@ class CharacterGenerator:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="character.templates",
+            trace_profile="character_templates",
         )
         try:
             completed = yield from self._iter_json(request)
@@ -866,6 +870,8 @@ class CharacterGenerator:
             reasoning=quiz_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
+            trace_route="character.quiz",
+            trace_profile="character_quiz",
         )
         try:
             completed = self._complete_json(request)
@@ -909,6 +915,8 @@ class CharacterGenerator:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="character.quiz",
+            trace_profile="character_quiz",
         )
         try:
             completed = yield from self._iter_json(request)
@@ -989,6 +997,8 @@ class CharacterGenerator:
             ),
             extra_headers=self._openrouter_headers(),
             response_format=None,
+            trace_route="character.draft.quizzed",
+            trace_profile="quizzed_character_draft",
         )
         try:
             completed = self._complete_json(request)
@@ -1052,6 +1062,8 @@ class CharacterGenerator:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="character.draft.quizzed",
+            trace_profile="quizzed_character_draft",
         )
         try:
             completed = yield from self._iter_json(request)
@@ -1123,6 +1135,8 @@ class CharacterGenerator:
             reasoning=draft_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
+            trace_route="character.draft",
+            trace_profile="character_draft",
         )
         try:
             completed = self._complete_json(request)
@@ -1182,6 +1196,8 @@ class CharacterGenerator:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="character.draft",
+            trace_profile="character_draft",
         )
         try:
             completed = yield from self._iter_json(request)
@@ -1312,6 +1328,8 @@ class CampaignGenerator:
             reasoning=campaign_profile.reasoning(default_exclude=self.config.exclude_reasoning),
             extra_headers=self._openrouter_headers(),
             response_format=None,
+            trace_route="campaign.world",
+            trace_profile="campaign_world",
         )
 
         last_error: Exception | None = None
@@ -1370,6 +1388,8 @@ class CampaignGenerator:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="campaign.world",
+            trace_profile="campaign_world",
         )
 
         last_error: Exception | None = None

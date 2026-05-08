@@ -19,6 +19,7 @@ describe("GameStore setup streaming", () => {
       content: "",
       thinking: "",
       pendingOutcome: null,
+      resuming: false,
     };
     game.notes = [];
     game.inspectorOpen = false;

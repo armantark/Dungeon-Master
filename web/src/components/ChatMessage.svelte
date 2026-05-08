@@ -40,6 +40,13 @@ MechanicalReceipt so the player can verify the dice on demand.
     // uses this for the synthetic provisional DM bubble; persisted
     // messages always render with `streaming = false`.
     streaming?: boolean;
+    // True only when the streaming bubble is for a stream we
+    // reattached to after a page reload (see lib/stream-resume.ts).
+    // Surfaces as a "resuming…" meta tag instead of "streaming…" so
+    // the player understands the bubble started its life on a
+    // previous page rather than just now. Ignored when
+    // `streaming === false`.
+    resuming?: boolean;
     // F-10 OOC explainer: the player's verbatim question, rendered
     // as a `Q:` row above the answer. Only consulted when speaker is
     // `ooc`; ignored otherwise so callers can leave it null without
@@ -57,6 +64,7 @@ MechanicalReceipt so the player can verify the dice on demand.
     canRegenerate = false,
     thinking = null,
     streaming = false,
+    resuming = false,
     question = null,
     threads = [],
     npcs = [],
@@ -101,7 +109,18 @@ MechanicalReceipt so the player can verify the dice on demand.
       {:else}Engine{/if}
     </span>
     {#if streaming}
-      <span class="streaming-tag">streaming…</span>
+      <!--
+        We split "resuming" out from "streaming" in the meta tag so
+        the player has an unambiguous cue that the bubble below
+        started its life on a previous page (the alternative — both
+        states sharing the "streaming…" label — would silently hide
+        a non-trivial state transition). The `resuming` class
+        carries a different accent so reduced-motion users can
+        still tell them apart at a glance.
+      -->
+      <span class="streaming-tag" class:resuming>
+        {resuming ? "resuming…" : "streaming…"}
+      </span>
     {:else if relativeLabel}
       <span class="time">{relativeLabel}</span>
     {/if}
@@ -189,6 +208,15 @@ MechanicalReceipt so the player can verify the dice on demand.
     font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
+  }
+  .meta .streaming-tag.resuming {
+    /*
+     * Verdigris/teal accent matches the OOC rail and visually
+     * distances "resuming…" from "streaming…" without inventing a
+     * new color in the system. The connotation is "we picked this
+     * up from somewhere else", which the cooler hue carries.
+     */
+    color: color-mix(in oklab, var(--verdigris, #4a7c74) 75%, var(--gold-candle));
   }
   .awaiting {
     /* Holding line that fills the bubble until the first content token

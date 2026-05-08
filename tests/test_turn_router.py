@@ -17,10 +17,11 @@ from dungeon_master.turn_router import (
 class RecordingRouterCompletion:
     def __init__(self) -> None:
         self.messages: list[dict[str, str]] | None = None
+        self.request: CompletionRequest | None = None
 
     def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.request = request
         self.messages = request.messages
-        del request
 
         def _stream() -> list[dict[str, object]]:
             return [
@@ -100,6 +101,26 @@ def test_unconfigured_router_falls_back_to_player_action() -> None:
 
     assert routed.route == TurnRoute.PLAYER_ACTION
     assert routed.likelihood is None
+
+
+def test_router_logs_decision_and_traces_request(caplog: pytest.LogCaptureFixture) -> None:
+    completion = RecordingRouterCompletion()
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url="https://example.com"),
+        completion_function=completion,
+    )
+
+    caplog.set_level("INFO", logger="dungeon_master.trace")
+    planned = router.plan("I listen at the abbey door.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert completion.request is not None
+    assert completion.request.trace_route == "turn_router.plan"
+    assert completion.request.trace_profile == "turn_router"
+    assert any(
+        'turn.router route="player_action" source="model" ops="narrate"' in message
+        for message in caplog.messages
+    )
 
 
 def test_classifier_can_return_dex_save() -> None:

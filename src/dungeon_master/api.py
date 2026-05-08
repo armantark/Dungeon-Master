@@ -12,9 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, status
 from fastapi import Path as ApiPath
@@ -23,7 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from dungeon_master.campaign import CharacterDraftMode
-from dungeon_master.cancel import CancellationRegistry, RequestCancelledError
+from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
 from dungeon_master.models import (
     AttackStance,
     CairnAbility,
@@ -40,10 +41,11 @@ from dungeon_master.save_library import SaveLibrary, SaveSummary
 from dungeon_master.service import GameService
 from dungeon_master.settings import state_path_from_env
 from dungeon_master.state_store import StateStore
+from dungeon_master.stream_session import SessionRegistry, StreamSession
 from dungeon_master.turn_router import TurnPlanningError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Generator
+    from collections.abc import AsyncIterator, Callable, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -233,9 +235,17 @@ def get_cancellation_registry(request: Request) -> CancellationRegistry:
     return registry
 
 
+def get_session_registry(request: Request) -> SessionRegistry:
+    registry = getattr(request.app.state, "session_registry", None)
+    if not isinstance(registry, SessionRegistry):
+        raise ServiceUnavailableError
+    return registry
+
+
 ServiceDep = Annotated[GameService, Depends(get_service)]
 LibraryDep = Annotated[SaveLibrary, Depends(get_save_library)]
 RegistryDep = Annotated[CancellationRegistry, Depends(get_cancellation_registry)]
+SessionRegistryDep = Annotated[SessionRegistry, Depends(get_session_registry)]
 
 
 def _service_seed(app: FastAPI) -> GameService | None:
@@ -336,69 +346,92 @@ def _error_event(
     )
 
 
-def _stream_game_state(  # noqa: C901
-    service_generator: Generator[CompletionDelta, None, GameState],
+def _stream_executor(request: Request) -> ThreadPoolExecutor:
+    executor = getattr(request.app.state, "stream_executor", None)
+    if not isinstance(executor, ThreadPoolExecutor):
+        raise ServiceUnavailableError
+    return executor
+
+
+def _active_save_id(app: FastAPI) -> str | None:
+    library = getattr(app.state, "save_library", None)
+    if not isinstance(library, SaveLibrary):
+        return None
+    return library.active_save_id()
+
+
+def _streaming_response(session: StreamSession) -> StreamingResponse:
+    return StreamingResponse(session.attach(), media_type="application/x-ndjson")
+
+
+def _start_game_state_stream(  # noqa: PLR0913
+    request: Request,
     *,
+    service_generator: Generator[CompletionDelta, None, GameState],
     route: str,
     request_id: str,
+    cancel_token: CancellationToken,
     cancellation_registry: CancellationRegistry,
+    session_registry: SessionRegistry,
 ) -> StreamingResponse:
-    """Wrap a `Generator[CompletionDelta, None, GameState]` as NDJSON.
+    session = session_registry.register(
+        request_id=request_id,
+        route=route,
+        save_id=_active_save_id(request.app),
+        cancel_token=cancel_token,
+    )
+    _stream_executor(request).submit(
+        _drive_game_state_session,
+        session,
+        service_generator,
+        cancellation_registry,
+    )
+    return _streaming_response(session)
 
-    The service generator yields `CompletionDelta`s as model output
-    streams in and returns the final committed `GameState`. We translate
-    each delta into a `thinking_delta`/`content_delta` line, then write a
-    `final_state` line after StopIteration. Errors are captured as
-    `error` lines so the frontend can branch on `result.kind === "error"`
-    instead of having to reason about partial-state HTTP failures.
 
-    Final-event `thinking` is pulled off the last narrative event when
-    one exists. The frontend persists thinking on the `GameEvent` itself,
-    so this duplicate field is purely a convenience for clients that
-    want the full trace immediately rather than re-reading state.
-    """
-
-    def event_stream() -> Generator[str, None, None]:
-        yield _meta_event(route, request_id)
-        last_thinking = ""
-        try:
-            generator = service_generator
-            while True:
-                delta = next(generator)
-                if delta.thinking:
-                    last_thinking += delta.thinking
-                    yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
-                if delta.content:
-                    yield _ndjson({"type": "content_delta", "text": delta.content})
-        except StopIteration as stop:
-            final_state = stop.value
-            if final_state is not None:
-                # Prefer the persisted thinking on the latest narrative
-                # event when present; that's the canonical record. Fall
-                # back to the locally aggregated buffer if the service
-                # didn't attach thinking to an event (e.g. campaign
-                # start uses a system event, action uses a narrative).
-                persisted = _latest_event_thinking(final_state)
-                yield _ndjson(
+def _drive_game_state_session(
+    session: StreamSession,
+    service_generator: Generator[CompletionDelta, None, GameState],
+    cancellation_registry: CancellationRegistry,
+) -> None:
+    last_thinking = ""
+    session.publish(_meta_event(session.route, session.request_id))
+    try:
+        while True:
+            delta = next(service_generator)
+            if delta.thinking:
+                last_thinking += delta.thinking
+                session.publish(_ndjson({"type": "thinking_delta", "text": delta.thinking}))
+            if delta.content:
+                session.publish(_ndjson({"type": "content_delta", "text": delta.content}))
+    except StopIteration as stop:
+        final_state = stop.value
+        if final_state is not None:
+            persisted = _latest_event_thinking(final_state)
+            session.publish(
+                _ndjson(
                     {
                         "type": "final_state",
                         "state": final_state.model_dump(mode="json"),
                         "thinking": persisted or last_thinking or None,
                     },
-                )
-        except RequestCancelledError:
-            return
-        except TurnPlanningError as exc:
-            yield _error_event(str(exc), code="planning_failed")
-        except ValueError as exc:
-            yield _error_event(str(exc), code="conflict")
-        except Exception as exc:  # pragma: no cover - defensive envelope
-            logger.exception("Streaming endpoint failed.")
-            yield _error_event(str(exc), code="internal_error")
-        finally:
-            cancellation_registry.unregister(request_id)
-
-    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+                ),
+            )
+        session.complete()
+    except RequestCancelledError:
+        session.cancel()
+    except TurnPlanningError as exc:
+        session.publish(_error_event(str(exc), code="planning_failed"))
+        session.fail()
+    except ValueError as exc:
+        session.publish(_error_event(str(exc), code="conflict"))
+        session.fail()
+    except Exception as exc:  # pragma: no cover - defensive envelope
+        logger.exception("Streaming endpoint failed.")
+        session.publish(_error_event(str(exc), code="internal_error"))
+        session.fail()
+    finally:
+        cancellation_registry.unregister(session.request_id)
 
 
 def _latest_event_thinking(state: GameState) -> str:
@@ -415,58 +448,77 @@ def _latest_event_thinking(state: GameState) -> str:
     return ""
 
 
-def _stream_setup_payload(  # noqa: PLR0913
-    service_generator: Generator[CompletionDelta, None, object],
+def _start_setup_stream(  # noqa: PLR0913
+    request: Request,
     *,
+    service_generator: Generator[CompletionDelta, None, object],
     route: Literal["character_quiz", "character_draft", "character_templates", "explanation"],
     payload_kind: Literal["character_quiz", "character_draft", "explanation"],
     serialize: object,
     request_id: str,
+    cancel_token: CancellationToken,
     cancellation_registry: CancellationRegistry,
+    session_registry: SessionRegistry,
 ) -> StreamingResponse:
-    """Wrap a setup generator (quiz/draft) as NDJSON with `final_payload`.
+    session = session_registry.register(
+        request_id=request_id,
+        route=route,
+        save_id=_active_save_id(request.app),
+        cancel_token=cancel_token,
+    )
+    _stream_executor(request).submit(
+        _drive_setup_payload_session,
+        session,
+        service_generator,
+        payload_kind,
+        serialize,
+        cancellation_registry,
+    )
+    return _streaming_response(session)
 
-    `serialize` is a callable `(result) -> dict` that turns the
-    generator's terminal value (a `*Result` dataclass) into the
-    endpoint-specific payload shape. The shape is the same one the unary
-    endpoint returns, minus the `thinking` field — `thinking` is hoisted
-    onto the envelope because the frontend stores it once for the whole
-    final event, not on every nested key.
-    """
-    serializer: object = serialize  # narrow alias for the inner closure
 
-    def event_stream() -> Generator[str, None, None]:
-        yield _meta_event(route, request_id)
-        try:
-            while True:
-                delta = next(service_generator)
-                if delta.thinking:
-                    yield _ndjson({"type": "thinking_delta", "text": delta.thinking})
-                if delta.content:
-                    yield _ndjson({"type": "content_delta", "text": delta.content})
-        except StopIteration as stop:
-            result = stop.value
-            payload = serializer(result)  # type: ignore[operator]
-            thinking = getattr(result, "thinking", "") or ""
-            yield _ndjson(
+def _drive_setup_payload_session(
+    session: StreamSession,
+    service_generator: Generator[CompletionDelta, None, object],
+    payload_kind: Literal["character_quiz", "character_draft", "explanation"],
+    serialize: object,
+    cancellation_registry: CancellationRegistry,
+) -> None:
+    serializer = cast("Callable[[object], dict[str, object]]", serialize)
+    session.publish(_meta_event(session.route, session.request_id))
+    try:
+        while True:
+            delta = next(service_generator)
+            if delta.thinking:
+                session.publish(_ndjson({"type": "thinking_delta", "text": delta.thinking}))
+            if delta.content:
+                session.publish(_ndjson({"type": "content_delta", "text": delta.content}))
+    except StopIteration as stop:
+        result = stop.value
+        payload = serializer(result)
+        thinking = getattr(result, "thinking", "") or ""
+        session.publish(
+            _ndjson(
                 {
                     "type": "final_payload",
                     "kind": payload_kind,
                     "payload": payload,
                     "thinking": thinking or None,
                 },
-            )
-        except RequestCancelledError:
-            return
-        except ValueError as exc:
-            yield _error_event(str(exc), code="conflict")
-        except Exception as exc:  # pragma: no cover - defensive envelope
-            logger.exception("Streaming endpoint failed.")
-            yield _error_event(str(exc), code="internal_error")
-        finally:
-            cancellation_registry.unregister(request_id)
-
-    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+            ),
+        )
+        session.complete()
+    except RequestCancelledError:
+        session.cancel()
+    except ValueError as exc:
+        session.publish(_error_event(str(exc), code="conflict"))
+        session.fail()
+    except Exception as exc:  # pragma: no cover - defensive envelope
+        logger.exception("Streaming endpoint failed.")
+        session.publish(_error_event(str(exc), code="internal_error"))
+        session.fail()
+    finally:
+        cancellation_registry.unregister(session.request_id)
 
 
 @router.get("/health")
@@ -480,6 +532,27 @@ def cancel_request(
     registry: RegistryDep,
 ) -> CancelRequestResponse:
     return CancelRequestResponse(cancelled=registry.cancel(request_id))
+
+
+@router.get("/requests/{request_id}/stream")
+def reattach_request_stream(
+    request: Request,
+    request_id: Annotated[str, ApiPath(min_length=1)],
+    session_registry: SessionRegistryDep,
+) -> StreamingResponse:
+    session = session_registry.get(request_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request stream not found or already expired.",
+        )
+    active_save_id = _active_save_id(request.app)
+    if session.save_id is not None and active_save_id != session.save_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Request belongs to a different active save.",
+        )
+    return _streaming_response(session)
 
 
 @router.get("/library/bootstrap", response_model=SaveLibraryBootstrapResponse)
@@ -606,17 +679,22 @@ def submit_action(
 
 @router.post("/action/stream")
 def submit_action_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[PlayerActionRequest, Body()],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_game_state(
-        svc.stream_submit_player_action(payload.action, cancel_token=token),
+    return _start_game_state_stream(
+        request,
+        service_generator=svc.stream_submit_player_action(payload.action, cancel_token=token),
         route="player_action",
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -638,8 +716,10 @@ def submit_turn(
 
 @router.post("/turn/stream")
 def submit_turn_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[PlayerTurnRequest, Body()],
 ) -> StreamingResponse:
     # We label the route as `player_action` here because the backend's
@@ -649,11 +729,14 @@ def submit_turn_stream(
     # matches every prose-producing branch.
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_game_state(
-        svc.stream_submit_player_turn(payload.text, cancel_token=token),
+    return _start_game_state_stream(
+        request,
+        service_generator=svc.stream_submit_player_turn(payload.text, cancel_token=token),
         route="player_action",
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -671,19 +754,24 @@ def explain(
 
 @router.post("/explain/stream")
 def explain_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[ExplainRequest, Body()],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_setup_payload(
-        svc.stream_explain(payload.question, cancel_token=token),
+    return _start_setup_stream(
+        request,
+        service_generator=svc.stream_explain(payload.question, cancel_token=token),
         route="explanation",
         payload_kind="explanation",
         serialize=lambda result: {"answer": result.answer},
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -782,20 +870,25 @@ def character_templates(svc: ServiceDep) -> CharacterTemplatesResponse:
 
 @router.get("/character/templates/stream")
 def character_templates_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_setup_payload(
-        svc.stream_character_templates(cancel_token=token),
+    return _start_setup_stream(
+        request,
+        service_generator=svc.stream_character_templates(cancel_token=token),
         route="character_templates",
         payload_kind="character_draft",
         serialize=lambda result: {
             "templates": [t.model_dump(mode="json") for t in result.templates],
         },
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -814,14 +907,17 @@ def character_draft(
 
 @router.post("/character/draft/stream")
 def character_draft_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[CharacterDraftRequest, Body()],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_setup_payload(
-        svc.stream_character_draft(
+    return _start_setup_stream(
+        request,
+        service_generator=svc.stream_character_draft(
             mode=payload.mode,
             prompt=payload.prompt,
             template=payload.template,
@@ -831,7 +927,9 @@ def character_draft_stream(
         payload_kind="character_draft",
         serialize=lambda result: {"draft": result.draft.model_dump(mode="json")},
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -846,19 +944,24 @@ def character_quiz(
 
 @router.post("/character/quiz/stream")
 def character_quiz_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[CharacterQuizRequest, Body()],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_setup_payload(
-        svc.stream_character_quiz(payload.concept, cancel_token=token),
+    return _start_setup_stream(
+        request,
+        service_generator=svc.stream_character_quiz(payload.concept, cancel_token=token),
         route="character_quiz",
         payload_kind="character_quiz",
         serialize=lambda result: {"quiz": result.quiz.model_dump(mode="json")},
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -877,14 +980,17 @@ def character_quizzed_draft(
 
 @router.post("/character/draft/quizzed/stream")
 def character_quizzed_draft_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     payload: Annotated[CharacterQuizzedDraftRequest, Body()],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_setup_payload(
-        svc.stream_quizzed_character_draft(
+    return _start_setup_stream(
+        request,
+        service_generator=svc.stream_quizzed_character_draft(
             concept=payload.concept,
             answers=payload.answers,
             final_note=payload.final_note,
@@ -894,7 +1000,9 @@ def character_quizzed_draft_stream(
         payload_kind="character_draft",
         serialize=lambda result: {"draft": result.draft.model_dump(mode="json")},
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -927,8 +1035,10 @@ def end_campaign(
 
 @router.post("/campaign/start/stream")
 def start_campaign_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
 ) -> StreamingResponse:
     # Adapt `Generator[..., CampaignWorldResult]` to the
     # `Generator[..., GameState]` shape that `_stream_game_state` expects
@@ -944,11 +1054,14 @@ def start_campaign_stream(
         result = yield from inner
         return result.state
 
-    return _stream_game_state(
-        adapter(),
+    return _start_game_state_stream(
+        request,
+        service_generator=adapter(),
         route="campaign_start",
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -965,17 +1078,22 @@ def regenerate_message(
 
 @router.post("/messages/{event_id}/regenerate/stream")
 def regenerate_message_stream(
+    request: Request,
     svc: ServiceDep,
     registry: RegistryDep,
+    session_registry: SessionRegistryDep,
     event_id: Annotated[str, ApiPath(min_length=1)],
 ) -> StreamingResponse:
     request_id = _new_request_id()
     token = registry.register(request_id)
-    return _stream_game_state(
-        svc.stream_regenerate_response(event_id, cancel_token=token),
+    return _start_game_state_stream(
+        request,
+        service_generator=svc.stream_regenerate_response(event_id, cancel_token=token),
         route="regenerate",
         request_id=request_id,
+        cancel_token=token,
         cancellation_registry=registry,
+        session_registry=session_registry,
     )
 
 
@@ -1014,6 +1132,11 @@ def create_app(
         else:
             app.state.service = service or build_service()
         app.state.cancellation_registry = CancellationRegistry()
+        app.state.session_registry = SessionRegistry()
+        app.state.stream_executor = ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="dm-stream",
+        )
         try:
             yield
         finally:
@@ -1024,6 +1147,11 @@ def create_app(
             app.state.service_template = None
             app.state.save_library = None
             app.state.cancellation_registry = None
+            executor = getattr(app.state, "stream_executor", None)
+            if isinstance(executor, ThreadPoolExecutor):
+                executor.shutdown(wait=True, cancel_futures=True)
+            app.state.stream_executor = None
+            app.state.session_registry = None
 
     app = FastAPI(
         title="Dungeon Master",

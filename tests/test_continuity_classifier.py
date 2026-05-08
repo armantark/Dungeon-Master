@@ -1,3 +1,4 @@
+import pytest
 from litellm.types.utils import ModelResponse
 
 from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
@@ -111,3 +112,35 @@ def test_continuity_classifier_prompt_is_small_and_grounded() -> None:
     assert "Visible recurring NPCs:" in user_prompt
     assert "Hidden recurring NPCs:" in user_prompt
     assert "The Hierophant" in user_prompt
+
+
+def test_continuity_classifier_logs_scope_and_traces_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    completion = RecordingContinuityCompletion("threads")
+    classifier = ContinuityClassifier(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url="https://example.com"),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="A vow takes hold.",
+        chaos_factor=5,
+    )
+
+    caplog.set_level("INFO", logger="dungeon_master.trace")
+    scope = classifier.classify_update_scope(
+        state,
+        player_input="I swear to hunt the ferryman down.",
+        outcome=outcome,
+    )
+
+    assert scope == ContinuityUpdateScope.THREADS
+    assert completion.request is not None
+    assert completion.request.trace_route == "continuity_classifier.scope"
+    assert completion.request.trace_profile == "continuity_classifier"
+    assert any(
+        'continuity.classifier scope="threads" source="model"' in message
+        for message in caplog.messages
+    )

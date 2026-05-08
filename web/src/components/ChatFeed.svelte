@@ -56,6 +56,12 @@ F-09 browsing behavior:
     outcome?: OracleOutcome | null;
     thinking?: string | null;
     streaming?: boolean;
+    // True only when the in-flight bubble was reattached after a
+    // page reload. Surfaces as a "resuming…" tag in ChatMessage
+    // so the player can tell the difference between "the model
+    // started typing" and "we found a turn the previous page
+    // started and we're now tailing it."
+    resuming?: boolean;
     // OOC-only: the player's question, rendered as a `Q:` row
     // above the answer body.
     question?: string | null;
@@ -205,9 +211,16 @@ F-09 browsing behavior:
         timestamp: new Date().toISOString(),
         thinking: game.streaming.thinking,
         streaming: true,
+        resuming: game.streaming.resuming,
         question: null,
       };
     }
+    // While `route` is null we still render the bubble because a
+    // resumed stream may not have replayed `meta` yet (the buffered
+    // history starts arriving before the live tail catches up). The
+    // chat surface needs *something* visible the moment we flip into
+    // streaming.active, otherwise the player sees nothing during
+    // the brief window between resume start and the first event.
     if (route !== null && !PROSE_ROUTES.has(route)) return null;
     return {
       kind: "dm",
@@ -217,6 +230,7 @@ F-09 browsing behavior:
       outcome: game.streaming.pendingOutcome,
       thinking: game.streaming.thinking,
       streaming: true,
+      resuming: game.streaming.resuming,
     };
   });
 
@@ -398,6 +412,7 @@ F-09 browsing behavior:
           threads={gs.threads}
           npcs={gs.npcs}
           streaming={true}
+          resuming={provisional.resuming ?? false}
           canRegenerate={false}
         />
       </div>

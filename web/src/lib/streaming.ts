@@ -66,6 +66,14 @@ export interface StreamHandlers {
 
 export interface StreamCallOptions {
   signal?: AbortSignal;
+  // HTTP method. Defaults to POST because every "open a fresh
+  // stream" route is a POST with a JSON body. The GET path exists
+  // exclusively for the reattach endpoint
+  // (`GET /api/requests/{id}/stream`), which the backend exposes as
+  // a body-less re-subscribe and rejects when called with anything
+  // else. Keeping the default POST means none of the existing call
+  // sites have to know this option exists.
+  method?: "GET" | "POST";
   // Send body as JSON. Mutually exclusive with `body`.
   json?: unknown;
   // Raw body. Set Content-Type yourself if you use this.
@@ -105,12 +113,17 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
     body = JSON.stringify(options.json);
   }
 
+  const method = options.method ?? "POST";
   let response: Response;
   try {
     response = await fetch(path, {
-      method: "POST",
+      method,
       headers,
-      body,
+      // GETs MUST NOT carry a body; some browsers tolerate it but
+      // fetch() will reject with a TypeError on Safari. We let any
+      // accidental `json`/`body` option fall through to undefined
+      // for GET requests so the call site doesn't have to remember.
+      body: method === "GET" ? undefined : body,
       signal: options.signal,
     });
   } catch (exc) {

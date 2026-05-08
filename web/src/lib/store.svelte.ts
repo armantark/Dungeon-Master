@@ -11,6 +11,11 @@
 import { api, ApiError, StreamTransportError } from "./api";
 import { loadOocNotes, saveOocNotes } from "./ooc-storage";
 import { parseTurn, SLASH_HELP, type AcquireVerb } from "./slash";
+import {
+  clearStreamResume,
+  loadStreamResume,
+  saveStreamResume,
+} from "./stream-resume";
 import type { StreamHandlers, StreamResult } from "./streaming";
 import type { StreamRoute } from "./streaming-types";
 import type {
@@ -46,6 +51,13 @@ interface StreamingState {
   // deltas. We pin the deterministic outcome here so the receipt can
   // render even mid-stream without waiting for the final state.
   pendingOutcome: OracleOutcome | null;
+  // True only when this stream was reattached after a page reload
+  // (see lib/stream-resume.ts). We carry this on the streaming state
+  // rather than a separate top-level flag because the chat surface
+  // already subscribes to `streaming.*`; the resuming label rides
+  // alongside the existing provisional bubble without the feed
+  // having to learn a second source of truth.
+  resuming: boolean;
 }
 
 /**
@@ -95,6 +107,7 @@ function emptyStreamingState(): StreamingState {
     content: "",
     thinking: "",
     pendingOutcome: null,
+    resuming: false,
   };
 }
 
@@ -267,6 +280,16 @@ class GameStore {
       await this.#run((signal) => api.getState(signal));
       this.#hydrateOocNotes();
       this.libraryStatus = "ready";
+      // After the canonical state is bound we check for an in-flight
+      // request the previous page abandoned. Reattach is fire-and-
+      // forget from bootstrap's perspective: if it resolves to a
+      // final_state, the store updates as usual; if it 404s (session
+      // gone) we silently clear the descriptor and the player just
+      // sees the persisted state. We deliberately don't await this
+      // — bootstrap should land on `ready` quickly so the chat
+      // surface can render its existing log while the resumed stream
+      // tails in over top.
+      void this.#tryResumeStream();
     } catch (exc) {
       this.libraryStatus = "empty";
       this.libraryError = this.#formatError(exc);
@@ -887,6 +910,123 @@ class GameStore {
     if (next !== null) this.state = next;
   }
 
+  /**
+   * Try to reattach to a stream the previous page left behind.
+   *
+   * Called from `bootstrap` after the active save is bound. The flow:
+   *   1. Read the resume descriptor for this save (TTL- and shape-
+   *      validated by `loadStreamResume`). If absent, nothing to do.
+   *   2. Open the GET /api/requests/{request_id}/stream endpoint
+   *      through the same `#runStreaming` plumbing as a fresh turn,
+   *      flagged with `streaming.resuming: true` so the chat surface
+   *      can render a "resuming…" cue instead of the normal
+   *      "streaming…" tag. We pass `rollAware: false` because we
+   *      can't tell from the descriptor whether the original turn
+   *      had a roll, and replaying a tumble for a stream that's
+   *      already past mechanics_ready would feel wrong.
+   *   3. Any transport-level failure (404 → session unknown,
+   *      409 → wrong save bound) clears the descriptor and lets
+   *      the player carry on with their fresh state. We deliberately
+   *      don't surface a banner — the persisted state already
+   *      reflects whatever the backend committed before we lost
+   *      the connection.
+   */
+  async #tryResumeStream(): Promise<void> {
+    const descriptor = loadStreamResume(this.activeSaveId);
+    if (descriptor === null) return;
+    if (this.streaming.active || this.isLoading) return;
+
+    // Open the stream through the same runStreaming plumbing as a
+    // fresh request. The `fallback` is a no-op that returns the
+    // current state — there's nothing sensible to fall back to for a
+    // resume (the original POST already happened on the previous
+    // page), so we surface any transport failure as an error.
+    try {
+      this.streaming = {
+        ...emptyStreamingState(),
+        active: true,
+        resuming: true,
+      };
+      this.error = null;
+      this.isLoading = true;
+      this.cancelLabel = "Stop response";
+      this.#abortController = new AbortController();
+      this.#cancelRequested = false;
+
+      let observedTerminal = false;
+      const handlers: StreamHandlers = {
+        onMeta: (event) => {
+          this.streaming = {
+            ...this.streaming,
+            route: event.route,
+            requestId: event.request_id,
+          };
+        },
+        onMechanics: (event) => {
+          this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
+          this.pendingOracle = event.outcome;
+        },
+        onOracleOutcome: (event) => {
+          this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
+          this.pendingOracle = event.outcome;
+        },
+        onThinkingDelta: (event) => {
+          this.streaming = {
+            ...this.streaming,
+            thinking: this.streaming.thinking + event.text,
+          };
+        },
+        onContentDelta: (event) => {
+          this.streaming = {
+            ...this.streaming,
+            content: this.streaming.content + event.text,
+          };
+        },
+        onFinalState: (event) => {
+          this.state = event.state;
+          observedTerminal = true;
+        },
+        onError: (event) => {
+          this.error = event.message;
+          if (event.state !== null) this.state = event.state;
+          observedTerminal = true;
+        },
+      };
+
+      try {
+        await api.reattachStream(
+          descriptor.request_id,
+          handlers,
+          this.#abortController.signal,
+        );
+      } catch (exc) {
+        if (this.#isAbortError(exc)) {
+          // Bootstrap-driven resume isn't user-cancellable yet; an
+          // abort here means a remount tore us down, which is fine.
+        } else if (exc instanceof StreamTransportError && (exc.status === 404 || exc.status === 409)) {
+          // Session is gone (GC'd, wrong save) — drop the descriptor
+          // silently. The player keeps their persisted state.
+          observedTerminal = true;
+        } else {
+          // Anything else we surface as an error so the player isn't
+          // staring at a stuck "resuming…" tag forever.
+          this.error = this.#formatError(exc);
+          observedTerminal = true;
+        }
+      }
+      if (observedTerminal) {
+        clearStreamResume(this.activeSaveId);
+      }
+    } finally {
+      this.#abortController = null;
+      this.#cancelRequested = false;
+      this.cancelLabel = null;
+      this.pendingOracle = null;
+      this.isLoading = false;
+      this.streaming = emptyStreamingState();
+    }
+  }
+
   // Streaming run for endpoints that mutate GameState (turn, action,
   // regenerate, campaign/start). The flow is:
   //   1. Open the NDJSON stream. Update `streaming.*` on every event.
@@ -924,6 +1064,14 @@ class GameStore {
     const previousLength = this.state?.oracle_history.length ?? 0;
     let mechanicsArrived = false;
     let didFallback = false;
+    // Track whether the stream observed a terminal event (final_state
+    // or backend-authored error). We use this to decide whether the
+    // resume descriptor should outlive `#runStreaming`'s finally
+    // block: if the request finished cleanly (or the backend gave up
+    // with an explicit error), nothing remains to resume; if the
+    // network died mid-stream without a terminal, we keep the
+    // descriptor so the next page load can reattach.
+    let observedTerminal = false;
 
     const handlers: StreamHandlers = {
       onMeta: (event) => {
@@ -932,6 +1080,14 @@ class GameStore {
           route: event.route,
           requestId: event.request_id,
         };
+        // First moment we know the backend's request_id — write the
+        // descriptor before any deltas land so an immediate refresh
+        // still finds something to reattach to.
+        saveStreamResume(this.activeSaveId, {
+          request_id: event.request_id,
+          route: event.route,
+          started_at: new Date().toISOString(),
+        });
       },
       onMechanics: (event) => {
         this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
@@ -963,10 +1119,12 @@ class GameStore {
       },
       onFinalState: (event) => {
         this.state = event.state;
+        observedTerminal = true;
       },
       onError: (event) => {
         this.error = event.message;
         if (event.state !== null) this.state = event.state;
+        observedTerminal = true;
       },
     };
 
@@ -1029,6 +1187,20 @@ class GameStore {
         this.error = this.#formatError(exc);
       }
     } finally {
+      // The resume descriptor only outlives this turn when the
+      // network died mid-stream without a terminal event AND the
+      // user didn't explicitly cancel. In every other case the
+      // request is done — keeping the descriptor would just produce
+      // a 404 on the next bootstrap. The fallback path is treated
+      // as terminal too because the unary fetch already produced
+      // the final state, so there's nothing left to reattach to.
+      // Snapshot the cancel flag *before* we reset it below — the
+      // two writes have to read the same value in either order.
+      const cancelled = this.#cancelRequested;
+      const reachedTerminal = observedTerminal || didFallback || cancelled;
+      if (reachedTerminal) {
+        clearStreamResume(this.activeSaveId);
+      }
       this.#abortController = null;
       this.#cancelRequested = false;
       this.cancelLabel = null;

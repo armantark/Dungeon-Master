@@ -65,7 +65,7 @@ Walk through this from a clean state (delete `data/game_state.json` if you want 
 
 ## Streaming Smoke Test (combat-streaming branch)
 
-These checks exercise the NDJSON streaming transport, the provisional DM bubble, the persisted thinking pane, and the combat tracker. They assume the backend has shipped its half of the contract (`/api/turn/stream`, `/api/action/stream`, `/api/messages/{id}/regenerate/stream`, `/api/campaign/start/stream`, `/api/character/quiz/stream`, `/api/character/draft/stream`, `/api/character/draft/quizzed/stream`). If the backend hasn't shipped any given endpoint, the frontend transparently falls back to the unary version — confirm the fallback path also still works.
+These checks exercise the NDJSON streaming transport, the provisional DM bubble, the persisted thinking pane, the detach/reattach contract, and the combat tracker. They assume the backend has shipped its half of the contract (`/api/turn/stream`, `/api/action/stream`, `/api/messages/{id}/regenerate/stream`, `/api/campaign/start/stream`, `/api/character/quiz/stream`, `/api/character/draft/stream`, `/api/character/draft/quizzed/stream`, and `GET /api/requests/{request_id}/stream` for reattach). If the backend hasn't shipped any given endpoint, the frontend transparently falls back to the unary version — confirm the fallback path also still works.
 
 1. From an active campaign, send a freeform action like `I check the threshold for old wax.`. Confirm a provisional DM bubble appears immediately (no full-response wait), prose tokens stream into it letter by letter, the blinking caret tracks the latest token, and the bubble is replaced by the canonical event when the stream completes (no double-bubble flicker).
 2. While the stream is in flight, click `Stop response`. Confirm the bubble freezes wherever it was and the loading state clears. Sending another turn afterwards should work normally.
@@ -75,7 +75,14 @@ These checks exercise the NDJSON streaming transport, the provisional DM bubble,
 6. Click `Generate draft` from the review screen. Confirm the same streaming surface appears — Thinking strip + prose preview — and the final draft lands in the editor when streaming completes.
 7. Trigger combat in narrative (`I attack the marauder.`). Confirm the top StatusStrip grows a `Combat · Round 1 · DEX save to act` badge, the inspector auto-shows a default-open `Combat` drawer with the foe's HP/Armor/STR/DEX/WIL, the foe's HP bar tier shifts colors as they take damage, and the headline drops the `DEX save to act` suffix once the player is marked ready.
 8. When all foes drop to 0 HP, confirm the encounter clears: the StatusStrip combat badge disappears, and the inspector either hides the drawer entirely or shows the cleared summary.
-9. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
+9. Start a streamed turn, then refresh the page before the model finishes. Confirm:
+   - The provisional DM bubble re-appears within a beat of the bootstrap completing, with the meta tag reading `resuming…` (verdigris accent) instead of `streaming…`.
+   - Prose continues to stream into that bubble until the canonical event lands.
+   - The final committed `state.action_log` contains the finished narrative exactly once.
+   - localStorage key `dm.stream-resume.<save_id>` is cleared after the final lands. (Inspect via DevTools → Application → Local Storage.)
+   - If you start another turn, refresh, and wait more than 10 minutes before reloading, the descriptor TTL evicts itself silently and the next bootstrap behaves like a normal cold start.
+10. With the backend console visible (or logs captured), confirm each streamed turn emits one `turn.router ...` line, one `continuity.classifier ...` line, and one `llm.call ...` line per model request. The minimum useful fields are `route`, `profile`, `request_id`, token counts when available, and `duration_ms`. Set `DM_LOG_LEVEL=INFO` in `.env` if those lines are not visible.
+11. Force a streaming endpoint to 404 by stubbing it on the backend (or run an older server). Confirm the unary fallback still produces the final state — the only visible difference is no provisional bubble or live thinking strip.
 
 ## Live Model Smoke Test
 

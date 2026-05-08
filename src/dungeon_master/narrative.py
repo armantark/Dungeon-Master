@@ -33,6 +33,11 @@ from dungeon_master.config import (
     LLMConfig as NarrativeConfig,
 )
 from dungeon_master.models import GameState, OracleOutcome
+from dungeon_master.observability import (
+    LLMCallRecord,
+    log_llm_call,
+    request_id_from_cancel_token,
+)
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -104,6 +109,8 @@ class CompletionRequest:
     extra_headers: dict[str, str] | None
     response_format: dict[str, object] | None = None
     cancel_token: CancellationToken | None = None
+    trace_route: str | None = None
+    trace_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -361,6 +368,8 @@ class NarrativeEngine:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route=f"narration.{outcome.kind.value}",
+            trace_profile=f"narration.{outcome.kind.value}",
         )
 
     def _build_user_prompt(
@@ -526,6 +535,7 @@ def _completion(request: CompletionRequest) -> ModelResponse:
     # differently per provider. `drop_params=True` makes LiteLLM silently
     # drop whichever the chosen provider does not accept, instead of
     # raising `UnsupportedParamsError` and forcing us to branch by model.
+    started = time.perf_counter()
     response = litellm_completion(
         model=request.model,
         messages=request.messages,
@@ -540,6 +550,18 @@ def _completion(request: CompletionRequest) -> ModelResponse:
         extra_headers=request.extra_headers,
         response_format=request.response_format,
         drop_params=True,
+    )
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    log_llm_call(
+        LLMCallRecord(
+            route=request.trace_route,
+            profile=request.trace_profile,
+            request_id=request_id_from_cancel_token(request.cancel_token),
+            model=request.model,
+            stream=request.stream,
+            duration_ms=duration_ms,
+            response=response,
+        ),
     )
     return cast("ModelResponse", response)
 

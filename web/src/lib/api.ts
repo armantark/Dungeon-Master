@@ -356,6 +356,29 @@ export const api = {
       json: { question },
     }),
 
+  // Re-subscribe to a stream that was started by an earlier page load
+  // (typically: the player refreshed the tab while a turn was still
+  // generating). The backend's GET /api/requests/{id}/stream endpoint
+  // replays the buffered NDJSON and continues tailing live deltas, so
+  // we can drive it through the exact same `StreamHandlers` plumbing
+  // as the POST routes — the only thing we need to tell `consumeStream`
+  // is "use GET, don't send a body."
+  //
+  // The 404 / 409 cases (request unknown or belongs to a different
+  // active save) surface via `StreamTransportError` exactly like every
+  // other transport failure; the store's resume path catches those and
+  // clears the localStorage descriptor so we don't loop on a stale id.
+  reattachStream: (
+    requestId: string,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamResult<StreamEvent>> =>
+    consumeStream(
+      `${BASE}/requests/${encodeURIComponent(requestId)}/stream`,
+      handlers,
+      { signal, method: "GET" },
+    ),
+
   streamQuizzedCharacterDraft: (
     concept: string,
     answers: CharacterQuizAnswer[],

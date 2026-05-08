@@ -30,6 +30,7 @@ function resetGameStore(): void {
     content: "",
     thinking: "",
     pendingOutcome: null,
+    resuming: false,
   };
   game.notes = [];
   game.inspectorOpen = false;

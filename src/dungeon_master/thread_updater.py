@@ -152,6 +152,8 @@ class ThreadUpdater:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="thread_updater.apply",
+            trace_profile="thread_updater",
         )
 
         try:

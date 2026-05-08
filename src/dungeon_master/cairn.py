@@ -878,6 +878,8 @@ class CairnEngine:
                 extra_headers=self._openrouter_headers(),
                 response_format=None,
                 cancel_token=cancel_token,
+                trace_route="cairn.acquisition",
+                trace_profile="cairn_acquisition",
             )
             try:
                 payload = self._complete_json(request)
@@ -933,6 +935,8 @@ class CairnEngine:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="cairn.backfill",
+            trace_profile="cairn_backfill",
         )
         payload = self._complete_json(request)
         generated = GeneratedCairnBackfill.model_validate_json(extract_json_object(payload))
@@ -1187,6 +1191,8 @@ class CairnEngine:
                 extra_headers=self._openrouter_headers(),
                 response_format=None,
                 cancel_token=cancel_token,
+                trace_route="cairn.encounter_seed",
+                trace_profile="cairn_encounter_seed",
             )
             try:
                 payload = self._complete_json(request)

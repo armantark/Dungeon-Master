@@ -15,6 +15,7 @@ from dungeon_master.narrative import (
     _completion,
     complete_text,
 )
+from dungeon_master.observability import log_decision
 
 CONTINUITY_CLASSIFIER_SYSTEM_PROMPT = """You decide whether a resolved turn is worth
 running the expensive continuity updaters for.
@@ -108,7 +109,9 @@ class ContinuityClassifier:
         cancel_token: CancellationToken | None = None,
     ) -> ContinuityUpdateScope:
         if not self._config.is_usable():
-            return ContinuityUpdateScope.BOTH
+            scope = ContinuityUpdateScope.BOTH
+            self._log_scope(scope, source="no_model")
+            return scope
 
         prompt = self._build_prompt(
             state,
@@ -134,13 +137,20 @@ class ContinuityClassifier:
             extra_headers=self._openrouter_headers(),
             response_format=None,
             cancel_token=cancel_token,
+            trace_route="continuity_classifier.scope",
+            trace_profile="continuity_classifier",
         )
 
         try:
             content = self._complete_keyword(request)
-            return self._parse_scope(content)
+            scope = self._parse_scope(content)
+            self._log_scope(scope, source="model")
         except ValueError:
-            return ContinuityUpdateScope.BOTH
+            scope = ContinuityUpdateScope.BOTH
+            self._log_scope(scope, source="fallback")
+            return scope
+        else:
+            return scope
 
     def _build_prompt(
         self,
@@ -212,6 +222,13 @@ class ContinuityClassifier:
         if self._config.app_name is not None:
             headers["X-Title"] = self._config.app_name
         return headers or None
+
+    def _log_scope(self, scope: ContinuityUpdateScope, *, source: str) -> None:
+        log_decision(
+            "continuity.classifier",
+            scope=scope.value,
+            source=source,
+        )
 
 
 def _render_threads(state: GameState) -> str:
