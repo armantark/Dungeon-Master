@@ -50,6 +50,33 @@ def test_state_store_round_trips_memory_sidecar(tmp_path: Path) -> None:
     assert loaded.current_scene_key == "Abbey yard"
 
 
+def test_state_store_treats_invalid_memory_sidecar_as_missing(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    store.data_dir.mkdir(parents=True, exist_ok=True)
+    store.memory_path.write_text(
+        """
+        {
+          "turn_count": 1,
+          "recent_turn_summaries": [
+            {
+              "turn_index": 1,
+              "oracle_outcome_id": "oracle_1",
+              "scene_key": "scene_1",
+              "scene_label": "Abbey yard",
+              "scene_status": "expected",
+              "player_input": "I wait.",
+              "oracle_kind": "player_action",
+              "oracle_summary": "Narrative continuation requested."
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    assert store.load_memory_or_none() is None
+
+
 def test_turn_checkpoint_round_trips_execution_context(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
     state = sample_state()

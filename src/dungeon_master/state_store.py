@@ -4,6 +4,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from dungeon_master.memory import MemoryState
 from dungeon_master.models import GameEvent, GameState, StrictModel
 
@@ -80,7 +82,12 @@ class StateStore:
     def load_memory_or_none(self) -> MemoryState | None:
         if not self.memory_path.exists():
             return None
-        return self.load_memory()
+        try:
+            return self.load_memory()
+        except ValidationError:
+            # The memory sidecar is derived from canonical state/events. If an
+            # older schema no longer validates, callers should rebuild it.
+            return None
 
     def save_memory(self, memory: MemoryState) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

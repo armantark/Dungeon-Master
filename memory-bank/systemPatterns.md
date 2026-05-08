@@ -110,6 +110,7 @@ There is now also a separate derived-memory sidecar at `data/memory.json`. This 
 - it holds the app's compacted "GM notes" (`recent_turn_summaries`, `scene_summaries`, `thread_memory`, `npc_memory`, `location_memory`, `revealed_facts`, `open_loops`, `callback_candidates`)
 - it is written only after committed saves, so cancel/discard semantics remain intact
 - it exists to keep planner/narrator prompts bounded without replaying raw logs
+- it is disposable when malformed or stale: `StateStore.load_memory_or_none()` returns `None` for memory-sidecar validation failures so the service rebuilds it from canonical state/events/checkpoints instead of blocking play. This tolerance applies only to the derived sidecar; `game_state.json` and turn checkpoints still validate strictly.
 
 The follow-up bug-fix pass tightened two important invariants around that sidecar:
 
