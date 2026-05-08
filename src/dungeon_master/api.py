@@ -309,7 +309,7 @@ router = APIRouter(prefix="/api")
 # (or after) deltas to signal a backend-authored failure.
 
 # Lifecycle order (per the streaming-types contract):
-#   meta -> thinking_delta* -> content_delta* -> (final_state|final_payload|error)
+#   meta -> stage* -> thinking_delta* -> content_delta* -> (final_state|final_payload|error)
 
 
 def _ndjson(event: object) -> str:
@@ -342,6 +342,17 @@ def _error_event(
             "message": message,
             "code": code,
             "state": state.model_dump(mode="json") if state is not None else None,
+        },
+    )
+
+
+def _stage_event(stage_id: str, label: str, status: str) -> str:
+    return _ndjson(
+        {
+            "type": "stage",
+            "stage_id": stage_id,
+            "label": label,
+            "status": status,
         },
     )
 
@@ -389,6 +400,7 @@ def _start_game_state_stream(  # noqa: PLR0913
     return _streaming_response(session)
 
 
+<<<<<<< HEAD
 def _drive_game_state_session(
     session: StreamSession,
     service_generator: Generator[CompletionDelta, None, GameState],
@@ -399,6 +411,14 @@ def _drive_game_state_session(
     try:
         while True:
             delta = next(service_generator)
+            if delta.stage is not None:
+                session.publish(
+                    _stage_event(
+                        delta.stage.stage_id,
+                        delta.stage.label,
+                        delta.stage.status.value,
+                    ),
+                )
             if delta.thinking:
                 last_thinking += delta.thinking
                 session.publish(_ndjson({"type": "thinking_delta", "text": delta.thinking}))
@@ -477,6 +497,7 @@ def _start_setup_stream(  # noqa: PLR0913
     return _streaming_response(session)
 
 
+<<<<<<< HEAD
 def _drive_setup_payload_session(
     session: StreamSession,
     service_generator: Generator[CompletionDelta, None, object],
@@ -489,6 +510,14 @@ def _drive_setup_payload_session(
     try:
         while True:
             delta = next(service_generator)
+            if delta.stage is not None:
+                session.publish(
+                    _stage_event(
+                        delta.stage.stage_id,
+                        delta.stage.label,
+                        delta.stage.status.value,
+                    ),
+                )
             if delta.thinking:
                 session.publish(_ndjson({"type": "thinking_delta", "text": delta.thinking}))
             if delta.content:

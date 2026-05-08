@@ -50,14 +50,35 @@ from dungeon_master.narrative import (
     NarrativeConfig,
     NarrativeEngine,
     NarrativeResult,
+    StreamStageStatus,
+    StreamStageUpdate,
 )
-from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdater, NPCUpdateResult
+from dungeon_master.npc_updater import (
+    GeneratedNPCUpdateBatch,
+    LegacyNPCRosterRepairResult,
+    NPCUpdater,
+    NPCUpdateResult,
+)
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.state_store import StateStore, TurnCheckpointRecord
-from dungeon_master.thread_updater import ThreadUpdater, ThreadUpdateResult
+from dungeon_master.thread_updater import (
+    GeneratedThreadUpdateBatch,
+    ThreadUpdater,
+    ThreadUpdateResult,
+)
 from dungeon_master.turn_router import PlannedTurnOpKind, TurnPlan, TurnRouter
 
 CURRENT_NPC_ROSTER_VERSION = 2
+TURN_STREAM_STAGE_LABELS: dict[str, str] = {
+    "planning_turn": "Planning turn",
+    "resolving_mechanics": "Resolving mechanics",
+    "classifying_continuity": "Classifying continuity",
+    "updating_threads": "Updating threads",
+    "updating_npcs": "Updating NPCs",
+    "preparing_narration": "Preparing narration",
+    "streaming_narration": "Streaming narration",
+}
+TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
 
 
 @dataclass(frozen=True)
@@ -309,6 +330,25 @@ class ThreadUpdaterPort(Protocol):
     ) -> ThreadUpdateResult:
         raise NotImplementedError
 
+    def generate_thread_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        raise NotImplementedError
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedThreadUpdateBatch,
+    ) -> ThreadUpdateResult:
+        raise NotImplementedError
+
 
 class NPCUpdaterPort(Protocol):
     def update_npcs(  # noqa: PLR0913
@@ -320,6 +360,25 @@ class NPCUpdaterPort(Protocol):
         execution_context: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
+    ) -> NPCUpdateResult:
+        raise NotImplementedError
+
+    def generate_npc_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedNPCUpdateBatch | None:
+        raise NotImplementedError
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedNPCUpdateBatch,
     ) -> NPCUpdateResult:
         raise NotImplementedError
 
@@ -1129,16 +1188,19 @@ class GameService:
                 content="Repaired the latest DM response after a retry request.",
             ),
         )
+        working_memory = self._load_turn_memory_state(restored_state)
+        memory_context, _ = self._memory_context_for_narrator(
+            restored_state,
+            player_input=checkpoint.player_input,
+            outcome=outcome,
+            working_memory=working_memory,
+        )
         narration = self._generate_narrative(
             restored_state,
             outcome,
             checkpoint.player_input,
             execution_context=checkpoint.execution_context,
-            memory_context=self._memory_context_for_narrator(
-                restored_state,
-                player_input=checkpoint.player_input,
-                outcome=outcome,
-            ),
+            memory_context=memory_context,
         )
         self._record_event(
             restored_state,
@@ -1168,6 +1230,9 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
+        yield from self._iter_turn_stage_bootstrap(
+            skipped_stage_ids={"planning_turn", "resolving_mechanics"},
+        )
         state = self.load_state(cancel_token=cancel_token)
         self._ensure_active(state)
         outcome = OracleOutcome(
@@ -1198,7 +1263,10 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
+        yield from self._iter_turn_stage_bootstrap()
+        yield self._stage_delta("planning_turn", StreamStageStatus.ACTIVE)
         plan, state = self._plan_turn_and_load_state(text, cancel_token=cancel_token)
+        yield self._stage_delta("planning_turn", StreamStageStatus.DONE)
         self._ensure_active(state)
         queued_events: list[GameEvent] = []
         self._queue_event(
@@ -1207,7 +1275,9 @@ class GameService:
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
         self._raise_if_cancelled(cancel_token)
+        yield self._stage_delta("resolving_mechanics", StreamStageStatus.ACTIVE)
         executed = self._execute_turn_plan(state, plan, cancel_token=cancel_token)
+        yield self._stage_delta("resolving_mechanics", StreamStageStatus.DONE)
         return (yield from self._stream_oracle_turn(
             state=state,
             player_input=text,
@@ -1224,6 +1294,15 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
+        yield from self._iter_turn_stage_bootstrap(
+            skipped_stage_ids={
+                "planning_turn",
+                "resolving_mechanics",
+                "classifying_continuity",
+                "updating_threads",
+                "updating_npcs",
+            },
+        )
         state = self.load_state(cancel_token=cancel_token)
         self._ensure_active(state)
         latest_narrative = next(
@@ -1274,18 +1353,25 @@ class GameService:
             ),
         )
         self._raise_if_cancelled(cancel_token)
+        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
+        working_memory = self._load_turn_memory_state(restored_state)
+        memory_context, _ = self._memory_context_for_narrator(
+            restored_state,
+            player_input=checkpoint.player_input,
+            outcome=outcome,
+            working_memory=working_memory,
+        )
+        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE)
         narration = yield from self._iter_stream_narrative(
             restored_state,
             outcome,
             checkpoint.player_input,
             execution_context=checkpoint.execution_context,
-            memory_context=self._memory_context_for_narrator(
-                restored_state,
-                player_input=checkpoint.player_input,
-                outcome=outcome,
-            ),
+            memory_context=memory_context,
             cancel_token=cancel_token,
         )
+        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
         self._queue_event(
             restored_state,
             queued_events,
@@ -1486,7 +1572,8 @@ class GameService:
         execution_context: str | None = None,
     ) -> None:
         state.oracle_history.append(outcome)
-        self._apply_continuity_updates_for_turn(
+        working_memory = self._load_turn_memory_state(state)
+        working_memory = self._apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
             outcome=outcome,
@@ -1510,10 +1597,11 @@ class GameService:
             execution_context=execution_context,
             state=state,
         )
-        memory_context = self._memory_context_for_narrator(
+        memory_context, _ = self._memory_context_for_narrator(
             state,
             player_input=player_input,
             outcome=outcome,
+            working_memory=working_memory,
         )
         narration = self._generate_narrative(
             state,
@@ -1562,12 +1650,14 @@ class GameService:
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
         state.oracle_history.append(outcome)
-        self._apply_continuity_updates_for_turn(
+        working_memory = self._load_turn_memory_state(state)
+        working_memory = yield from self._iter_apply_continuity_updates_for_turn(
             state,
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
             cancel_token=cancel_token,
+            working_memory=working_memory,
         )
         terminal_event = self._auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
@@ -1589,11 +1679,15 @@ class GameService:
             state=state.model_copy(deep=True),
         )
         self._raise_if_cancelled(cancel_token)
-        memory_context = self._memory_context_for_narrator(
+        yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE)
+        memory_context, _ = self._memory_context_for_narrator(
             state,
             player_input=player_input,
             outcome=outcome,
+            working_memory=working_memory,
         )
+        yield self._stage_delta("preparing_narration", StreamStageStatus.DONE)
+        yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE)
         narration = yield from self._iter_stream_narrative(
             state,
             outcome,
@@ -1602,6 +1696,7 @@ class GameService:
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
+        yield self._stage_delta("streaming_narration", StreamStageStatus.DONE)
         self._queue_event(
             state,
             queued_events,
@@ -1930,15 +2025,16 @@ class GameService:
         *,
         player_input: str,
         outcome: OracleOutcome,
-    ) -> str | None:
-        existing_memory = self._store.load_memory_or_none()
+        working_memory: MemoryState | None = None,
+    ) -> tuple[str | None, MemoryState]:
+        memory = self._memory_for_state(state, existing_memory=working_memory)
         context = self._memory.retrieve_for_narrator(
             state,
-            self._memory_for_state(state, existing_memory=existing_memory),
+            memory,
             player_input,
             outcome,
         ).render()
-        return context or None
+        return (context or None), memory
 
     def _memory_context_for_thread_updater(
         self,
@@ -1946,15 +2042,16 @@ class GameService:
         *,
         player_input: str,
         outcome: OracleOutcome,
-    ) -> str | None:
-        existing_memory = self._store.load_memory_or_none()
+        working_memory: MemoryState | None = None,
+    ) -> tuple[str | None, MemoryState]:
+        memory = self._memory_for_state(state, existing_memory=working_memory)
         context = self._memory.retrieve_for_thread_updater(
             state,
-            self._memory_for_state(state, existing_memory=existing_memory),
+            memory,
             player_input,
             outcome,
         ).render()
-        return context or None
+        return (context or None), memory
 
     def _memory_context_for_npc_updater(
         self,
@@ -1962,17 +2059,24 @@ class GameService:
         *,
         player_input: str,
         outcome: OracleOutcome,
-    ) -> str | None:
-        existing_memory = self._store.load_memory_or_none()
+        working_memory: MemoryState | None = None,
+    ) -> tuple[str | None, MemoryState]:
+        memory = self._memory_for_state(state, existing_memory=working_memory)
         context = self._memory.retrieve_for_npc_updater(
             state,
-            self._memory_for_state(state, existing_memory=existing_memory),
+            memory,
             player_input,
             outcome,
         ).render()
-        return context or None
+        return (context or None), memory
 
-    def _apply_continuity_updates_for_turn(
+    def _load_turn_memory_state(self, state: GameState) -> MemoryState:
+        return self._memory_for_state(
+            state,
+            existing_memory=self._store.load_memory_or_none(),
+        )
+
+    def _apply_continuity_updates_for_turn(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -1980,7 +2084,8 @@ class GameService:
         outcome: OracleOutcome,
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
-    ) -> None:
+        working_memory: MemoryState | None = None,
+    ) -> MemoryState:
         scope = self._continuity_classifier.classify_update_scope(
             state,
             player_input=player_input,
@@ -1988,29 +2093,83 @@ class GameService:
             execution_context=execution_context,
             cancel_token=cancel_token,
         )
+        memory = self._memory_for_state(state, existing_memory=working_memory)
         touched_thread_ids: tuple[str, ...] = ()
-        if scope.updates_threads():
-            touched_thread_ids = self._run_thread_updates_for_turn(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-                execution_context=execution_context,
-                cancel_token=cancel_token,
-            )
-        self._apply_thread_references(outcome, touched_thread_ids)
-
         touched_npc_ids: tuple[str, ...] = ()
-        if scope.updates_npcs():
-            touched_npc_ids = self._run_npc_updates_for_turn(
+        if scope == ContinuityUpdateScope.BOTH:
+            thread_context, memory = self._memory_context_for_thread_updater(
                 state,
                 player_input=player_input,
                 outcome=outcome,
-                execution_context=execution_context,
-                cancel_token=cancel_token,
+                working_memory=memory,
             )
+            npc_context, _ = self._memory_context_for_npc_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                thread_future = executor.submit(
+                    self._generate_thread_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=thread_context,
+                    cancel_token=cancel_token,
+                )
+                npc_future = executor.submit(
+                    self._generate_npc_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=npc_context,
+                    cancel_token=cancel_token,
+                )
+                thread_generated = thread_future.result()
+                npc_generated = npc_future.result()
+            touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
+            touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
+        else:
+            if scope.updates_threads():
+                thread_context, memory = self._memory_context_for_thread_updater(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    working_memory=memory,
+                )
+                touched_thread_ids = self._run_thread_updates_for_turn(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=thread_context,
+                    cancel_token=cancel_token,
+                )
+                memory = self._memory_for_state(state, existing_memory=memory)
+            if scope.updates_npcs():
+                npc_context, memory = self._memory_context_for_npc_updater(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    working_memory=memory,
+                )
+                touched_npc_ids = self._run_npc_updates_for_turn(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=npc_context,
+                    cancel_token=cancel_token,
+                )
+                memory = self._memory_for_state(state, existing_memory=memory)
+        self._apply_thread_references(outcome, touched_thread_ids)
         self._apply_npc_references(state, outcome, touched_npc_ids)
+        return self._memory_for_state(state, existing_memory=memory)
 
-    def _run_thread_updates_for_turn(
+    def _iter_apply_continuity_updates_for_turn(  # noqa: PLR0913
         self,
         state: GameState,
         *,
@@ -2018,20 +2177,153 @@ class GameService:
         outcome: OracleOutcome,
         execution_context: str | None = None,
         cancel_token: CancellationToken | None = None,
+        working_memory: MemoryState | None = None,
+    ) -> Generator[CompletionDelta, None, MemoryState]:
+        memory = self._memory_for_state(state, existing_memory=working_memory)
+        yield self._stage_delta("classifying_continuity", StreamStageStatus.ACTIVE)
+        scope = self._continuity_classifier.classify_update_scope(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            cancel_token=cancel_token,
+        )
+        yield self._stage_delta("classifying_continuity", StreamStageStatus.DONE)
+        touched_thread_ids: tuple[str, ...] = ()
+        touched_npc_ids: tuple[str, ...] = ()
+        if scope == ContinuityUpdateScope.BOTH:
+            thread_context, memory = self._memory_context_for_thread_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            npc_context, _ = self._memory_context_for_npc_updater(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                working_memory=memory,
+            )
+            yield self._stage_delta("updating_threads", StreamStageStatus.ACTIVE)
+            yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                thread_future = executor.submit(
+                    self._generate_thread_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=thread_context,
+                    cancel_token=cancel_token,
+                )
+                npc_future = executor.submit(
+                    self._generate_npc_updates_for_turn,
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=npc_context,
+                    cancel_token=cancel_token,
+                )
+                thread_generated = thread_future.result()
+                npc_generated = npc_future.result()
+            touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
+            yield self._stage_delta("updating_threads", StreamStageStatus.DONE)
+            touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
+            yield self._stage_delta("updating_npcs", StreamStageStatus.DONE)
+        else:
+            if scope.updates_threads():
+                thread_context, memory = self._memory_context_for_thread_updater(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    working_memory=memory,
+                )
+                yield self._stage_delta("updating_threads", StreamStageStatus.ACTIVE)
+                touched_thread_ids = self._run_thread_updates_for_turn(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=thread_context,
+                    cancel_token=cancel_token,
+                )
+                yield self._stage_delta("updating_threads", StreamStageStatus.DONE)
+                memory = self._memory_for_state(state, existing_memory=memory)
+            else:
+                yield self._stage_delta("updating_threads", StreamStageStatus.SKIPPED)
+            if scope.updates_npcs():
+                npc_context, memory = self._memory_context_for_npc_updater(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    working_memory=memory,
+                )
+                yield self._stage_delta("updating_npcs", StreamStageStatus.ACTIVE)
+                touched_npc_ids = self._run_npc_updates_for_turn(
+                    state,
+                    player_input=player_input,
+                    outcome=outcome,
+                    execution_context=execution_context,
+                    memory_context=npc_context,
+                    cancel_token=cancel_token,
+                )
+                yield self._stage_delta("updating_npcs", StreamStageStatus.DONE)
+                memory = self._memory_for_state(state, existing_memory=memory)
+            else:
+                yield self._stage_delta("updating_npcs", StreamStageStatus.SKIPPED)
+        self._apply_thread_references(outcome, touched_thread_ids)
+        self._apply_npc_references(state, outcome, touched_npc_ids)
+        return self._memory_for_state(state, existing_memory=memory)
+
+    def _run_thread_updates_for_turn(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
     ) -> tuple[str, ...]:
         thread_result = self._thread_updater.update_threads(
             state,
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
-            memory_context=self._memory_context_for_thread_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-            ),
+            memory_context=memory_context,
             cancel_token=cancel_token,
         )
         return thread_result.touched_thread_ids
+
+    def _generate_thread_updates_for_turn(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        return self._thread_updater.generate_thread_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+
+    def _apply_generated_thread_updates(
+        self,
+        state: GameState,
+        generated: GeneratedThreadUpdateBatch | None,
+    ) -> tuple[str, ...]:
+        if generated is None:
+            return ()
+        result = self._thread_updater.apply_generated_updates(state, generated)
+        return result.touched_thread_ids
 
     def _apply_thread_references(
         self,
@@ -2042,13 +2334,14 @@ class GameService:
         outcome.referenced_thread_ids = merged
         outcome.referenced_thread_id = merged[0] if merged else None
 
-    def _run_npc_updates_for_turn(
+    def _run_npc_updates_for_turn(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> tuple[str, ...]:
         npc_result = self._npc_updater.update_npcs(
@@ -2056,14 +2349,39 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
-            memory_context=self._memory_context_for_npc_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-            ),
+            memory_context=memory_context,
             cancel_token=cancel_token,
         )
         return npc_result.touched_npc_ids
+
+    def _generate_npc_updates_for_turn(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedNPCUpdateBatch | None:
+        return self._npc_updater.generate_npc_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+
+    def _apply_generated_npc_updates(
+        self,
+        state: GameState,
+        generated: GeneratedNPCUpdateBatch | None,
+    ) -> tuple[str, ...]:
+        if generated is None:
+            return ()
+        result = self._npc_updater.apply_generated_updates(state, generated)
+        return result.touched_npc_ids
 
     def _apply_npc_references(
         self,
@@ -2261,6 +2579,33 @@ class GameService:
                 ),
             )
         return turns
+
+    def _iter_turn_stage_bootstrap(
+        self,
+        *,
+        skipped_stage_ids: set[str] | None = None,
+    ) -> Generator[CompletionDelta, None, None]:
+        skipped = skipped_stage_ids or set()
+        for stage_id in TURN_STREAM_STAGE_ORDER:
+            status = (
+                StreamStageStatus.SKIPPED
+                if stage_id in skipped
+                else StreamStageStatus.PENDING
+            )
+            yield self._stage_delta(stage_id, status)
+
+    def _stage_delta(
+        self,
+        stage_id: str,
+        status: StreamStageStatus,
+    ) -> CompletionDelta:
+        return CompletionDelta(
+            stage=StreamStageUpdate(
+                stage_id=stage_id,
+                label=TURN_STREAM_STAGE_LABELS[stage_id],
+                status=status,
+            ),
+        )
 
     def _raise_if_cancelled(self, cancel_token: CancellationToken | None) -> None:
         if cancel_token is not None:

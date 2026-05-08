@@ -124,8 +124,30 @@ class ThreadUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
-        if not self._config.is_usable():
+        generated = self.generate_thread_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if generated is None:
             return ThreadUpdateResult()
+        return self.apply_generated_updates(state, generated)
+
+    def generate_thread_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        if not self._config.is_usable():
+            return None
 
         prompt = self._build_prompt(
             state,
@@ -158,9 +180,15 @@ class ThreadUpdater:
 
         try:
             payload = self._complete_json(request)
-            generated = GeneratedThreadUpdateBatch.model_validate_json(extract_json_object(payload))
+            return GeneratedThreadUpdateBatch.model_validate_json(extract_json_object(payload))
         except ValueError:
-            return ThreadUpdateResult()
+            return None
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedThreadUpdateBatch,
+    ) -> ThreadUpdateResult:
         return self._apply_generated_updates(state, generated)
 
     def _build_prompt(

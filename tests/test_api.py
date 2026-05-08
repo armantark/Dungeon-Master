@@ -67,12 +67,16 @@ from dungeon_master.narrative import (
     NarrativeConfig,
     NarrativeResult,
 )
-from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdateResult
+from dungeon_master.npc_updater import (
+    GeneratedNPCUpdateBatch,
+    LegacyNPCRosterRepairResult,
+    NPCUpdateResult,
+)
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.save_library import SaveLibrary
 from dungeon_master.service import GameService
 from dungeon_master.state_store import StateStore
-from dungeon_master.thread_updater import ThreadUpdateResult
+from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
 from dungeon_master.turn_router import (
     PlannedTurnOp,
     PlannedTurnOpKind,
@@ -712,10 +716,41 @@ class FakeThreadUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
-        del player_input, execution_context, memory_context, cancel_token
+        generated = self.generate_thread_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if generated is None:
+            return ThreadUpdateResult()
+        return self.apply_generated_updates(state, generated)
+
+    def generate_thread_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedThreadUpdateBatch | None:
+        del state, player_input, outcome, execution_context, memory_context, cancel_token
+        return GeneratedThreadUpdateBatch()
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedThreadUpdateBatch,
+    ) -> ThreadUpdateResult:
+        del generated
+        latest_outcome = state.oracle_history[-1]
         if self._mutate is None:
             return ThreadUpdateResult()
-        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, outcome))
+        return ThreadUpdateResult(touched_thread_ids=self._mutate(state, latest_outcome))
 
 
 class FakeNpcUpdater:
@@ -737,10 +772,41 @@ class FakeNpcUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NPCUpdateResult:
-        del player_input, execution_context, memory_context, cancel_token
+        generated = self.generate_npc_updates(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if generated is None:
+            return NPCUpdateResult()
+        return self.apply_generated_updates(state, generated)
+
+    def generate_npc_updates(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> GeneratedNPCUpdateBatch | None:
+        del state, player_input, outcome, execution_context, memory_context, cancel_token
+        return GeneratedNPCUpdateBatch()
+
+    def apply_generated_updates(
+        self,
+        state: GameState,
+        generated: GeneratedNPCUpdateBatch,
+    ) -> NPCUpdateResult:
+        del generated
+        latest_outcome = state.oracle_history[-1]
         if self._mutate is None:
             return NPCUpdateResult()
-        return NPCUpdateResult(touched_npc_ids=self._mutate(state, outcome))
+        return NPCUpdateResult(touched_npc_ids=self._mutate(state, latest_outcome))
 
     def reseed_legacy_roster(
         self,
@@ -1373,9 +1439,22 @@ def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     parsed = [json.loads(line) for line in lines]
     types = [event["type"] for event in parsed]
     assert types[0] == "meta"
+    assert "stage" in types
     assert "thinking_delta" in types
     assert "content_delta" in types
     assert types[-1] == "final_state"
+    stages = [event for event in parsed if event["type"] == "stage"]
+    stage_statuses = {(event["stage_id"], event["status"]) for event in stages}
+    assert ("planning_turn", "active") in stage_statuses
+    assert ("planning_turn", "done") in stage_statuses
+    assert ("resolving_mechanics", "active") in stage_statuses
+    assert ("resolving_mechanics", "done") in stage_statuses
+    assert ("classifying_continuity", "active") in stage_statuses
+    assert ("classifying_continuity", "done") in stage_statuses
+    assert ("preparing_narration", "active") in stage_statuses
+    assert ("preparing_narration", "done") in stage_statuses
+    assert ("streaming_narration", "active") in stage_statuses
+    assert ("streaming_narration", "done") in stage_statuses
     final = parsed[-1]
     assert final["state"]["action_log"][-1]["title"] == "Narrative response"
     assert final["thinking"] == "Thought about attack."

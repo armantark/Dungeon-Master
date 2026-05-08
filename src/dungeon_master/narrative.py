@@ -5,6 +5,7 @@ import re
 import time
 from collections.abc import Generator, Iterable, Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, cast
 
 from litellm import completion as litellm_completion
@@ -113,10 +114,25 @@ class CompletionRequest:
     trace_profile: str | None = None
 
 
+class StreamStageStatus(StrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class StreamStageUpdate:
+    stage_id: str
+    label: str
+    status: StreamStageStatus
+
+
 @dataclass(frozen=True)
 class CompletionDelta:
     content: str = ""
     thinking: str = ""
+    stage: StreamStageUpdate | None = None
 
 
 @dataclass(frozen=True)
