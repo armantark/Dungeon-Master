@@ -57,6 +57,10 @@ export interface StageProgress {
   label: string;
   status: StreamStageStatus;
   order: number;
+  /** `performance.now()` when the stage first became `active`. */
+  startedAt: number | null;
+  /** `performance.now()` when the stage became `done` or `skipped`. */
+  completedAt: number | null;
 }
 
 interface StreamingState {
@@ -152,6 +156,7 @@ function applyStageEvent(
   stages: readonly StageProgress[],
   stage: { stage_id: string; label: string; status: StreamStageStatus },
 ): StageProgress[] {
+  const now = performance.now();
   const idx = stages.findIndex((s) => s.stageId === stage.stage_id);
   if (idx === -1) {
     return [
@@ -161,6 +166,9 @@ function applyStageEvent(
         label: stage.label,
         status: stage.status,
         order: stages.length,
+        startedAt: stage.status === "active" ? now : null,
+        completedAt:
+          stage.status === "done" || stage.status === "skipped" ? now : null,
       },
     ];
   }
@@ -168,12 +176,17 @@ function applyStageEvent(
   const existing = next[idx]!;
   next[idx] = {
     stageId: existing.stageId,
-    // The label may legitimately update mid-stream if the backend
-    // refines a stage's display string between bootstrap and active;
-    // taking the latest keeps us from pinning a stale string.
     label: stage.label,
     status: stage.status,
     order: existing.order,
+    startedAt:
+      stage.status === "active" && existing.startedAt === null
+        ? now
+        : existing.startedAt,
+    completedAt:
+      stage.status === "done" || stage.status === "skipped"
+        ? now
+        : existing.completedAt,
   };
   return next;
 }

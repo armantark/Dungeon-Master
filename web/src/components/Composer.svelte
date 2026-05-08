@@ -207,9 +207,11 @@ authored without dismissing the menu first.
       {placeholder}
       rows="2"
       spellcheck="false"
+      readonly={game.isLoading}
       aria-label="Player command"
       aria-autocomplete="list"
       aria-controls={showSuggestions ? "composer-slash-menu" : undefined}
+      class:frozen={game.isLoading}
     ></textarea>
 
     {#if showSuggestions}
@@ -328,6 +330,11 @@ authored without dismissing the menu first.
   }
   textarea:focus {
     border-color: var(--gold-bright);
+  }
+  textarea.frozen {
+    opacity: 0.55;
+    cursor: not-allowed;
+    border-color: color-mix(in oklab, var(--gold-tarnished) 20%, transparent);
   }
 
   /*

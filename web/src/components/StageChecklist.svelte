@@ -32,10 +32,6 @@ Design intent:
 
   type Props = {
     stages: readonly StageProgress[];
-    // When true (the in-flight chat case) the strip uses a bordered
-    // panel that stands out from the parchment. When false (e.g.
-    // embedded in a setup loading panel that already provides its
-    // own framing) we render flush so we don't double up borders.
     framed?: boolean;
   };
   const { stages, framed = true }: Props = $props();
@@ -43,6 +39,47 @@ Design intent:
   const sorted = $derived(
     stages.slice().sort((a, b) => a.order - b.order),
   );
+
+  // Live tick counter drives reactive re-reads of `performance.now()`
+  // for active stages without forcing a per-stage interval.
+  let tick = $state(0);
+  const hasActive = $derived(sorted.some((s) => s.status === "active"));
+
+  $effect(() => {
+    if (!hasActive) return;
+    const id = setInterval(() => { tick++; }, 100);
+    return () => clearInterval(id);
+  });
+
+  function formatMs(ms: number): string {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  function stageDuration(s: StageProgress): string | null {
+    // Force dependency on `tick` so Svelte re-evaluates while active.
+    void tick;
+    if (s.startedAt === null) return null;
+    if (s.completedAt !== null) return formatMs(s.completedAt - s.startedAt);
+    return formatMs(performance.now() - s.startedAt);
+  }
+
+  const allDone = $derived(
+    sorted.length > 0 &&
+    sorted.every((s) => s.status === "done" || s.status === "skipped"),
+  );
+
+  const totalDuration = $derived.by(() => {
+    if (!allDone) return null;
+    const starts = sorted
+      .map((s) => s.startedAt)
+      .filter((t): t is number => t !== null);
+    const ends = sorted
+      .map((s) => s.completedAt)
+      .filter((t): t is number => t !== null);
+    if (starts.length === 0 || ends.length === 0) return null;
+    return formatMs(Math.max(...ends) - Math.min(...starts));
+  });
 </script>
 
 {#if sorted.length > 0}
@@ -61,11 +98,24 @@ Design intent:
           {/if}
         </span>
         <span class="label">{stage.label}</span>
-        <span class="status pixel">
-          {#if stage.status === "active"}…{:else if stage.status === "done"}done{:else if stage.status === "skipped"}skipped{:else}pending{/if}
+        <span class="status-group">
+          <span class="status pixel">
+            {#if stage.status === "active"}…{:else if stage.status === "done"}done{:else if stage.status === "skipped"}skipped{:else}pending{/if}
+          </span>
+          {#if stageDuration(stage)}
+            <span class="timing pixel" class:live={stage.status === "active"}>
+              {stageDuration(stage)}
+            </span>
+          {/if}
         </span>
       </li>
     {/each}
+    {#if totalDuration}
+      <li class="total-row">
+        <span class="total-label pixel">Total</span>
+        <span class="total-value pixel">{totalDuration}</span>
+      </li>
+    {/if}
   </ul>
 {/if}
 
@@ -99,6 +149,49 @@ Design intent:
     align-items: center;
     gap: 0.5rem;
     line-height: 1.4;
+  }
+  .status-group {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    justify-content: flex-end;
+  }
+  .timing {
+    font-size: 0.6rem;
+    color: color-mix(in oklab, var(--gold-tarnished) 70%, transparent);
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    min-width: 2.8em;
+    text-align: right;
+  }
+  .timing.live {
+    color: var(--gold-bright);
+  }
+  .row--done .timing {
+    color: color-mix(in oklab, var(--gold-tarnished) 55%, transparent);
+  }
+  .row--skipped .timing {
+    color: color-mix(in oklab, var(--paper-shadow) 45%, transparent);
+  }
+  .total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 0.25rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
+  }
+  .total-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color-mix(in oklab, var(--paper-shadow) 80%, transparent);
+  }
+  .total-value {
+    font-size: 0.65rem;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    color: var(--gold-tarnished);
   }
   .glyph {
     display: inline-flex;
