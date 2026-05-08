@@ -151,3 +151,30 @@ def test_thread_updater_skips_invalid_targets_and_duplicate_creates() -> None:
 
     assert len(state.threads) == 3
     assert result.touched_thread_ids == (state.threads[0].id,)
+
+
+def test_thread_updater_prompt_includes_final_narration_when_supplied() -> None:
+    completion = RecordingThreadCompletion('{"ops":[]}')
+    updater = ThreadUpdater(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None, max_retries=0),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+
+    generated = updater.generate_thread_updates(
+        state,
+        player_input="I ask the patriarch for his forgotten name.",
+        outcome=outcome,
+        narrative_text="The old relief names him Saint Vyr, whose oath still binds the pass.",
+    )
+
+    assert generated is not None
+    assert completion.messages is not None
+    user_prompt = completion.messages[1]["content"]
+    assert "Final narration response" in user_prompt
+    assert "Saint Vyr" in user_prompt

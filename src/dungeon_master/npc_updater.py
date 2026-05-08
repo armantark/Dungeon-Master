@@ -49,9 +49,16 @@ Hard rules:
 - Retire an NPC only when the supplied outcome + executed steps make them leave
   the active cast, become irrelevant to the current recurring roster, or die in
   a way that should stop them appearing as an active NPC.
+- If a final narration response is supplied, treat it as player-visible canon.
+  Only extract durable NPC changes that the narration explicitly establishes.
+- Never treat mood, fleeting gestures, unanswered prayers, or decorative prose
+  alone as grounds to create/update/retire a recurring NPC.
+- Never let narration-only extraction contradict the resolved oracle outcome or
+  executed backend steps.
 - Never delete NPCs.
 - Never invent new facts beyond the supplied player input, oracle outcome,
-  executed backend steps, current NPC list, and memory context.
+  final narration response, executed backend steps, current NPC list, and
+  memory context.
 - For update/retire, use an exact supplied npc_id from the current NPC list.
 - Keep NPC names stable and concise; do not overwrite a name unless the new
   supplied name is clearly the same person or a better canonical rendering.
@@ -93,6 +100,9 @@ Resolved oracle outcome:
 
 Executed backend steps (may be empty):
 <<EXECUTION_CONTEXT>>
+
+Final narration response (may be empty for pre-narration continuity):
+<<NARRATIVE_TEXT>>
 
 Current canonical NPCs:
 <<NPCS_JSON>>
@@ -243,6 +253,7 @@ class NPCUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NPCUpdateResult:
@@ -251,6 +262,7 @@ class NPCUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -265,6 +277,7 @@ class NPCUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedNPCUpdateBatch | None:
@@ -276,6 +289,7 @@ class NPCUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
         )
         update_profile = self._config.profiles.npc_updater
@@ -355,13 +369,14 @@ class NPCUpdater:
         except ValueError:
             return self._fallback_legacy_roster(state)
 
-    def _build_prompt(
+    def _build_prompt(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None,
+        narrative_text: str | None,
         memory_context: str | None,
     ) -> str:
         introduced_ids = {npc.id for npc in state.npcs}
@@ -388,6 +403,7 @@ class NPCUpdater:
             .replace("<<OUTCOME_KIND>>", outcome.kind.value)
             .replace("<<OUTCOME_SUMMARY>>", outcome.summary)
             .replace("<<EXECUTION_CONTEXT>>", execution_context or "(none)")
+            .replace("<<NARRATIVE_TEXT>>", (narrative_text or "").strip() or "(none)")
             .replace("<<NPCS_JSON>>", npcs_json)
             .replace("<<MEMORY_CONTEXT>>", memory_context or "(none)")
         )

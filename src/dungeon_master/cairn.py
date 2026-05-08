@@ -13,6 +13,10 @@ from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
+    CairnConditionKey,
+    CairnItemEffectKind,
+    CairnItemPower,
+    CairnItemPowerKind,
     CairnItemState,
     CairnItemTag,
     CairnMechanicsSource,
@@ -91,6 +95,9 @@ Rules philosophy:
   not symbolic transcripts of the backstory.
 - Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
   uses, equipped state.
+- If an item is a spellbook, scroll, relic, or holy relic, include a bounded
+  `power` object. Keep powers item-bound, limited, and costly when appropriate;
+  do not invent generic blessing/buff states.
 
 Mechanical constraints:
 - `str_score`, `dex_score`, `wil_score` are each 3-18.
@@ -128,12 +135,28 @@ CAIRN_BACKFILL_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "weapon_damage_die": 6,
       "armor_bonus": 0,
       "uses": null,
-      "equipped": true
+      "equipped": true,
+      "power": {
+        "kind": "none",
+        "name": "",
+        "summary": "",
+        "effect": "none",
+        "effect_amount": 1,
+        "effect_ability": null,
+        "clears_condition": null,
+        "recharge_condition": "",
+        "requires_wil_save_in_danger": false,
+        "adds_fatigue": false,
+        "consumed_on_use": false
+      }
     }
   ]
 }
 
 Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
+Allowed power kinds: none, spellbook, scroll, relic, holy_relic
+Allowed effects: none, restore_hp, restore_attribute, clear_condition, enhance_attack, impair_target, force_save, reveal_sign, create_safe_passage, ward_or_pacify, extraordinary_aid, resurrect
+Allowed clear conditions: deprived, critically_wounded, doomed, paralyzed, delirious
 
 The authored character is:
 <<CHARACTER_JSON>>
@@ -229,6 +252,9 @@ Rules:
   field.
 - Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
   uses, equipped state.
+- If the acquired item is a spellbook, scroll, relic, or holy relic, include a
+  bounded `power` object. Relics do not add Fatigue by default; spellbooks do;
+  scrolls are consumed; holy relics should stay subtle and item-bound.
 - `equipped` should usually be false unless the text clearly says the player
   immediately readies, dons, or straps on the item.
 - Preserve the player's meaning; do not rewrite a humble find into treasure.
@@ -245,12 +271,28 @@ CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "weapon_damage_die": null,
       "armor_bonus": 0,
       "uses": null,
-      "equipped": false
+      "equipped": false,
+      "power": {
+        "kind": "none",
+        "name": "",
+        "summary": "",
+        "effect": "none",
+        "effect_amount": 1,
+        "effect_ability": null,
+        "clears_condition": null,
+        "recharge_condition": "",
+        "requires_wil_save_in_danger": false,
+        "adds_fatigue": false,
+        "consumed_on_use": false
+      }
     }
   ]
 }
 
 Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
+Allowed power kinds: none, spellbook, scroll, relic, holy_relic
+Allowed effects: none, restore_hp, restore_attribute, clear_condition, enhance_attack, impair_target, force_save, reveal_sign, create_safe_passage, ward_or_pacify, extraordinary_aid, resurrect
+Allowed clear conditions: deprived, critically_wounded, doomed, paralyzed, delirious
 
 Acquisition text:
 <<ACQUISITION>>
@@ -278,6 +320,7 @@ class GeneratedCairnItemProfile(StrictModel):
     armor_bonus: int = Field(default=0, ge=0, le=3)
     uses: int | None = Field(default=None, ge=1)
     equipped: bool = False
+    power: CairnItemPower = Field(default_factory=CairnItemPower)
 
 
 class GeneratedCairnBackfill(StrictModel):
@@ -345,6 +388,30 @@ class HarmApplication:
     str_before: int
     str_after: int
     scar_result: str | None
+
+
+@dataclass(frozen=True)
+class ItemUseResolution:
+    summary: str
+    effect_summary: str
+    rolls: list[Roll]
+    uses_before: int | None
+    uses_after: int | None
+    item_removed: bool
+    hp_before: int
+    hp_after: int
+    str_before: int
+    str_after: int
+    dex_before: int
+    dex_after: int
+    wil_before: int
+    wil_after: int
+    fatigue_before: int
+    fatigue_after: int
+    attack_stance: AttackStance | None = None
+    target_name: str | None = None
+    wil_save_target: int | None = None
+    wil_save_success: bool | None = None
 
 
 class CairnEngine:
@@ -803,31 +870,323 @@ class CairnEngine:
         target.cairn.equipped = equipped
         self._recompute_derived(state.character)
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
+    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
         self._require_ready(state)
         target = self._find_item(state.character, item_id)
         if target is None:
             message = f"Unknown inventory item: {item_id}"
             raise ValueError(message)
 
-        if CairnItemTag.LIGHT in target.cairn.tags:
-            target.cairn.equipped = True
-
-        if target.cairn.uses is None:
-            self._recompute_derived(state.character)
-            return f"Used {target.name}: {intent}. No limited uses were consumed."
-
-        remaining = target.cairn.uses - 1
-        if remaining <= 0:
-            state.character.inventory = [
-                item for item in state.character.inventory if item.id != item_id
-            ]
-            self._recompute_derived(state.character)
-            return f"Used {target.name}: final use spent, item exhausted and removed."
-
-        target.cairn.uses = remaining
+        resolution = self._resolve_item_use(state, target, intent=intent)
         self._recompute_derived(state.character)
-        return f"Used {target.name}: {remaining} use{'s' if remaining != 1 else ''} remain."
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=resolution.summary,
+            rolls=resolution.rolls,
+            question=intent,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                item_id=item_id,
+                item_name=target.name,
+                item_power_kind=target.cairn.power.kind,
+                item_effect_kind=target.cairn.power.effect,
+                effect_summary=resolution.effect_summary,
+                uses_before=resolution.uses_before,
+                uses_after=resolution.uses_after,
+                recharge_condition=target.cairn.power.recharge_condition or None,
+                ability=CairnAbility.WIL if resolution.wil_save_target is not None else None,
+                target=resolution.wil_save_target,
+                success=resolution.wil_save_success,
+                attack_stance=resolution.attack_stance,
+                target_name=resolution.target_name,
+                hp_before=resolution.hp_before,
+                hp_after=resolution.hp_after,
+                str_before=resolution.str_before,
+                str_after=resolution.str_after,
+                dex_before=resolution.dex_before,
+                dex_after=resolution.dex_after,
+                wil_before=resolution.wil_before,
+                wil_after=resolution.wil_after,
+                fatigue_before=resolution.fatigue_before,
+                fatigue_after=resolution.fatigue_after,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def _resolve_item_use(
+        self,
+        state: GameState,
+        item: InventoryItem,
+        *,
+        intent: str,
+    ) -> ItemUseResolution:
+        cairn = state.character.cairn
+        power = self._effective_item_power(item)
+        hp_before = cairn.hp
+        str_before = cairn.str_score
+        dex_before = cairn.dex_score
+        wil_before = cairn.wil_score
+        fatigue_before = cairn.fatigue
+        uses_before = item.cairn.uses
+        rolls: list[Roll] = []
+        effect_notes: list[str] = []
+        attack_stance: AttackStance | None = None
+        target_name: str | None = None
+        wil_save_target: int | None = None
+        wil_save_success: bool | None = None
+
+        if CairnItemTag.LIGHT in item.cairn.tags:
+            item.cairn.equipped = True
+            effect_notes.append("light readied")
+
+        if item.cairn.uses == 0:
+            recharge = f" Recharge: {power.recharge_condition}." if power.recharge_condition else ""
+            return ItemUseResolution(
+                summary=f"Used {item.name}: no charges remain.{recharge}",
+                effect_summary="No effect; the item is depleted.",
+                rolls=[],
+                uses_before=uses_before,
+                uses_after=item.cairn.uses,
+                item_removed=False,
+                hp_before=hp_before,
+                hp_after=cairn.hp,
+                str_before=str_before,
+                str_after=cairn.str_score,
+                dex_before=dex_before,
+                dex_after=cairn.dex_score,
+                wil_before=wil_before,
+                wil_after=cairn.wil_score,
+                fatigue_before=fatigue_before,
+                fatigue_after=cairn.fatigue,
+            )
+
+        if power.adds_fatigue or power.kind == CairnItemPowerKind.SPELLBOOK:
+            cairn.fatigue += 1
+            effect_notes.append("Fatigue +1")
+
+        if self._item_use_requires_wil_save(state, power):
+            wil_save_target = wil_before
+            roll = self._roll(D20_SIDES, "item_wil_save")
+            rolls.append(roll)
+            wil_save_success = self._save_succeeds(roll.result, wil_save_target)
+            if not wil_save_success:
+                cairn.fatigue += 1
+                effect_notes.append("WIL save failed; Fatigue +1")
+
+        effect_summary, attack_stance, target_name = self._apply_item_power_effect(
+            cairn,
+            power=power,
+            intent=intent,
+        )
+        effect_notes.insert(0, effect_summary)
+
+        item_removed = self._spend_item_use(state, item, power)
+        uses_after = None if item_removed else item.cairn.uses
+        summary = self._item_use_summary(
+            item,
+            power=power,
+            effect_notes=effect_notes,
+            uses_before=uses_before,
+            uses_after=uses_after,
+            item_removed=item_removed,
+        )
+        return ItemUseResolution(
+            summary=summary,
+            effect_summary="; ".join(note for note in effect_notes if note),
+            rolls=rolls,
+            uses_before=uses_before,
+            uses_after=uses_after,
+            item_removed=item_removed,
+            hp_before=hp_before,
+            hp_after=cairn.hp,
+            str_before=str_before,
+            str_after=cairn.str_score,
+            dex_before=dex_before,
+            dex_after=cairn.dex_score,
+            wil_before=wil_before,
+            wil_after=cairn.wil_score,
+            fatigue_before=fatigue_before,
+            fatigue_after=cairn.fatigue,
+            attack_stance=attack_stance,
+            target_name=target_name,
+            wil_save_target=wil_save_target,
+            wil_save_success=wil_save_success,
+        )
+
+    def _effective_item_power(self, item: InventoryItem) -> CairnItemPower:
+        power = item.cairn.power
+        if power.kind != CairnItemPowerKind.NONE or power.effect != CairnItemEffectKind.NONE:
+            return power
+        tags = set(item.cairn.tags)
+        if CairnItemTag.HOLY in tags and CairnItemTag.RELIC in tags:
+            return CairnItemPower(
+                kind=CairnItemPowerKind.HOLY_RELIC,
+                name=item.name,
+                summary=item.details,
+                effect=CairnItemEffectKind.REVEAL_SIGN,
+            )
+        if CairnItemTag.RELIC in tags:
+            return CairnItemPower(
+                kind=CairnItemPowerKind.RELIC,
+                name=item.name,
+                summary=item.details,
+                effect=CairnItemEffectKind.REVEAL_SIGN,
+            )
+        return power
+
+    def _item_use_requires_wil_save(self, state: GameState, power: CairnItemPower) -> bool:
+        if not power.requires_wil_save_in_danger and power.kind != CairnItemPowerKind.SPELLBOOK:
+            return False
+        return state.encounter.active or state.character.cairn.deprived
+
+    def _apply_item_power_effect(
+        self,
+        cairn: CairnCharacterState,
+        *,
+        power: CairnItemPower,
+        intent: str,
+    ) -> tuple[str, AttackStance | None, str | None]:
+        amount = power.effect_amount
+        if power.effect == CairnItemEffectKind.RESTORE_HP:
+            before = cairn.hp
+            cairn.hp = cairn.max_hp if amount == 0 else min(cairn.max_hp, cairn.hp + amount)
+            return (f"HP restored {before}->{cairn.hp}", None, None)
+        if power.effect == CairnItemEffectKind.RESTORE_ATTRIBUTE:
+            ability = power.effect_ability or (
+                CairnAbility.WIL if power.kind == CairnItemPowerKind.HOLY_RELIC else None
+            )
+            if ability is None:
+                return ("no attribute named for restoration", None, None)
+            before, after = self._restore_attribute(cairn, ability, amount)
+            return (f"{ability.value} restored {before}->{after}", None, None)
+        if power.effect == CairnItemEffectKind.CLEAR_CONDITION:
+            condition = power.clears_condition
+            if condition is None:
+                return ("no condition named to clear", None, None)
+            cleared = self._clear_condition(cairn, condition)
+            return (
+                f"{condition.value.replace('_', ' ')} {'cleared' if cleared else 'unchanged'}",
+                None,
+                None,
+            )
+        if power.effect == CairnItemEffectKind.ENHANCE_ATTACK:
+            return ("next relevant attack is Enhanced by position or permission", AttackStance.ENHANCED, None)
+        if power.effect == CairnItemEffectKind.IMPAIR_TARGET:
+            return ("target opposition is Impaired by the item effect", AttackStance.IMPAIRED, intent)
+        if power.effect == CairnItemEffectKind.FORCE_SAVE:
+            ability = power.effect_ability or CairnAbility.WIL
+            return (f"the target must make a {ability.value} save if they resist", None, intent)
+        if power.effect == CairnItemEffectKind.CREATE_SAFE_PASSAGE:
+            return ("a narrow safe passage or escape permission is established", None, None)
+        if power.effect == CairnItemEffectKind.WARD_OR_PACIFY:
+            return ("nearby violence or hostile will is warded or pacified if the fiction allows", None, None)
+        if power.effect == CairnItemEffectKind.EXTRAORDINARY_AID:
+            before_hp = cairn.hp
+            cairn.hp = cairn.max_hp
+            cairn.critically_wounded = False
+            return (f"extraordinary aid restores HP {before_hp}->{cairn.hp} and stabilizes critical harm", None, None)
+        if power.effect == CairnItemEffectKind.RESURRECT:
+            cairn.dead = False
+            cairn.critically_wounded = False
+            cairn.str_score = max(1, cairn.str_score)
+            cairn.hp = cairn.max_hp
+            return ("extraordinary aid returns the dead to full health", None, None)
+        if power.effect == CairnItemEffectKind.REVEAL_SIGN:
+            if power.kind == CairnItemPowerKind.HOLY_RELIC:
+                return ("intercession yields a subtle sign, not a standing buff", None, None)
+            return ("the item reveals a bounded sign or direction", None, None)
+        if power.summary:
+            return (power.summary, None, None)
+        return (f"used for its ordinary purpose: {intent}", None, None)
+
+    def _restore_attribute(
+        self,
+        cairn: CairnCharacterState,
+        ability: CairnAbility,
+        amount: int,
+    ) -> tuple[int, int]:
+        if ability == CairnAbility.STR:
+            before = cairn.str_score
+            cairn.str_score = cairn.max_str_score if amount == 0 else min(
+                cairn.max_str_score,
+                cairn.str_score + amount,
+            )
+            return (before, cairn.str_score)
+        if ability == CairnAbility.DEX:
+            before = cairn.dex_score
+            cairn.dex_score = cairn.max_dex_score if amount == 0 else min(
+                cairn.max_dex_score,
+                cairn.dex_score + amount,
+            )
+            return (before, cairn.dex_score)
+        before = cairn.wil_score
+        cairn.wil_score = cairn.max_wil_score if amount == 0 else min(
+            cairn.max_wil_score,
+            cairn.wil_score + amount,
+        )
+        return (before, cairn.wil_score)
+
+    def _clear_condition(self, cairn: CairnCharacterState, condition: CairnConditionKey) -> bool:
+        if condition == CairnConditionKey.DEPRIVED:
+            was_active = cairn.deprived
+            cairn.deprived = False
+            return was_active
+        if condition == CairnConditionKey.CRITICALLY_WOUNDED:
+            was_active = cairn.critically_wounded
+            cairn.critically_wounded = False
+            return was_active
+        if condition == CairnConditionKey.DOOMED:
+            was_active = cairn.doomed
+            cairn.doomed = False
+            return was_active
+        if condition == CairnConditionKey.PARALYZED:
+            was_active = cairn.paralyzed
+            cairn.dex_score = max(1, cairn.dex_score)
+            cairn.paralyzed = False
+            return was_active
+        was_active = cairn.delirious
+        cairn.wil_score = max(1, cairn.wil_score)
+        cairn.delirious = False
+        return was_active
+
+    def _spend_item_use(
+        self,
+        state: GameState,
+        item: InventoryItem,
+        power: CairnItemPower,
+    ) -> bool:
+        if item.cairn.uses is not None:
+            item.cairn.uses = max(0, item.cairn.uses - 1)
+        should_remove = (
+            power.consumed_on_use
+            or power.kind == CairnItemPowerKind.SCROLL
+            or CairnItemTag.CONSUMABLE in item.cairn.tags
+        )
+        if should_remove and (item.cairn.uses is None or item.cairn.uses == 0):
+            state.character.inventory = [
+                candidate for candidate in state.character.inventory if candidate.id != item.id
+            ]
+            return True
+        return False
+
+    def _item_use_summary(  # noqa: PLR0913
+        self,
+        item: InventoryItem,
+        *,
+        power: CairnItemPower,
+        effect_notes: list[str],
+        uses_before: int | None,
+        uses_after: int | None,
+        item_removed: bool,
+    ) -> str:
+        label = power.name.strip() or item.name
+        effect = "; ".join(note for note in effect_notes if note)
+        if item_removed:
+            return f"Used {label}: {effect}. Item consumed."
+        if uses_before is not None:
+            recharge = f" Recharge: {power.recharge_condition}." if power.recharge_condition else ""
+            return f"Used {label}: {effect}. Uses {uses_before}->{uses_after}.{recharge}"
+        return f"Used {label}: {effect}. No limited uses were consumed."
 
     def drop_item(self, state: GameState, *, item_id: str) -> str:
         self._require_ready(state)
@@ -1006,6 +1365,7 @@ class CairnEngine:
                     armor_bonus=profile.armor_bonus,
                     uses=profile.uses,
                     equipped=profile.equipped,
+                    power=profile.power,
                 ),
             )
             for profile in profiles

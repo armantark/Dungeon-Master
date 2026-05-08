@@ -80,6 +80,7 @@ TURN_STREAM_STAGE_LABELS: dict[str, str] = {
     "updating_npcs": "Updating NPCs",
     "preparing_narration": "Preparing narration",
     "streaming_narration": "Streaming narration",
+    "reconciling_continuity": "Reconciling continuity",
 }
 TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
 
@@ -272,7 +273,7 @@ class CairnPort(Protocol):
     ) -> str:
         raise NotImplementedError
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
+    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
         raise NotImplementedError
 
     def drop_item(self, state: GameState, *, item_id: str) -> str:
@@ -397,6 +398,7 @@ class ThreadUpdaterPort(Protocol):
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
@@ -409,6 +411,7 @@ class ThreadUpdaterPort(Protocol):
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedThreadUpdateBatch | None:
@@ -430,6 +433,7 @@ class NPCUpdaterPort(Protocol):
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NPCUpdateResult:
@@ -442,6 +446,7 @@ class NPCUpdaterPort(Protocol):
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedNPCUpdateBatch | None:
@@ -1184,6 +1189,8 @@ class GameService:
             player_input=action,
             outcome=outcome,
             oracle_title=None,
+            pre_narration_continuity=False,
+            post_narration_continuity=True,
         )
         return state
 
@@ -1209,6 +1216,7 @@ class GameService:
             oracle_title=executed.oracle_title,
             execution_context=executed.execution_context,
             pre_narration_continuity=executed.pre_narration_continuity,
+            post_narration_continuity=not executed.pre_narration_continuity,
         )
         return state
 
@@ -1289,6 +1297,19 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
+        revealed_npc_ids = self._disclose_npcs_from_text(restored_state, narration.content)
+        if revealed_npc_ids:
+            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
+            outcome.referenced_npc_ids = merged_npcs
+            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        working_memory = self._apply_post_narration_continuity_for_turn(
+            restored_state,
+            player_input=checkpoint.player_input,
+            outcome=outcome,
+            execution_context=checkpoint.execution_context,
+            narrative_text=narration.content,
+            working_memory=working_memory,
+        )
         self._save_state_commit(
             restored_state,
             create_checkpoint=True,
@@ -1332,6 +1353,8 @@ class GameService:
                 outcome=outcome,
                 oracle_title=None,
                 queued_events=queued_events,
+                pre_narration_continuity=False,
+                post_narration_continuity=True,
                 cancel_token=cancel_token,
                 tracker=tracker,
             )
@@ -1367,6 +1390,7 @@ class GameService:
             queued_events=queued_events,
             execution_context=executed.execution_context,
             pre_narration_continuity=executed.pre_narration_continuity,
+            post_narration_continuity=not executed.pre_narration_continuity,
             cancel_token=cancel_token,
             tracker=tracker,
         ))
@@ -1458,6 +1482,22 @@ class GameService:
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
+        revealed_npc_ids = self._disclose_npcs_from_text(restored_state, narration.content)
+        if revealed_npc_ids:
+            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
+            outcome.referenced_npc_ids = merged_npcs
+            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        yield self._stage_delta("reconciling_continuity", StreamStageStatus.ACTIVE, tracker=tracker)
+        working_memory = self._apply_post_narration_continuity_for_turn(
+            restored_state,
+            player_input=checkpoint.player_input,
+            outcome=outcome,
+            execution_context=checkpoint.execution_context,
+            narrative_text=narration.content,
+            cancel_token=cancel_token,
+            working_memory=working_memory,
+        )
+        yield self._stage_delta("reconciling_continuity", StreamStageStatus.DONE, tracker=tracker)
         self._queue_event(
             restored_state,
             queued_events,
@@ -1515,9 +1555,11 @@ class GameService:
 
             if op.kind == PlannedTurnOpKind.USE_ITEM and op.item_name is not None:
                 item_id = self._require_item_id_from_name(state.character, op.item_name)
-                step_summaries.append(
-                    self._cairn.use_item(state, item_id=item_id, intent=op.text),
-                )
+                item_outcome = self._cairn.use_item(state, item_id=item_id, intent=op.text)
+                if primary_outcome is None:
+                    primary_outcome = item_outcome
+                    oracle_title = "Item use"
+                step_summaries.append(item_outcome.summary)
                 continue
 
             if op.kind == PlannedTurnOpKind.DROP_ITEM and op.item_name is not None:
@@ -1664,6 +1706,7 @@ class GameService:
         oracle_title: str | None,
         execution_context: str | None = None,
         pre_narration_continuity: bool = True,
+        post_narration_continuity: bool = False,
     ) -> None:
         working_memory = self._load_turn_memory_state(state)
         self._stamp_scene_snapshot(state, outcome)
@@ -1722,6 +1765,15 @@ class GameService:
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
             outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        if post_narration_continuity:
+            working_memory = self._apply_post_narration_continuity_for_turn(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+                working_memory=working_memory,
+            )
         if terminal_event is not None:
             self._record_event(state, terminal_event)
         self._save_state_commit(
@@ -1745,6 +1797,7 @@ class GameService:
         queued_events: list[GameEvent],
         execution_context: str | None = None,
         pre_narration_continuity: bool = True,
+        post_narration_continuity: bool = False,
         cancel_token: CancellationToken | None = None,
         tracker: StageTimingTracker | None = None,
     ) -> Generator[CompletionDelta, None, GameState]:
@@ -1800,11 +1853,40 @@ class GameService:
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
-        # Snapshot the tracker after the final stage flips DONE so the
-        # persisted GameEvent carries the complete pre-narration timing
-        # record. Empty tracker → empty list, which is the same as a
-        # legacy save and keeps the UI's compact-checklist render path
-        # robust against missing timings.
+        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
+        if revealed_npc_ids:
+            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
+            outcome.referenced_npc_ids = merged_npcs
+            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        if post_narration_continuity:
+            yield self._stage_delta(
+                "reconciling_continuity",
+                StreamStageStatus.ACTIVE,
+                tracker=tracker,
+            )
+            working_memory = self._apply_post_narration_continuity_for_turn(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+                cancel_token=cancel_token,
+                working_memory=working_memory,
+            )
+            yield self._stage_delta(
+                "reconciling_continuity",
+                StreamStageStatus.DONE,
+                tracker=tracker,
+            )
+        else:
+            yield self._stage_delta(
+                "reconciling_continuity",
+                StreamStageStatus.SKIPPED,
+                tracker=tracker,
+            )
+        # Snapshot after every streamed stage, including post-narration
+        # continuity reconciliation, so the persisted narrative event
+        # matches the full visible checklist the user saw during the turn.
         timings = tracker.snapshot() if tracker is not None else []
         self._queue_event(
             state,
@@ -1818,11 +1900,6 @@ class GameService:
                 stage_timings=timings,
             ),
         )
-        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
-        if revealed_npc_ids:
-            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
-            outcome.referenced_npc_ids = merged_npcs
-            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
         if terminal_event is not None:
             self._queue_event(state, queued_events, terminal_event)
         self._persist_streamed_state(
@@ -2472,6 +2549,59 @@ class GameService:
         self._apply_npc_references(state, outcome, touched_npc_ids)
         return self._memory_for_state(state, existing_memory=memory)
 
+    def _apply_post_narration_continuity_for_turn(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+        working_memory: MemoryState | None = None,
+    ) -> MemoryState:
+        memory = self._memory_for_state(state, existing_memory=working_memory)
+        thread_context, memory = self._memory_context_for_thread_updater(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            working_memory=memory,
+        )
+        npc_context, _ = self._memory_context_for_npc_updater(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            working_memory=memory,
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            thread_future = executor.submit(
+                self._generate_thread_updates_for_turn,
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narrative_text,
+                memory_context=thread_context,
+                cancel_token=cancel_token,
+            )
+            npc_future = executor.submit(
+                self._generate_npc_updates_for_turn,
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narrative_text,
+                memory_context=npc_context,
+                cancel_token=cancel_token,
+            )
+            thread_generated = thread_future.result()
+            npc_generated = npc_future.result()
+        touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
+        touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
+        self._apply_thread_references(outcome, touched_thread_ids)
+        self._apply_npc_references(state, outcome, touched_npc_ids)
+        return self._memory_for_state(state, existing_memory=memory)
+
     def _run_thread_updates_for_turn(  # noqa: PLR0913
         self,
         state: GameState,
@@ -2479,6 +2609,7 @@ class GameService:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> tuple[str, ...]:
@@ -2487,6 +2618,7 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -2499,6 +2631,7 @@ class GameService:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedThreadUpdateBatch | None:
@@ -2507,6 +2640,7 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -2537,6 +2671,7 @@ class GameService:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> tuple[str, ...]:
@@ -2545,6 +2680,7 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -2557,6 +2693,7 @@ class GameService:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedNPCUpdateBatch | None:
@@ -2565,6 +2702,7 @@ class GameService:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )

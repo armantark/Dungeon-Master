@@ -287,6 +287,32 @@ def test_classifier_can_return_inventory_acquisition_plan() -> None:
     assert routed.equipped is True
 
 
+def test_classifier_can_return_holy_relic_use_plan() -> None:
+    def relic_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.USE_ITEM,
+                    text=text,
+                    item_name="leaden icon",
+                ),
+            ),
+        )
+
+    router = TurnRouter(classifier=relic_classifier)
+
+    planned = router.plan("I kiss the leaden icon and ask for intercession.")
+    routed = router.route("I kiss the leaden icon and ask for intercession.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert planned.ops[0].kind == PlannedTurnOpKind.USE_ITEM
+    assert planned.ops[0].item_name == "leaden icon"
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert routed.item_name == "leaden icon"
+
+
 def test_classifier_can_return_enemy_opener_plan_while_preserving_harm_route() -> None:
     def ambush_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
         return TurnPlan(

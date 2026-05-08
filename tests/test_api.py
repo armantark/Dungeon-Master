@@ -23,6 +23,7 @@ from dungeon_master.api import (
     reattach_request_stream,
     submit_turn_stream,
 )
+from dungeon_master.cairn import CairnEngine
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -37,6 +38,9 @@ from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
+    CairnItemEffectKind,
+    CairnItemPower,
+    CairnItemPowerKind,
     CairnItemState,
     CairnItemTag,
     CairnMechanicsSource,
@@ -75,7 +79,7 @@ from dungeon_master.npc_updater import (
 )
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService
+from dungeon_master.service import GameService, NPCUpdaterPort, ThreadUpdaterPort
 from dungeon_master.state_store import StateStore
 from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
 from dungeon_master.turn_router import (
@@ -526,20 +530,48 @@ class FakeCairnEngine:
         )
         return "Acquired Pilgrim lantern, Purse of old silver."
 
-    def use_item(self, state: GameState, *, item_id: str, intent: str) -> str:
+    def use_item(self, state: GameState, *, item_id: str, intent: str) -> OracleOutcome:
         for item in list(state.character.inventory):
             if item.id != item_id:
                 continue
             if item.cairn.uses is None:
-                return f"Used {item.name}: {intent}. No limited uses were consumed."
+                summary = f"Used {item.name}: {intent}. No limited uses were consumed."
+                return OracleOutcome(
+                    kind=OracleKind.PLAYER_ACTION,
+                    summary=summary,
+                    chaos_factor=state.chaos_factor,
+                    cairn=CairnResolution(item_id=item.id, item_name=item.name),
+                )
             remaining = item.cairn.uses - 1
             if remaining <= 0:
                 state.character.inventory = [
                     candidate for candidate in state.character.inventory if candidate.id != item_id
                 ]
-                return f"Used {item.name}: final use spent, item exhausted and removed."
+                summary = f"Used {item.name}: final use spent, item exhausted and removed."
+                return OracleOutcome(
+                    kind=OracleKind.PLAYER_ACTION,
+                    summary=summary,
+                    chaos_factor=state.chaos_factor,
+                    cairn=CairnResolution(
+                        item_id=item.id,
+                        item_name=item.name,
+                        uses_before=item.cairn.uses,
+                        uses_after=None,
+                    ),
+                )
             item.cairn.uses = remaining
-            return f"Used {item.name}: {remaining} uses remain."
+            summary = f"Used {item.name}: {remaining} uses remain."
+            return OracleOutcome(
+                kind=OracleKind.PLAYER_ACTION,
+                summary=summary,
+                chaos_factor=state.chaos_factor,
+                cairn=CairnResolution(
+                    item_id=item.id,
+                    item_name=item.name,
+                    uses_before=remaining + 1,
+                    uses_after=remaining,
+                ),
+            )
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
 
@@ -724,6 +756,7 @@ class FakeThreadUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
@@ -732,6 +765,7 @@ class FakeThreadUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -746,10 +780,19 @@ class FakeThreadUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedThreadUpdateBatch | None:
-        del state, player_input, outcome, execution_context, memory_context, cancel_token
+        del (
+            state,
+            player_input,
+            outcome,
+            execution_context,
+            narrative_text,
+            memory_context,
+            cancel_token,
+        )
         return GeneratedThreadUpdateBatch()
 
     def apply_generated_updates(
@@ -780,6 +823,7 @@ class FakeNpcUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> NPCUpdateResult:
@@ -788,6 +832,7 @@ class FakeNpcUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -802,10 +847,19 @@ class FakeNpcUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedNPCUpdateBatch | None:
-        del state, player_input, outcome, execution_context, memory_context, cancel_token
+        del (
+            state,
+            player_input,
+            outcome,
+            execution_context,
+            narrative_text,
+            memory_context,
+            cancel_token,
+        )
         return GeneratedNPCUpdateBatch()
 
     def apply_generated_updates(
@@ -870,8 +924,8 @@ def _client(  # noqa: PLR0913
     *,
     narrative: FakeNarrative | ThoughtfulNarrative | BlockingThoughtfulNarrative | None = None,
     turn_router: TurnRouter | None = None,
-    thread_updater: FakeThreadUpdater | None = None,
-    npc_updater: FakeNpcUpdater | None = None,
+    thread_updater: ThreadUpdaterPort | None = None,
+    npc_updater: NPCUpdaterPort | None = None,
     explainer: FakeExplainer | None = None,
 ) -> TestClient:
     service = GameService(
@@ -911,6 +965,8 @@ async def _collect_stream_events(
     *,
     limit: int | None = None,
     release: Event | None = None,
+    release_on_type: str | None = None,
+    until_type: str | None = None,
 ) -> list[dict[str, Any]]:
     stream = cast("AsyncIterator[str]", iterator)
     events: list[dict[str, Any]] = []
@@ -919,8 +975,14 @@ async def _collect_stream_events(
             if not line:
                 continue
             events.append(cast("dict[str, Any]", json.loads(line)))
-            if release is not None and len(events) == 2:
+            latest_type = cast("str | None", events[-1].get("type"))
+            if release is not None and (
+                (release_on_type is not None and latest_type == release_on_type)
+                or (release_on_type is None and len(events) == 2)
+            ):
                 release.set()
+            if until_type is not None and latest_type == until_type:
+                break
             if limit is not None and len(events) >= limit:
                 break
     finally:
@@ -1138,7 +1200,7 @@ def test_reattach_request_stream_rejects_different_active_save(tmp_path: Path) -
             session_registry=app.state.session_registry,
             payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
         )
-        initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=2))
+        initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=1))
         request_id = cast("str", initial_events[0]["request_id"])
         assert narrative.started.wait(timeout=1.0)
         narrative.release.set()
@@ -1414,6 +1476,80 @@ def test_submit_turn_routes_equip(tmp_path: Path) -> None:
     assert payload["action_log"][-1]["title"] == "Narrative response"
 
 
+def test_submit_turn_routes_holy_relic_use_with_receipt_fields(tmp_path: Path) -> None:
+    def relic_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.USE_ITEM,
+                    text=text,
+                    item_name="leaden icon",
+                ),
+            ),
+        )
+
+    store = StateStore(tmp_path / "game_state.json")
+    seeded = sample_state()
+    seeded.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        wil_score=7,
+        max_wil_score=10,
+        hp=4,
+        max_hp=4,
+    )
+    seeded.character.inventory.append(
+        InventoryItem(
+            name="Leaden icon",
+            details="A cold icon of a nameless patriarch.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.HOLY, CairnItemTag.RELIC],
+                slots=0,
+                uses=1,
+                power=CairnItemPower(
+                    kind=CairnItemPowerKind.HOLY_RELIC,
+                    name="Intercession of the Nameless Patriarch",
+                    effect=CairnItemEffectKind.RESTORE_ATTRIBUTE,
+                    effect_amount=1,
+                ),
+            ),
+        ),
+    )
+    store.save(seeded, create_checkpoint=False)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        explainer=FakeExplainer(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            seed=1,
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+        ),
+        turn_router=TurnRouter(classifier=relic_classifier),
+    )
+    with TestClient(create_app(service=service)) as client:
+        response = client.post(
+            "/api/turn",
+            json={"text": "I kiss the leaden icon and ask for intercession."},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    outcome = payload["oracle_history"][0]
+    assert outcome["kind"] == "player_action"
+    assert outcome["cairn"]["item_name"] == "Leaden icon"
+    assert outcome["cairn"]["item_power_kind"] == "holy_relic"
+    assert outcome["cairn"]["item_effect_kind"] == "restore_attribute"
+    assert outcome["cairn"]["wil_before"] == 7
+    assert outcome["cairn"]["wil_after"] == 8
+    assert payload["character"]["cairn"]["wil_score"] == 8
+
+
 def test_submit_turn_can_return_dynamic_thread_updates(tmp_path: Path) -> None:
     def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
         del outcome
@@ -1518,6 +1654,7 @@ def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     assert ("preparing_narration", "done") in stage_statuses
     assert ("streaming_narration", "active") in stage_statuses
     assert ("streaming_narration", "done") in stage_statuses
+    assert ("reconciling_continuity", "skipped") in stage_statuses
     final = parsed[-1]
     assert final["state"]["action_log"][-1]["title"] == "Narrative response"
     assert final["thinking"] == "Thought about attack."
@@ -1534,8 +1671,14 @@ def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> Non
             session_registry=app.state.session_registry,
             payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
         )
-        initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=2))
-        meta, thinking = initial_events
+        initial_events = asyncio.run(
+            _collect_stream_events(
+                response.body_iterator,
+                until_type="thinking_delta",
+            ),
+        )
+        meta = initial_events[0]
+        thinking = next(event for event in initial_events if event["type"] == "thinking_delta")
         request_id = cast("str", meta["request_id"])
         assert meta["type"] == "meta"
         assert thinking == {"type": "thinking_delta", "text": "Thought about attack."}
@@ -1550,11 +1693,15 @@ def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> Non
             session_registry=app.state.session_registry,
         )
         resumed_events = asyncio.run(
-            _collect_stream_events(resumed.body_iterator, release=narrative.release),
+            _collect_stream_events(
+                resumed.body_iterator,
+                release=narrative.release,
+                release_on_type="thinking_delta",
+            ),
         )
 
     assert resumed_events[0]["request_id"] == request_id
-    assert resumed_events[1] == thinking
+    assert thinking in resumed_events
     assert resumed_events[-1]["type"] == "final_state"
     assert resumed_events[-1]["state"]["action_log"][-1]["title"] == "Narrative response"
 

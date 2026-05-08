@@ -43,6 +43,12 @@ IMPLEMENTED_MECHANICS_SUMMARY = """Implemented mechanics summary:
 - Natural-language turns may be routed into deterministic mechanics like save,
   attack, harm, recovery, equip, retreat, inspect inventory, search scene,
   acquire item, use item, and drop item.
+- Spellbooks, scrolls, relics, and holy relics are item-bound powers with typed
+  effects, limited uses or consumption when applicable, recharge text when
+  known, spellbook Fatigue, and WIL-save risk under danger/deprivation.
+- Plain prayer is not a generic buff command. Prayer can matter mechanically
+  when it is routed through a carried holy relic/icon, an oracle/save, or
+  another surfaced Cairn mechanism.
 - Combat is tracked canonically, including enemy-opened ambushes and retreat outcomes.
 - Mechanics live in Python and receipts; narration is downstream of the deterministic result.
 """

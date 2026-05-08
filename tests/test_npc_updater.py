@@ -268,3 +268,30 @@ def test_npc_updater_can_reseed_legacy_roster() -> None:
     assert [npc.name for npc in repaired.introduced_npcs] == ["Generated NPC One"]
     assert repaired.introduced_npcs[0].id == state.npcs[0].id
     assert [npc.name for npc in repaired.hidden_npcs] == ["The Hierophant"]
+
+
+def test_npc_updater_prompt_includes_final_narration_when_supplied() -> None:
+    completion = RecordingNPCCompletion('{"ops":[]}')
+    updater = NPCUpdater(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None, max_retries=0),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+
+    generated = updater.generate_npc_updates(
+        state,
+        player_input="I ask the patriarch for intercession.",
+        outcome=outcome,
+        narrative_text="The icon's lead face is named at last: The Hierophant of the Ashen Choir.",
+    )
+
+    assert generated is not None
+    assert completion.messages is not None
+    user_prompt = completion.messages[1]["content"]
+    assert "Final narration response" in user_prompt
+    assert "The Hierophant of the Ashen Choir" in user_prompt

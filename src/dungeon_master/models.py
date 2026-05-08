@@ -158,6 +158,37 @@ class CairnItemTag(StrEnum):
     UTILITY = "utility"
 
 
+class CairnItemPowerKind(StrEnum):
+    NONE = "none"
+    SPELLBOOK = "spellbook"
+    SCROLL = "scroll"
+    RELIC = "relic"
+    HOLY_RELIC = "holy_relic"
+
+
+class CairnItemEffectKind(StrEnum):
+    NONE = "none"
+    RESTORE_HP = "restore_hp"
+    RESTORE_ATTRIBUTE = "restore_attribute"
+    CLEAR_CONDITION = "clear_condition"
+    ENHANCE_ATTACK = "enhance_attack"
+    IMPAIR_TARGET = "impair_target"
+    FORCE_SAVE = "force_save"
+    REVEAL_SIGN = "reveal_sign"
+    CREATE_SAFE_PASSAGE = "create_safe_passage"
+    WARD_OR_PACIFY = "ward_or_pacify"
+    EXTRAORDINARY_AID = "extraordinary_aid"
+    RESURRECT = "resurrect"
+
+
+class CairnConditionKey(StrEnum):
+    DEPRIVED = "deprived"
+    CRITICALLY_WOUNDED = "critically_wounded"
+    DOOMED = "doomed"
+    PARALYZED = "paralyzed"
+    DELIRIOUS = "delirious"
+
+
 class Roll(StrictModel):
     sides: int = Field(ge=2)
     result: int = Field(ge=1)
@@ -237,6 +268,20 @@ class EncounterState(StrictModel):
     notes: str = ""
 
 
+class CairnItemPower(StrictModel):
+    kind: CairnItemPowerKind = CairnItemPowerKind.NONE
+    name: str = ""
+    summary: str = ""
+    effect: CairnItemEffectKind = CairnItemEffectKind.NONE
+    effect_amount: int = Field(default=1, ge=0)
+    effect_ability: CairnAbility | None = None
+    clears_condition: CairnConditionKey | None = None
+    recharge_condition: str = ""
+    requires_wil_save_in_danger: bool = False
+    adds_fatigue: bool = False
+    consumed_on_use: bool = False
+
+
 class CairnItemState(StrictModel):
     source: CairnMechanicsSource = CairnMechanicsSource.UNSET
     backfill_version: int = Field(default=0, ge=0)
@@ -244,8 +289,9 @@ class CairnItemState(StrictModel):
     slots: int = Field(default=1, ge=0, le=10)
     weapon_damage_die: int | None = Field(default=None, ge=4, le=12)
     armor_bonus: int = Field(default=0, ge=0, le=3)
-    uses: int | None = Field(default=None, ge=1)
+    uses: int | None = Field(default=None, ge=0)
     equipped: bool = False
+    power: CairnItemPower = Field(default_factory=CairnItemPower)
 
 
 class InventoryItem(StrictModel):
@@ -298,6 +344,14 @@ class CairnResolution(StrictModel):
     target: int | None = Field(default=None, ge=1, le=20)
     success: bool | None = None
     rest_kind: CairnRestKind | None = None
+    item_id: str | None = None
+    item_name: str | None = None
+    item_power_kind: CairnItemPowerKind | None = None
+    item_effect_kind: CairnItemEffectKind | None = None
+    effect_summary: str | None = None
+    uses_before: int | None = Field(default=None, ge=0)
+    uses_after: int | None = Field(default=None, ge=0)
+    recharge_condition: str | None = None
     combat_round: int | None = Field(default=None, ge=0)
     combat_started: bool | None = None
     combat_active: bool | None = None
@@ -316,6 +370,10 @@ class CairnResolution(StrictModel):
     hp_after: int | None = Field(default=None, ge=0)
     str_before: int | None = Field(default=None, ge=0)
     str_after: int | None = Field(default=None, ge=0)
+    dex_before: int | None = Field(default=None, ge=0)
+    dex_after: int | None = Field(default=None, ge=0)
+    wil_before: int | None = Field(default=None, ge=0)
+    wil_after: int | None = Field(default=None, ge=0)
     fatigue_before: int | None = Field(default=None, ge=0)
     fatigue_after: int | None = Field(default=None, ge=0)
     target_hp_before: int | None = Field(default=None, ge=0)

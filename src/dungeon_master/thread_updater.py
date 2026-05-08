@@ -32,9 +32,16 @@ Hard rules:
 - Prefer updating an existing thread over creating a near-duplicate.
 - Resolve a thread only when the supplied outcome + executed steps actually
   discharge its stakes or close the matter in canon.
+- If a final narration response is supplied, treat it as player-visible canon.
+  Only extract durable thread changes that the narration explicitly establishes.
+- Never treat momentary atmosphere, gestures, unanswered prayers, or ordinary
+  descriptive flourish as durable thread advancement on their own.
+- Never let narration-only extraction contradict the resolved oracle outcome or
+  executed backend steps.
 - Never delete threads.
 - Never invent new facts beyond the supplied player input, oracle outcome,
-  executed backend steps, current threads, and memory context.
+  final narration response, executed backend steps, current threads, and memory
+  context.
 - For update/resolve, use an exact supplied thread_id from the current threads list.
 - Keep thread titles short, concrete, and future-playable.
 - Keep stakes focused on what remains at risk if the matter is ignored.
@@ -64,6 +71,9 @@ Resolved oracle outcome:
 
 Executed backend steps (may be empty):
 <<EXECUTION_CONTEXT>>
+
+Final narration response (may be empty for pre-narration continuity):
+<<NARRATIVE_TEXT>>
 
 Current canonical threads:
 <<THREADS_JSON>>
@@ -121,6 +131,7 @@ class ThreadUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> ThreadUpdateResult:
@@ -129,6 +140,7 @@ class ThreadUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
             cancel_token=cancel_token,
         )
@@ -143,6 +155,7 @@ class ThreadUpdater:
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None = None,
+        narrative_text: str | None = None,
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedThreadUpdateBatch | None:
@@ -154,6 +167,7 @@ class ThreadUpdater:
             player_input=player_input,
             outcome=outcome,
             execution_context=execution_context,
+            narrative_text=narrative_text,
             memory_context=memory_context,
         )
         profile = self._config.profiles.thread_updater
@@ -191,13 +205,14 @@ class ThreadUpdater:
     ) -> ThreadUpdateResult:
         return self._apply_generated_updates(state, generated)
 
-    def _build_prompt(
+    def _build_prompt(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         execution_context: str | None,
+        narrative_text: str | None,
         memory_context: str | None,
     ) -> str:
         threads_json = json.dumps(
@@ -218,6 +233,7 @@ class ThreadUpdater:
             .replace("<<OUTCOME_KIND>>", outcome.kind.value)
             .replace("<<OUTCOME_SUMMARY>>", outcome.summary)
             .replace("<<EXECUTION_CONTEXT>>", execution_context or "(none)")
+            .replace("<<NARRATIVE_TEXT>>", (narrative_text or "").strip() or "(none)")
             .replace("<<THREADS_JSON>>", threads_json)
             .replace("<<MEMORY_CONTEXT>>", memory_context or "(none)")
         )

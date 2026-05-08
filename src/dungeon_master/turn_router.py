@@ -200,7 +200,7 @@ Allowed op kinds:
 - acquire_item: the player is explicitly taking, looting, receiving, buying,
   or otherwise adding a concrete item or bundle to their carried gear now
 - use_item: the player is explicitly drinking, lighting, applying,
-  consuming, or otherwise using a carried item
+  consuming, reading, invoking, praying with, or otherwise using a carried item
 - drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
 
 Rules:
@@ -234,6 +234,9 @@ Rules:
   to inventory immediately. Preserve the player's wording; do not invent a
   full item list in the planner itself.
 - If kind is `use_item` or `drop_item`, include `item_name`.
+- A prayer by itself is usually `narrate` or an oracle/save if risk is explicit.
+  A prayer that explicitly invokes a carried icon, relic, scroll, prayer book,
+  spellbook, oil, or similar object should be `use_item` with that item name.
 - Use `harm` sparingly. Prefer `save` for risky actions and `attack` for offensive actions.
 - If kind is `yes_no`, preserve a supplied likelihood hint if one was explicitly given.
 """
