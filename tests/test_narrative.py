@@ -117,7 +117,7 @@ def test_narrative_engine_passes_task_based_reasoning_to_litellm() -> None:
     # reasoning dict, so we surface `effort` only via the top-level
     # `reasoning_effort` alias and keep `max_tokens` here for deterministic
     # budget control.
-    assert completion.reasoning == {"max_tokens": 3000, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 1200, "exclude": True}
 
 
 def test_completion_logs_llm_trace(
@@ -300,7 +300,7 @@ def test_narrative_engine_allows_fixed_medium_reasoning() -> None:
     engine.generate(state, outcome, "I enter the hospice.")
 
     assert completion.reasoning_effort == "medium"
-    assert completion.reasoning == {"max_tokens": 3000, "exclude": True}
+    assert completion.reasoning == {"max_tokens": 1200, "exclude": True}
 
 
 def test_narrative_stream_raises_on_cancellation_without_fallback() -> None:
