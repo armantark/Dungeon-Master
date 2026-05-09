@@ -184,6 +184,9 @@ backend endpoints that this pass deliberately does not bind to controls.
       <div class="meter" data-axis="food" data-tier={foodMeter.tier}>
         <div class="meter__head">
           <span class="kicker">Food</span>
+          <span class="meter__count pixel" aria-label="Watches without food">
+            {foodMeter.value}/{foodMeter.threshold}
+          </span>
           <span class="meter__chip pixel" data-tier={foodMeter.tier}>
             {#if foodMeter.deprived}
               Deprived
@@ -217,6 +220,9 @@ backend endpoints that this pass deliberately does not bind to controls.
       <div class="meter" data-axis="sleep" data-tier={sleepMeter.tier}>
         <div class="meter__head">
           <span class="kicker">Sleep</span>
+          <span class="meter__count pixel" aria-label="Watches without sleep">
+            {sleepMeter.value}/{sleepMeter.threshold}
+          </span>
           <span class="meter__chip pixel" data-tier={sleepMeter.tier}>
             {#if sleepMeter.deprived}
               Deprived
@@ -464,24 +470,38 @@ backend endpoints that this pass deliberately does not bind to controls.
   .meter {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.3rem;
   }
+  /*
+   * The head row carries three children: kicker, numeric `n/N` count,
+   * and tier chip. We use a 3-track grid so the count sits in the
+   * middle and the chip pins to the right at any container width —
+   * a simple flex `space-between` would let the chip hop tracks at
+   * narrow widths.
+   */
   .meter__head {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: max-content 1fr max-content;
     align-items: baseline;
     gap: 0.45rem;
   }
   .meter__head .kicker {
     margin: 0;
   }
+  .meter__count {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    color: var(--gold-tarnished);
+    text-align: right;
+  }
   .meter__chip {
-    font-size: 0.66rem;
+    font-size: 0.62rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 0.1rem 0.35rem;
+    padding: 0.05rem 0.35rem;
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
     color: var(--gold-tarnished);
+    white-space: nowrap;
   }
   .meter__chip[data-tier="warning"] {
     color: var(--gold-bright);
@@ -495,32 +515,47 @@ backend endpoints that this pass deliberately does not bind to controls.
   .meter__bar {
     display: flex;
     gap: 2px;
-    height: 0.45rem;
-    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
-    background: rgba(0, 0, 0, 0.55);
+    height: 0.7rem;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
+    background: rgba(0, 0, 0, 0.6);
     padding: 1px;
   }
+  /*
+   * Each segment carries a faint baseline so the bar reads as a
+   * "tracked but empty" meter even at zero pressure — the eye sees
+   * the segment grid and intuitively knows what filling does next.
+   * Without this baseline the bar at 0/3 looks like a hollow strip.
+   */
   .meter__seg {
     flex: 1 1 0;
-    background: transparent;
+    background: color-mix(in oklab, var(--gold-tarnished) 14%, transparent);
+    border-right: 1px solid color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
     transition: background 120ms ease;
     position: relative;
   }
+  .meter__seg:last-child {
+    border-right: 0;
+  }
   /*
-   * Render the warning watermark as a thin tick on the top edge of
-   * the segment that *crosses* the threshold. Keeping it visual (not
-   * a separate row) lets the eye read "we're past the warning"
-   * without parsing extra labels.
+   * Warning watermark: an in-bar vertical line at the LEFT edge of
+   * the warning segment, so the eye reads it as "you cross this line
+   * and you're hungry / weary." We render it inside the bar instead
+   * of floating above it so it never reads as a stray tick mark.
+   * Using a left-edge inset rule keeps the tick exactly at the
+   * boundary between safe and warning even when segment width
+   * changes (food has 3 segments, sleep has 6, but the tick still
+   * lands on the threshold for both).
    */
   .meter__seg[data-warning="true"]::before {
     content: "";
     position: absolute;
-    inset: -3px 0 auto 0;
-    height: 2px;
-    background: color-mix(in oklab, var(--gold-bright) 80%, transparent);
+    inset: -1px auto -1px -1px;
+    width: 2px;
+    background: color-mix(in oklab, var(--gold-bright) 85%, transparent);
+    box-shadow: 0 0 3px color-mix(in oklab, var(--gold-bright) 50%, transparent);
   }
   .meter__seg[data-filled="true"][data-tier="easy"] {
-    background: color-mix(in oklab, var(--green-verdigris) 70%, var(--gold-tarnished));
+    background: color-mix(in oklab, var(--green-verdigris) 75%, var(--gold-tarnished));
   }
   .meter__seg[data-filled="true"][data-tier="warning"] {
     background: var(--gold-bright);
