@@ -7,6 +7,8 @@ from dungeon_master.config import (
     DEFAULT_GEMINI_PRO_MODEL,
     AppConfig,
     LLMConfig,
+    LLMCredentials,
+    LLMCredentialsStore,
     LLMPreset,
     LLMRuntimeSettings,
     RuntimeSettingsStore,
@@ -31,6 +33,7 @@ def test_app_config_uses_new_narration_defaults(monkeypatch: pytest.MonkeyPatch)
     )
 
     assert config.state_path.as_posix() == "data/game_state.json"
+    assert config.credentials_path.as_posix() == "data/llm_credentials.json"
     assert config.llm.temperature == 1.25
     assert config.llm.max_tokens == 4500
     assert config.llm.timeout_seconds == 600.0
@@ -118,6 +121,24 @@ def test_build_llm_runtime_uses_gemini_split_models(
     assert runtime.narration.base_url is None
 
 
+def test_build_llm_runtime_prefers_stored_credentials_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter")
+    monkeypatch.setenv("GEMINI_API_KEY", "env-gemini")
+
+    runtime = build_llm_runtime(
+        LLMRuntimeSettings(llm_preset=LLMPreset.GEMINI_SPLIT),
+        LLMCredentials(
+            openrouter_api_key="stored-openrouter",
+            gemini_api_key="stored-gemini",
+        ),
+    )
+
+    assert runtime.structured.api_key == "stored-gemini"
+    assert runtime.narration.api_key == "stored-gemini"
+
+
 def test_runtime_settings_store_round_trips(tmp_path: Path) -> None:
     store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
 
@@ -127,3 +148,21 @@ def test_runtime_settings_store_round_trips(tmp_path: Path) -> None:
 
     assert initial.llm_preset == LLMPreset.KIMI
     assert reloaded.llm_preset == LLMPreset.GEMINI_SPLIT
+
+
+def test_credentials_store_round_trips(tmp_path: Path) -> None:
+    store = LLMCredentialsStore(tmp_path / "llm_credentials.json")
+
+    initial = store.load()
+    store.save(
+        LLMCredentials(
+            openrouter_api_key="openrouter-secret",
+            gemini_api_key="gemini-secret",
+        ),
+    )
+    reloaded = store.load()
+
+    assert initial.openrouter_api_key is None
+    assert initial.gemini_api_key is None
+    assert reloaded.openrouter_api_key == "openrouter-secret"
+    assert reloaded.gemini_api_key == "gemini-secret"

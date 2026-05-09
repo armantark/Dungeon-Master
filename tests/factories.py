@@ -5,6 +5,7 @@ from dungeon_master.models import (
     GameState,
     GameThread,
     InventoryItem,
+    NPCPlayerLabelKind,
     OracleTables,
 )
 
@@ -36,8 +37,20 @@ def sample_state() -> GameState:
         ],
         party_members=[],
         npcs=[
-            NPC(name="Generated NPC One", role="Test role", disposition="watchful"),
-            NPC(name="Generated NPC Two", role="Test role", disposition="wary"),
+            NPC(
+                name="Generated NPC One",
+                player_label="Generated NPC One",
+                player_label_kind=NPCPlayerLabelKind.PROPER_NAME,
+                role="Test role",
+                disposition="watchful",
+            ),
+            NPC(
+                name="Generated NPC Two",
+                player_label="Generated NPC Two",
+                player_label_kind=NPCPlayerLabelKind.PROPER_NAME,
+                role="Test role",
+                disposition="wary",
+            ),
         ],
         oracle_tables=OracleTables(
             event_focus=[

@@ -10,6 +10,7 @@ from dungeon_master.models import (
     CairnCharacterState,
     CairnItemState,
     CairnMechanicsSource,
+    NPCPlayerLabelKind,
 )
 from dungeon_master.save_library import SaveLibrary
 from dungeon_master.service import GameService
@@ -83,7 +84,15 @@ def test_backfill_current_save_reports_visible_name_without_text_support(
     state = sample_state()
     state.npc_roster_version = 2
     state.current_scene = "A nameless figure watches from the belfry."
-    state.npcs = [NPC(name="Theuas", role="Watcher", disposition="unknown")]
+    state.npcs = [
+        NPC(
+            name="Theuas",
+            player_label="Theuas",
+            player_label_kind=NPCPlayerLabelKind.PROPER_NAME,
+            role="Watcher",
+            disposition="unknown",
+        ),
+    ]
     state.hidden_npcs = []
     state.character.cairn = CairnCharacterState(source=CairnMechanicsSource.EXPLICIT)
     for item in state.character.inventory:
@@ -94,7 +103,7 @@ def test_backfill_current_save_reports_visible_name_without_text_support(
 
     report = service.backfill_current_save(apply=False)
 
-    assert report.state_changed is False
+    assert report.state_changed is True
     assert report.visible_name_warnings == (
         "Visible NPC label lacks explicit text support: Theuas",
     )
@@ -122,7 +131,7 @@ def test_backfill_cli_targets_active_save_and_emits_json_report(
     payload = json.loads(out)
     assert payload["save_id"] == save_id
     assert payload["applied"] is True
-    assert payload["state_changed"] is False
+    assert payload["state_changed"] is True
     assert payload["memory_rebuilt"] is True
     assert payload["state_path"].endswith(f"{save_id}/game_state.json")
     assert (library.save_dir_for(save_id) / "memory.json").exists()

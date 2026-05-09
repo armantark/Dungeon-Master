@@ -28,6 +28,7 @@ where = ["src"]
 dev = [
     "httpx>=0.28.0",
     "mypy>=1.19.0",
+    "pyinstaller>=6.20.0",
     "pytest>=9.0.2",
     "ruff>=0.14.8",
 ]

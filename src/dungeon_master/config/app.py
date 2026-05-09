@@ -24,6 +24,7 @@ DEFAULT_NARRATION_MAX_TOKENS = 4500
 DEFAULT_TIMEOUT_SECONDS = 600.0
 DEFAULT_STATE_PATH = Path("data/game_state.json")
 DEFAULT_RUNTIME_SETTINGS_PATH = Path("data/runtime_settings.json")
+DEFAULT_CREDENTIALS_PATH = Path("data/llm_credentials.json")
 
 VALID_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
     "none",
@@ -46,6 +47,17 @@ class LLMCapability(StrEnum):
 class LLMPreset(StrEnum):
     KIMI = "kimi"
     GEMINI_SPLIT = "gemini_split"
+
+
+class LLMProvider(StrEnum):
+    OPENROUTER = "openrouter"
+    GEMINI = "gemini"
+
+
+class CredentialSource(StrEnum):
+    NONE = "none"
+    ENV = "env"
+    STORED = "stored"
 
 
 DEFAULT_LLM_PRESET = LLMPreset.KIMI
@@ -79,17 +91,19 @@ class LLMPresetDescriptor:
     structured_model: str
     narration_model: str
     reasoning_model: str
-    required_env_groups: tuple[tuple[str, ...], ...]
+    required_providers: tuple[LLMProvider, ...]
 
-    def missing_env_vars(self) -> list[str]:
+    def missing_env_vars(self, statuses: tuple[LLMProviderCredentialStatus, ...]) -> list[str]:
+        status_map = {status.provider: status for status in statuses}
         return [
-            " or ".join(group)
-            for group in self.required_env_groups
-            if not any((os.getenv(name) or "").strip() for name in group)
+            " or ".join(_provider_env_groups(provider)[0])
+            for provider in self.required_providers
+            if not status_map[provider].configured
         ]
 
-    def is_available(self) -> bool:
-        return not self.missing_env_vars()
+    def is_available(self, statuses: tuple[LLMProviderCredentialStatus, ...]) -> bool:
+        status_map = {status.provider: status for status in statuses}
+        return all(status_map[provider].configured for provider in self.required_providers)
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,53 @@ class LLMRuntimeBundle:
         if capability == LLMCapability.NARRATION:
             return self.narration
         return self.reasoning
+
+
+@dataclass(frozen=True)
+class LLMCredentials:
+    openrouter_api_key: str | None = None
+    gemini_api_key: str | None = None
+
+    @classmethod
+    def from_json_dict(cls, payload: object) -> LLMCredentials:
+        if not isinstance(payload, dict):
+            return cls()
+        openrouter = _clean_secret(payload.get("openrouter_api_key"))
+        gemini = _clean_secret(payload.get("gemini_api_key"))
+        return cls(openrouter_api_key=openrouter, gemini_api_key=gemini)
+
+    def to_json_dict(self) -> dict[str, str]:
+        payload: dict[str, str] = {}
+        if self.openrouter_api_key is not None:
+            payload["openrouter_api_key"] = self.openrouter_api_key
+        if self.gemini_api_key is not None:
+            payload["gemini_api_key"] = self.gemini_api_key
+        return payload
+
+    def for_provider(self, provider: LLMProvider) -> str | None:
+        if provider == LLMProvider.OPENROUTER:
+            return self.openrouter_api_key
+        return self.gemini_api_key
+
+    def with_provider(self, provider: LLMProvider, api_key: str) -> LLMCredentials | None:
+        cleaned = _clean_secret(api_key)
+        if cleaned is None:
+            return None
+        if provider == LLMProvider.OPENROUTER:
+            return replace(self, openrouter_api_key=cleaned)
+        return replace(self, gemini_api_key=cleaned)
+
+
+@dataclass(frozen=True)
+class LLMProviderCredentialStatus:
+    provider: LLMProvider
+    label: str
+    api_key: str | None
+    source: CredentialSource
+
+    @property
+    def configured(self) -> bool:
+        return self.api_key is not None
 
 
 class RuntimeSettingsStore:
@@ -125,6 +186,31 @@ class RuntimeSettingsStore:
         return LLMRuntimeSettings.from_json_dict(payload)
 
     def save(self, settings: LLMRuntimeSettings) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(settings.to_json_dict(), indent=2, sort_keys=True) + "\n"
+        tmp_path = self._path.with_suffix(f"{self._path.suffix}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(self._path)
+
+
+class LLMCredentialsStore:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def load(self) -> LLMCredentials:
+        if not self._path.exists():
+            return LLMCredentials()
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return LLMCredentials()
+        return LLMCredentials.from_json_dict(payload)
+
+    def save(self, settings: LLMCredentials) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(settings.to_json_dict(), indent=2, sort_keys=True) + "\n"
         tmp_path = self._path.with_suffix(f"{self._path.suffix}.tmp")
@@ -392,7 +478,7 @@ def describe_llm_presets() -> tuple[LLMPresetDescriptor, ...]:
             structured_model=DEFAULT_MODEL,
             narration_model=DEFAULT_MODEL,
             reasoning_model=DEFAULT_MODEL,
-            required_env_groups=(("OPENROUTER_API_KEY", "LITELLM_API_KEY"),),
+            required_providers=(LLMProvider.OPENROUTER,),
         ),
         LLMPresetDescriptor(
             id=LLMPreset.GEMINI_SPLIT,
@@ -404,16 +490,21 @@ def describe_llm_presets() -> tuple[LLMPresetDescriptor, ...]:
             structured_model=DEFAULT_GEMINI_FLASH_MODEL,
             narration_model=DEFAULT_GEMINI_PRO_MODEL,
             reasoning_model=DEFAULT_GEMINI_PRO_MODEL,
-            required_env_groups=(("GEMINI_API_KEY", "GOOGLE_API_KEY", "LITELLM_API_KEY"),),
+            required_providers=(LLMProvider.GEMINI,),
         ),
     )
 
 
-def build_llm_runtime(settings: LLMRuntimeSettings | None = None) -> LLMRuntimeBundle:
+def build_llm_runtime(
+    settings: LLMRuntimeSettings | None = None,
+    credentials: LLMCredentials | None = None,
+) -> LLMRuntimeBundle:
     current = settings or LLMRuntimeSettings()
     base = LLMConfig.from_env()
+    provider_statuses = resolve_provider_credentials(credentials)
+    status_map = {status.provider: status for status in provider_statuses}
     if current.llm_preset == LLMPreset.GEMINI_SPLIT:
-        gemini_key = _first_present_env(("GEMINI_API_KEY", "GOOGLE_API_KEY", "LITELLM_API_KEY"))
+        gemini_key = status_map[LLMProvider.GEMINI].api_key
         structured = replace(
             base,
             model=DEFAULT_GEMINI_FLASH_MODEL,
@@ -440,7 +531,7 @@ def build_llm_runtime(settings: LLMRuntimeSettings | None = None) -> LLMRuntimeB
     kimi = replace(
         base,
         model=DEFAULT_MODEL,
-        api_key=_first_present_env(("OPENROUTER_API_KEY", "LITELLM_API_KEY")),
+        api_key=status_map[LLMProvider.OPENROUTER].api_key,
         base_url=_env_str("OPENROUTER_API_BASE", default=DEFAULT_OPENROUTER_BASE_URL).rstrip("/"),
         app_name=os.getenv("OR_APP_NAME") or "Dungeon Master",
         site_url=os.getenv("OR_SITE_URL") or None,
@@ -466,6 +557,7 @@ def single_llm_runtime(config: LLMConfig) -> LLMRuntimeBundle:
 class AppConfig:
     state_path: Path
     runtime_settings_path: Path
+    credentials_path: Path
     llm: LLMConfig
 
     @classmethod
@@ -479,8 +571,68 @@ class AppConfig:
                     default=str(DEFAULT_RUNTIME_SETTINGS_PATH),
                 ),
             ),
+            credentials_path=Path(
+                _env_str(
+                    "DUNGEON_MASTER_CREDENTIALS_PATH",
+                    default=str(DEFAULT_CREDENTIALS_PATH),
+                ),
+            ),
             llm=LLMConfig.from_env(),
         )
+
+
+def resolve_provider_credentials(
+    credentials: LLMCredentials | None = None,
+) -> tuple[LLMProviderCredentialStatus, ...]:
+    stored = credentials or LLMCredentials()
+    return tuple(_provider_status(provider, stored) for provider in LLMProvider)
+
+
+def _provider_status(
+    provider: LLMProvider,
+    credentials: LLMCredentials,
+) -> LLMProviderCredentialStatus:
+    stored_secret = credentials.for_provider(provider)
+    if stored_secret is not None:
+        return LLMProviderCredentialStatus(
+            provider=provider,
+            label=_provider_label(provider),
+            api_key=stored_secret,
+            source=CredentialSource.STORED,
+        )
+    env_secret = _first_present_env(_provider_env_groups(provider)[0])
+    if env_secret is not None:
+        return LLMProviderCredentialStatus(
+            provider=provider,
+            label=_provider_label(provider),
+            api_key=env_secret,
+            source=CredentialSource.ENV,
+        )
+    return LLMProviderCredentialStatus(
+        provider=provider,
+        label=_provider_label(provider),
+        api_key=None,
+        source=CredentialSource.NONE,
+    )
+
+
+def _provider_label(provider: LLMProvider) -> str:
+    if provider == LLMProvider.OPENROUTER:
+        return "OpenRouter"
+    return "Gemini"
+
+
+def _provider_env_groups(provider: LLMProvider) -> tuple[tuple[str, ...], ...]:
+    if provider == LLMProvider.OPENROUTER:
+        return (("OPENROUTER_API_KEY", "LITELLM_API_KEY"),)
+    return (("GEMINI_API_KEY", "GOOGLE_API_KEY", "LITELLM_API_KEY"),)
+
+
+def _clean_secret(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _first_present_env(names: tuple[str, ...]) -> str | None:

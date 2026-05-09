@@ -22,13 +22,37 @@ import type {
   ExplanationResponse,
   GameState,
   Likelihood,
+  LLMProvider,
   LLMPreset,
   LLMSettingsResponse,
   OracleOutcome,
   SaveLibraryBootstrapResponse,
 } from "./types";
 
-const BASE = "/api";
+const DEFAULT_API_BASE = "/api";
+const ENV_API_BASE =
+  typeof import.meta.env.VITE_API_BASE_URL === "string"
+    ? import.meta.env.VITE_API_BASE_URL
+    : "";
+let runtimeApiBase = normalizeApiBase(ENV_API_BASE || DEFAULT_API_BASE);
+
+function normalizeApiBase(base: string): string {
+  const cleaned = base.trim();
+  if (!cleaned) return DEFAULT_API_BASE;
+  return cleaned.endsWith("/") ? cleaned.slice(0, -1) : cleaned;
+}
+
+function apiUrl(path: string): string {
+  return `${runtimeApiBase}${path}`;
+}
+
+export function setApiBase(base: string): void {
+  runtimeApiBase = normalizeApiBase(base);
+}
+
+export function getApiBase(): string {
+  return runtimeApiBase;
+}
 
 class ApiError extends Error {
   public readonly status: number;
@@ -53,7 +77,7 @@ async function request<T>(
     body = JSON.stringify(init.json);
   }
 
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers,
     body,
@@ -121,6 +145,17 @@ export const api = {
       method: "POST",
       signal,
       json: { preset },
+    }),
+
+  updateLlmCredentials: (
+    provider: LLMProvider,
+    api_key: string,
+    signal?: AbortSignal,
+  ): Promise<LLMSettingsResponse> =>
+    request("/settings/credentials", {
+      method: "POST",
+      signal,
+      json: { provider, api_key },
     }),
 
   getState: (signal?: AbortSignal): Promise<GameState> => request("/state", { signal }),
@@ -325,14 +360,14 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/turn/stream`, handlers, { signal, json: { text } }),
+    consumeStream(apiUrl("/turn/stream"), handlers, { signal, json: { text } }),
 
   streamSubmitAction: (
     action: string,
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/action/stream`, handlers, { signal, json: { action } }),
+    consumeStream(apiUrl("/action/stream"), handlers, { signal, json: { action } }),
 
   streamRegenerateMessage: (
     eventId: string,
@@ -340,7 +375,7 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
     consumeStream(
-      `${BASE}/messages/${eventId}/regenerate/stream`,
+      apiUrl(`/messages/${eventId}/regenerate/stream`),
       handlers,
       { signal },
     ),
@@ -349,14 +384,14 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/campaign/start/stream`, handlers, { signal }),
+    consumeStream(apiUrl("/campaign/start/stream"), handlers, { signal }),
 
   streamCharacterQuiz: (
     concept: string,
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/character/quiz/stream`, handlers, {
+    consumeStream(apiUrl("/character/quiz/stream"), handlers, {
       signal,
       json: { concept },
     }),
@@ -368,7 +403,7 @@ export const api = {
     template: CharacterSheet | undefined,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/character/draft/stream`, handlers, {
+    consumeStream(apiUrl("/character/draft/stream"), handlers, {
       signal,
       json: { mode, prompt, template },
     }),
@@ -384,7 +419,7 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/explain/stream`, handlers, {
+    consumeStream(apiUrl("/explain/stream"), handlers, {
       signal,
       json: { question },
     }),
@@ -407,7 +442,7 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
     consumeStream(
-      `${BASE}/requests/${encodeURIComponent(requestId)}/stream`,
+      apiUrl(`/requests/${encodeURIComponent(requestId)}/stream`),
       handlers,
       { signal, method: "GET" },
     ),
@@ -419,7 +454,7 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(`${BASE}/character/draft/quizzed/stream`, handlers, {
+    consumeStream(apiUrl("/character/draft/quizzed/stream"), handlers, {
       signal,
       json: { concept, answers, final_note: finalNote },
     }),

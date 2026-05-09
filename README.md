@@ -57,13 +57,51 @@ To run the backend with autoreload during development:
 uv run dungeon-master --reload
 ```
 
+## Desktop Beta
+
+The repo now includes a Tauri v2 desktop shell in `web/src-tauri/`.
+
+- The Tauri app spawns a bundled Python sidecar for the FastAPI backend.
+- The sidecar writes saves/runtime settings/BYOK credentials into the OS app-data directory instead of the repo-local `data/` tree.
+- The frontend resolves its API base at runtime, so browser dev still uses Vite's `/api` proxy while the desktop shell points directly at the local sidecar.
+
+Local desktop commands:
+
+```shell
+# Build the backend sidecar binary Tauri expects
+cd web
+npm run sidecar:build
+
+# Run the desktop shell in dev mode
+npm run tauri:dev
+
+# Build desktop bundles for the current host platform
+npm run tauri:build
+```
+
+Rust is required for the local Tauri build/dev commands. The Python sidecar build alone does not require `cargo` to be on `PATH`.
+
+GitHub desktop release automation lives in `.github/workflows/desktop-release.yml`.
+It currently targets:
+
+- macOS on native Apple Silicon and Intel runners
+- Windows x64
+- Linux x64
+
+These beta artifacts are unsigned. macOS may require right-click Open / quarantine removal, and Windows may show SmartScreen warnings until signing is added later.
+
 ## Configure The Narrative Model
 
 Default preset is OpenRouter Kimi K2.6. The backend now also supports an app-global Gemini split preset:
 - `kimi`: current behavior, using `openrouter/moonshotai/kimi-k2.6` for all backend LLM work
 - `gemini_split`: `gemini/gemini-3-flash-preview` for structured routing/update work and `gemini/gemini-3.1-pro-preview` for narration plus heavier generation
 
-The active preset is stored separately from `.env` in `data/runtime_settings.json` by default and can be read/updated through `GET /api/settings/llm` and `POST /api/settings/llm`. Credentials remain env-only.
+The active preset is stored separately from `.env` in `data/runtime_settings.json` by default and can be read/updated through `GET /api/settings/llm` and `POST /api/settings/llm`.
+
+Credential behavior now depends on how you run the app:
+
+- Terminal/dev workflow: `.env` still works exactly as before.
+- Desktop beta: if no usable provider key is present in the environment, the app prompts for a Gemini or OpenRouter key on first launch and stores it in a local runtime credentials file under the app-data directory.
 
 Character interview, character drafting, and campaign bootstrap internally raise their own token budgets above the base `.env` default because Kimi K2.6 Thinking spends a large chunk of the budget on reasoning before it writes visible output.
 
@@ -83,6 +121,7 @@ LITELLM_MAX_RETRIES=2
 OR_APP_NAME=Dungeon Master
 DUNGEON_MASTER_STATE_PATH=data/game_state.json
 DUNGEON_MASTER_RUNTIME_SETTINGS_PATH=data/runtime_settings.json
+DUNGEON_MASTER_CREDENTIALS_PATH=data/llm_credentials.json
 ```
 
 If you stay on the default Kimi preset, `LITELLM_MODEL` remains the active backend model slug. If you switch to `gemini_split`, the backend uses the fixed Gemini 3.x LiteLLM slugs above and ignores `LITELLM_MODEL` for those runtime-routed capabilities.

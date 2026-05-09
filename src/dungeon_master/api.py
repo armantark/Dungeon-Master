@@ -26,12 +26,18 @@ from pydantic import BaseModel, Field
 from dungeon_master.campaign import CharacterDraftMode
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
 from dungeon_master.config import (
+    CredentialSource,
+    LLMCredentials,
+    LLMCredentialsStore,
     LLMPreset,
+    LLMProvider,
+    LLMProviderCredentialStatus,
     LLMRuntimeBundle,
     LLMRuntimeSettings,
     RuntimeSettingsStore,
     build_llm_runtime,
     describe_llm_presets,
+    resolve_provider_credentials,
 )
 from dungeon_master.models import (
     AttackStance,
@@ -48,7 +54,11 @@ from dungeon_master.models import (
 from dungeon_master.narrative import CompletionDelta
 from dungeon_master.save_library import SaveLibrary, SaveSummary
 from dungeon_master.service import GameService
-from dungeon_master.settings import runtime_settings_path_from_env, state_path_from_env
+from dungeon_master.settings import (
+    credentials_path_from_env,
+    runtime_settings_path_from_env,
+    state_path_from_env,
+)
 from dungeon_master.state_store import StateStore
 from dungeon_master.stream_session import SessionRegistry, StreamSession
 from dungeon_master.turn_router import TurnPlanningError
@@ -57,6 +67,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Generator
 
 logger = logging.getLogger(__name__)
+API_KEY_MASK_VISIBLE = 4
+API_KEY_MASK_SHORT_THRESHOLD = API_KEY_MASK_VISIBLE * 2
 
 
 class ChaosFactorRequest(BaseModel):
@@ -186,6 +198,11 @@ class LLMSettingsUpdateRequest(BaseModel):
     preset: LLMPreset
 
 
+class LLMCredentialsUpdateRequest(BaseModel):
+    provider: LLMProvider
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 class LLMPresetOptionResponse(BaseModel):
     id: LLMPreset
     label: str
@@ -197,12 +214,22 @@ class LLMPresetOptionResponse(BaseModel):
     missing_env_vars: list[str] = Field(default_factory=list)
 
 
+class LLMProviderCredentialResponse(BaseModel):
+    id: LLMProvider
+    label: str
+    configured: bool
+    source: CredentialSource
+    masked_key: str | None = None
+
+
 class LLMSettingsResponse(BaseModel):
     preset: LLMPreset
     structured_model: str
     narration_model: str
     reasoning_model: str
     presets: list[LLMPresetOptionResponse]
+    needs_key: bool
+    provider_credentials: list[LLMProviderCredentialResponse]
 
 
 class CharacterQuizzedDraftRequest(BaseModel):
@@ -243,6 +270,11 @@ def build_runtime_settings_store(settings_path: Path | None = None) -> RuntimeSe
     return RuntimeSettingsStore(path)
 
 
+def build_credentials_store(settings_path: Path | None = None) -> LLMCredentialsStore:
+    path = settings_path or credentials_path_from_env()
+    return LLMCredentialsStore(path)
+
+
 def get_service(request: Request) -> GameService:
     """FastAPI dependency that pulls the live `GameService` off app state.
 
@@ -276,6 +308,13 @@ def get_runtime_settings_store(request: Request) -> RuntimeSettingsStore:
     return store
 
 
+def get_credentials_store(request: Request) -> LLMCredentialsStore:
+    store = getattr(request.app.state, "credentials_store", None)
+    if not isinstance(store, LLMCredentialsStore):
+        raise ServiceUnavailableError
+    return store
+
+
 def get_cancellation_registry(request: Request) -> CancellationRegistry:
     registry = getattr(request.app.state, "cancellation_registry", None)
     if not isinstance(registry, CancellationRegistry):
@@ -293,6 +332,7 @@ def get_session_registry(request: Request) -> SessionRegistry:
 ServiceDep = Annotated[GameService, Depends(get_service)]
 LibraryDep = Annotated[SaveLibrary, Depends(get_save_library)]
 RuntimeSettingsStoreDep = Annotated[RuntimeSettingsStore, Depends(get_runtime_settings_store)]
+CredentialsStoreDep = Annotated[LLMCredentialsStore, Depends(get_credentials_store)]
 RegistryDep = Annotated[CancellationRegistry, Depends(get_cancellation_registry)]
 SessionRegistryDep = Annotated[SessionRegistry, Depends(get_session_registry)]
 
@@ -314,7 +354,38 @@ def _runtime_bundle(app: FastAPI) -> LLMRuntimeBundle:
     return bundle
 
 
-def _llm_settings_response(bundle: LLMRuntimeBundle) -> LLMSettingsResponse:
+def _stored_llm_credentials(app: FastAPI) -> LLMCredentials:
+    credentials = getattr(app.state, "llm_credentials", None)
+    if not isinstance(credentials, LLMCredentials):
+        raise ServiceUnavailableError
+    return credentials
+
+
+def _mask_api_key(api_key: str | None) -> str | None:
+    if api_key is None:
+        return None
+    if len(api_key) <= API_KEY_MASK_SHORT_THRESHOLD:
+        return "*" * len(api_key)
+    return f"{api_key[:API_KEY_MASK_VISIBLE]}...{api_key[-API_KEY_MASK_VISIBLE:]}"
+
+
+def _credential_response(
+    status: LLMProviderCredentialStatus,
+) -> LLMProviderCredentialResponse:
+    return LLMProviderCredentialResponse(
+        id=status.provider,
+        label=status.label,
+        configured=status.configured,
+        source=status.source,
+        masked_key=_mask_api_key(status.api_key),
+    )
+
+
+def _llm_settings_response(
+    bundle: LLMRuntimeBundle,
+    credentials: LLMCredentials,
+) -> LLMSettingsResponse:
+    provider_statuses = resolve_provider_credentials(credentials)
     return LLMSettingsResponse(
         preset=bundle.settings.llm_preset,
         structured_model=bundle.structured.model,
@@ -328,16 +399,18 @@ def _llm_settings_response(bundle: LLMRuntimeBundle) -> LLMSettingsResponse:
                 structured_model=descriptor.structured_model,
                 narration_model=descriptor.narration_model,
                 reasoning_model=descriptor.reasoning_model,
-                available=descriptor.is_available(),
-                missing_env_vars=descriptor.missing_env_vars(),
+                available=descriptor.is_available(provider_statuses),
+                missing_env_vars=descriptor.missing_env_vars(provider_statuses),
             )
             for descriptor in describe_llm_presets()
         ],
+        needs_key=not any(status.configured for status in provider_statuses),
+        provider_credentials=[_credential_response(status) for status in provider_statuses],
     )
 
 
 def _apply_runtime_settings(app: FastAPI, settings: LLMRuntimeSettings) -> LLMRuntimeBundle:
-    bundle = build_llm_runtime(settings)
+    bundle = build_llm_runtime(settings, _stored_llm_credentials(app))
     seen_services: set[int] = set()
     for attr in ("service", "service_template"):
         service = getattr(app.state, attr, None)
@@ -350,6 +423,22 @@ def _apply_runtime_settings(app: FastAPI, settings: LLMRuntimeSettings) -> LLMRu
         seen_services.add(identity)
     app.state.llm_runtime = bundle
     return bundle
+
+
+def _initialize_llm_runtime(
+    app: FastAPI,
+    *,
+    settings_store: RuntimeSettingsStore,
+    credentials_store: LLMCredentialsStore,
+) -> LLMRuntimeBundle:
+    runtime_settings = settings_store.load()
+    llm_credentials = credentials_store.load()
+    llm_runtime = build_llm_runtime(runtime_settings, llm_credentials)
+    app.state.runtime_settings_store = settings_store
+    app.state.credentials_store = credentials_store
+    app.state.llm_credentials = llm_credentials
+    app.state.llm_runtime = llm_runtime
+    return llm_runtime
 
 
 def _bind_service_to_active_save(app: FastAPI, save_id: str) -> GameService:
@@ -688,7 +777,10 @@ def library_bootstrap(library: LibraryDep) -> SaveLibraryBootstrapResponse:
 
 @router.get("/settings/llm", response_model=LLMSettingsResponse)
 def read_llm_settings(request: Request) -> LLMSettingsResponse:
-    return _llm_settings_response(_runtime_bundle(request.app))
+    return _llm_settings_response(
+        _runtime_bundle(request.app),
+        _stored_llm_credentials(request.app),
+    )
 
 
 @router.post("/settings/llm", response_model=LLMSettingsResponse)
@@ -703,8 +795,9 @@ def update_llm_settings(
         detail="Cannot change LLM settings while a request is still in flight.",
     )
     settings = LLMRuntimeSettings(llm_preset=payload.preset)
-    candidate = build_llm_runtime(settings)
-    candidate_response = _llm_settings_response(candidate)
+    stored_credentials = _stored_llm_credentials(request.app)
+    candidate = build_llm_runtime(settings, stored_credentials)
+    candidate_response = _llm_settings_response(candidate, stored_credentials)
     selected_option = next(
         (
             option
@@ -724,7 +817,32 @@ def update_llm_settings(
         )
     settings_store.save(settings)
     bundle = _apply_runtime_settings(request.app, settings)
-    return _llm_settings_response(bundle)
+    return _llm_settings_response(bundle, stored_credentials)
+
+
+@router.post("/settings/credentials", response_model=LLMSettingsResponse)
+def update_llm_credentials(
+    request: Request,
+    settings_store: RuntimeSettingsStoreDep,
+    credentials_store: CredentialsStoreDep,
+    registry: RegistryDep,
+    payload: Annotated[LLMCredentialsUpdateRequest, Body()],
+) -> LLMSettingsResponse:
+    _guard_request_idle(
+        registry,
+        detail="Cannot change LLM credentials while a request is still in flight.",
+    )
+    stored_credentials = _stored_llm_credentials(request.app)
+    updated_credentials = stored_credentials.with_provider(payload.provider, payload.api_key)
+    if updated_credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="provider credentials cannot be empty",
+        )
+    credentials_store.save(updated_credentials)
+    request.app.state.llm_credentials = updated_credentials
+    bundle = _apply_runtime_settings(request.app, settings_store.load())
+    return _llm_settings_response(bundle, updated_credentials)
 
 
 @router.post("/library/saves", response_model=SaveLibraryBootstrapResponse)
@@ -1288,6 +1406,7 @@ def create_app(
     service: GameService | None = None,
     save_library: SaveLibrary | None = None,
     runtime_settings_store: RuntimeSettingsStore | None = None,
+    credentials_store: LLMCredentialsStore | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -1303,12 +1422,14 @@ def create_app(
         if library is None and service is None:
             library = build_save_library()
         settings_store = runtime_settings_store or build_runtime_settings_store()
-        runtime_settings = settings_store.load()
-        llm_runtime = build_llm_runtime(runtime_settings)
+        llm_credentials_store = credentials_store or build_credentials_store()
+        llm_runtime = _initialize_llm_runtime(
+            app,
+            settings_store=settings_store,
+            credentials_store=llm_credentials_store,
+        )
 
         app.state.save_library = library
-        app.state.runtime_settings_store = settings_store
-        app.state.llm_runtime = llm_runtime
         app.state.service_template = service
 
         if library is not None:
@@ -1342,6 +1463,8 @@ def create_app(
             app.state.service_template = None
             app.state.save_library = None
             app.state.runtime_settings_store = None
+            app.state.credentials_store = None
+            app.state.llm_credentials = None
             app.state.llm_runtime = None
             app.state.cancellation_registry = None
             executor = getattr(app.state, "stream_executor", None)
@@ -1360,12 +1483,12 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # The frontend is served from Vite at :5173 in dev. In single-user prod
-    # we typically reverse-proxy or run them on the same host, but the
-    # permissive policy is fine because this is a personal-machine app.
+    # The browser client is either Vite dev or Tauri's custom app origin.
+    # This backend binds to localhost for a single-player desktop app, so a
+    # local-only wildcard keeps packaged builds from failing CORS preflight.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origin_regex=r"^(http://(localhost|127\.0\.0\.1):\d+|tauri://localhost)$",
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],

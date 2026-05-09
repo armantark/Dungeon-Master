@@ -695,7 +695,10 @@ def _setup_state(*, configured: bool) -> GameState:
     setting = (
         "Choose who enters the world before the world is generated."
         if configured
-        else "Add OPENROUTER_API_KEY to .env to enable AI-driven character and campaign generation."
+        else (
+            "Add a Gemini or OpenRouter API key in the app settings or .env "
+            "to enable AI-driven character and campaign generation."
+        )
     )
     return GameState(
         current_scene="Character creation stands before the first scene.",
@@ -1438,8 +1441,8 @@ class CampaignGenerator:
         error: Exception | None = None,
     ) -> GameState:
         note = (
-            "No campaign fiction has been generated yet. Add OPENROUTER_API_KEY "
-            "to .env, then try again."
+            "No campaign fiction has been generated yet. Add a Gemini or OpenRouter "
+            "API key in the app settings or .env, then try again."
             if error is None
             else (
                 "Campaign generation failed, so this placeholder world was produced instead. "

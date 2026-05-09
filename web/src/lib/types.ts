@@ -523,6 +523,8 @@ export interface SaveLibraryBootstrapResponse {
 // switch on `preset` and fail at type-check time when the backend
 // grows a new option.
 export type LLMPreset = "kimi" | "gemini_split";
+export type LLMProvider = "openrouter" | "gemini";
+export type CredentialSource = "none" | "env" | "stored";
 
 // Mirrors `LLMPresetOptionResponse`. `available` is false when the
 // preset's required env vars are missing on the server — the UI
@@ -539,6 +541,14 @@ export interface LLMPresetOption {
   missing_env_vars: string[];
 }
 
+export interface LLMProviderCredential {
+  id: LLMProvider;
+  label: string;
+  configured: boolean;
+  source: CredentialSource;
+  masked_key: string | null;
+}
+
 // Mirrors `LLMSettingsResponse`. `structured_model` / `narration_model`
 // / `reasoning_model` are the resolved per-capability LiteLLM slugs
 // for the active preset — the UI shows them as a "what's running
@@ -550,6 +560,8 @@ export interface LLMSettingsResponse {
   narration_model: string;
   reasoning_model: string;
   presets: LLMPresetOption[];
+  needs_key: boolean;
+  provider_credentials: LLMProviderCredential[];
 }
 
 // F-10 OOC rules explainer. Mirrors the backend `ExplanationResponse`.

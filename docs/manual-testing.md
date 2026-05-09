@@ -261,3 +261,31 @@ Use Pinchtab (`https://github.com/pinchtab/pinchtab`) for the browser steps so t
 5. Start a long-running turn, immediately reopen the modal, and try clicking `Kimi`. Confirm the modal renders an inline error reading "Cannot change LLM settings while a request is still in flight." and the radio remains on Gemini split. Wait for the turn to finish and retry the swap — it should now succeed.
 6. With `GEMINI_API_KEY` empty in `.env`, restart the backend, open the modal, and confirm the `Gemini split` card is greyed out, shows an `Unavailable` badge, and lists `GEMINI_API_KEY` under "Missing environment variables". Confirm clicking the card does nothing.
 7. Reload the browser. Confirm the active preset persists across reloads (the modal still reflects the disk-resident `runtime_settings.json`).
+
+## Desktop Beta BYOK
+
+These steps cover the new Tauri desktop beta shell and the first-run BYOK flow.
+
+1. Build the backend sidecar:
+
+   ```shell
+   cd web
+   npm run sidecar:build
+   ```
+
+2. If Rust is installed locally, launch the desktop shell:
+
+   ```shell
+   npm run tauri:dev
+   ```
+
+3. Ensure there is no usable provider key in the environment (`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `LITELLM_API_KEY` unset or empty) and remove any prior desktop credential file in the app-data directory if you want a true first-run check.
+4. Confirm the desktop app opens to the BYOK overlay before the save library or character setup appears.
+5. Choose `Gemini` or `OpenRouter`, paste a valid key, and click `Save key`. Confirm:
+   - The overlay blocks close while saving.
+   - Gemini auto-selects the `Gemini split` preset after save; OpenRouter keeps `Kimi`.
+   - The app proceeds into the normal save-library / setup flow without requiring `.env`.
+6. Open `Narrative model` from the system menu. Confirm the provider-key section shows the configured provider as either `Saved in app settings` or `Loaded from .env`, with the key masked.
+7. Quit and relaunch the desktop app. Confirm the BYOK overlay does not reappear and the masked provider status is still present.
+
+If Rust is not installed on the local machine, treat the sidecar build (`npm run sidecar:build`) plus the GitHub Actions desktop-release workflow as the current verification surface for the desktop beta.

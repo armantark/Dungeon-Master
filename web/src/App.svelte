@@ -28,6 +28,7 @@ Everything else remains peekable reference in the Inspector.
   import CharacterFolio from "./components/CharacterFolio.svelte";
   import ChatFeed from "./components/ChatFeed.svelte";
   import Composer from "./components/Composer.svelte";
+  import CredentialSetupModal from "./components/CredentialSetupModal.svelte";
   import EndBanner from "./components/EndBanner.svelte";
   import Inspector from "./components/Inspector.svelte";
   import SaveLibrary from "./components/SaveLibrary.svelte";
@@ -42,7 +43,7 @@ Everything else remains peekable reference in the Inspector.
     // empty-shelf splash. Routing through `bootstrap` instead of the
     // old `refresh()` avoids a 409 round-trip on a fresh install,
     // since `/state` returns 409 when no save is selected.
-    void game.bootstrap();
+    void game.bootstrapRuntime();
   });
 
   // F-06 + F-12: a campaign in its terminal state ("ended") still wants
@@ -60,6 +61,9 @@ Everything else remains peekable reference in the Inspector.
     | "active"
     | "ended";
   const layout: LayoutMode = $derived.by<LayoutMode>(() => {
+    if (game.runtimeStatus === "checking" || game.runtimeStatus === "error") {
+      return "loading";
+    }
     if (game.libraryStatus === "loading") return "loading";
     if (game.libraryStatus === "empty") return "library-empty";
     if (game.libraryStatus === "selecting") return "library-selecting";
@@ -100,7 +104,16 @@ Everything else remains peekable reference in the Inspector.
     </div>
   {/if}
 
-  {#if isLibrarySplash}
+  {#if game.runtimeStatus === "error"}
+    <main class="app__setup">
+      <div class="error">
+        {game.runtimeError}
+        <button type="button" class="btn ghost retry-btn" onclick={() => void game.bootstrapRuntime()}>
+          Retry
+        </button>
+      </div>
+    </main>
+  {:else if isLibrarySplash}
     <main class="app__library">
       <SaveLibrary mode={layout === "library-empty" ? "empty" : "selecting"} />
     </main>
@@ -162,6 +175,7 @@ Everything else remains peekable reference in the Inspector.
     unconditionally here is cheap when closed.
   -->
   <SettingsModal />
+  <CredentialSetupModal />
 </div>
 
 <style>
@@ -174,6 +188,9 @@ Everything else remains peekable reference in the Inspector.
   }
   .strip-skel .kicker {
     margin: 0;
+  }
+  .retry-btn {
+    margin-left: 0.75rem;
   }
   .loading {
     margin: 1.4rem 0;

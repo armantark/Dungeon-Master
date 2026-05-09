@@ -36,7 +36,9 @@ from dungeon_master.config import (
     DEFAULT_GEMINI_FLASH_MODEL,
     DEFAULT_GEMINI_PRO_MODEL,
     DEFAULT_MODEL,
+    LLMCredentialsStore,
     LLMPreset,
+    LLMProvider,
     RuntimeSettingsStore,
 )
 from dungeon_master.explainer import ExplanationResult
@@ -1233,10 +1235,40 @@ def test_llm_settings_endpoint_defaults_to_kimi(
     assert payload["preset"] == LLMPreset.KIMI.value
     assert payload["structured_model"] == DEFAULT_MODEL
     assert payload["narration_model"] == DEFAULT_MODEL
+    assert payload["needs_key"] is False
+    assert any(credential["source"] == "env" for credential in payload["provider_credentials"])
     assert any(
         option["id"] == LLMPreset.GEMINI_SPLIT.value
         for option in payload["presets"]
     )
+
+
+def test_llm_settings_endpoint_reports_first_run_when_no_credentials_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
+    monkeypatch.setenv("LITELLM_API_KEY", "")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    credentials_store = LLMCredentialsStore(tmp_path / "llm_credentials.json")
+
+    with TestClient(
+        create_app(
+            save_library=library,
+            runtime_settings_store=settings_store,
+            credentials_store=credentials_store,
+        ),
+    ) as client:
+        response = client.get("/api/settings/llm")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["needs_key"] is True
+    assert all(not credential["configured"] for credential in payload["provider_credentials"])
+    assert any(not option["available"] for option in payload["presets"])
 
 
 def test_llm_settings_endpoint_updates_to_gemini_split(
@@ -1264,6 +1296,84 @@ def test_llm_settings_endpoint_updates_to_gemini_split(
         app = cast("Any", client.app)
         assert app.state.llm_runtime.structured.model == DEFAULT_GEMINI_FLASH_MODEL
         assert app.state.llm_runtime.narration.model == DEFAULT_GEMINI_PRO_MODEL
+
+
+def test_llm_credentials_endpoint_persists_masked_gemini_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
+    monkeypatch.setenv("LITELLM_API_KEY", "")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    credentials_store = LLMCredentialsStore(tmp_path / "llm_credentials.json")
+
+    with TestClient(
+        create_app(
+            save_library=library,
+            runtime_settings_store=settings_store,
+            credentials_store=credentials_store,
+        ),
+    ) as client:
+        response = client.post(
+            "/api/settings/credentials",
+            json={"provider": LLMProvider.GEMINI.value, "api_key": "gemini-secret-1234"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    gemini = next(
+        credential
+        for credential in payload["provider_credentials"]
+        if credential["id"] == LLMProvider.GEMINI.value
+    )
+    assert gemini["configured"] is True
+    assert gemini["source"] == "stored"
+    assert gemini["masked_key"] == "gemi...1234"
+    assert credentials_store.load().gemini_api_key == "gemini-secret-1234"
+    assert all(
+        "gemini-secret-1234" not in json.dumps(credential)
+        for credential in payload["provider_credentials"]
+    )
+
+
+def test_llm_settings_endpoint_uses_stored_credentials_for_preset_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GOOGLE_API_KEY", "")
+    monkeypatch.setenv("LITELLM_API_KEY", "")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+    credentials_store = LLMCredentialsStore(tmp_path / "llm_credentials.json")
+
+    with TestClient(
+        create_app(
+            save_library=library,
+            runtime_settings_store=settings_store,
+            credentials_store=credentials_store,
+        ),
+    ) as client:
+        save_response = client.post(
+            "/api/settings/credentials",
+            json={"provider": LLMProvider.GEMINI.value, "api_key": "gemini-stored-key"},
+        )
+        response = client.post(
+            "/api/settings/llm",
+            json={"preset": LLMPreset.GEMINI_SPLIT.value},
+        )
+        assert save_response.status_code == 200
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["preset"] == LLMPreset.GEMINI_SPLIT.value
+        assert payload["structured_model"] == DEFAULT_GEMINI_FLASH_MODEL
+        app = cast("Any", client.app)
+        assert app.state.llm_runtime.structured.api_key == "gemini-stored-key"
+        assert app.state.llm_runtime.narration.api_key == "gemini-stored-key"
 
 
 def test_llm_settings_endpoint_rejects_switch_while_request_is_in_flight(

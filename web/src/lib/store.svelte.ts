@@ -26,6 +26,7 @@ import type {
   CharacterSheet,
   GameState,
   Likelihood,
+  LLMProvider,
   LLMPreset,
   LLMSettingsResponse,
   OracleOutcome,
@@ -265,6 +266,9 @@ export type LlmSettingsStatus =
   | "saving"
   | "error";
 
+export type RuntimeBootstrapStatus = "checking" | "needs_key" | "ready" | "error";
+export type CredentialSetupStatus = "idle" | "saving" | "error";
+
 // F-09 cross-component scroll request. The Inspector commands the
 // ChatFeed to scroll a particular event into view (oracle deep-link,
 // transcript search hit). We model this as a one-shot signal with a
@@ -346,6 +350,21 @@ class GameStore {
   // its own error sink. The splash screen renders this verbatim.
   libraryError: string | null = $state(null);
 
+  // Runtime bootstrap / BYOK --------------------------------------------------
+  //
+  // Packaged builds need an app-level readiness gate before campaign
+  // bootstrap. If no Gemini/OpenRouter key exists (stored credential or
+  // developer `.env`), the player must configure one before the save
+  // library and campaign generation become useful. This sits above any
+  // one save because provider credentials are runtime config, not campaign
+  // canon.
+  runtimeStatus: RuntimeBootstrapStatus = $state("checking");
+  runtimeError: string | null = $state(null);
+  credentialSetupOpen: boolean = $state(false);
+  credentialSetupProvider: LLMProvider = $state("openrouter");
+  credentialSetupStatus: CredentialSetupStatus = $state("idle");
+  credentialSetupError: string | null = $state(null);
+
   // LLM settings modal -------------------------------------------------------
   //
   // We keep the picker out of the canonical `GameState` because the
@@ -385,6 +404,31 @@ class GameStore {
 
   async refresh(): Promise<void> {
     await this.#run((signal) => api.getState(signal));
+  }
+
+  async bootstrapRuntime(): Promise<void> {
+    this.runtimeStatus = "checking";
+    this.runtimeError = null;
+    this.credentialSetupError = null;
+    this.credentialSetupStatus = "idle";
+    try {
+      const response = await api.getLlmSettings();
+      this.#cacheLlmSettings(response);
+      this.credentialSetupProvider =
+        response.preset === "gemini_split" ? "gemini" : "openrouter";
+      if (response.needs_key) {
+        this.runtimeStatus = "needs_key";
+        this.state = null;
+        return;
+      }
+      await this.bootstrap();
+      this.runtimeStatus = "ready";
+    } catch (exc) {
+      this.runtimeStatus = "error";
+      this.runtimeError = this.#formatError(exc);
+      this.settingsStatus = "error";
+      this.settingsError = this.runtimeError;
+    }
   }
 
   /**
@@ -562,9 +606,7 @@ class GameStore {
     }
     try {
       const response = await api.getLlmSettings();
-      this.settings = response;
-      this.settingsStatus = "ready";
-      this.settingsError = null;
+      this.#cacheLlmSettings(response);
     } catch (exc) {
       this.settingsStatus = "error";
       this.settingsError = this.#formatError(exc);
@@ -608,13 +650,54 @@ class GameStore {
     this.settingsSaveError = null;
     try {
       const response = await api.updateLlmSettings(preset);
-      this.settings = response;
-      this.settingsStatus = "ready";
-      this.settingsError = null;
+      this.#cacheLlmSettings(response);
       return true;
     } catch (exc) {
       this.settingsStatus = "ready";
       this.settingsSaveError = this.#formatError(exc);
+      return false;
+    }
+  }
+
+  openCredentialSetup(provider: LLMProvider): void {
+    this.credentialSetupProvider = provider;
+    this.credentialSetupError = null;
+    this.credentialSetupOpen = true;
+  }
+
+  closeCredentialSetup(): void {
+    if (this.credentialSetupStatus === "saving") return;
+    if (this.runtimeStatus === "needs_key") return;
+    this.credentialSetupOpen = false;
+    this.credentialSetupError = null;
+  }
+
+  async saveLlmCredentials(provider: LLMProvider, apiKey: string): Promise<boolean> {
+    const cleaned = apiKey.trim();
+    if (!cleaned) {
+      this.credentialSetupStatus = "error";
+      this.credentialSetupError = "API key cannot be empty.";
+      return false;
+    }
+    this.credentialSetupStatus = "saving";
+    this.credentialSetupError = null;
+    try {
+      let response = await api.updateLlmCredentials(provider, cleaned);
+      this.#cacheLlmSettings(response);
+      const targetPreset: LLMPreset = provider === "gemini" ? "gemini_split" : "kimi";
+      if (response.preset !== targetPreset) {
+        response = await api.updateLlmSettings(targetPreset);
+        this.#cacheLlmSettings(response);
+      }
+      this.credentialSetupStatus = "idle";
+      this.credentialSetupOpen = false;
+      await this.bootstrap();
+      this.runtimeStatus = "ready";
+      return true;
+    } catch (exc) {
+      this.credentialSetupStatus = "error";
+      this.credentialSetupError = this.#formatError(exc);
+      this.runtimeStatus = "needs_key";
       return false;
     }
   }
@@ -1128,6 +1211,12 @@ class GameStore {
         created_at: new Date().toISOString(),
       },
     ];
+  }
+
+  #cacheLlmSettings(response: LLMSettingsResponse): void {
+    this.settings = response;
+    this.settingsStatus = "ready";
+    this.settingsError = null;
   }
 
   // Pull the per-save OOC scrollback off localStorage and merge it

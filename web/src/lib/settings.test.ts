@@ -38,6 +38,23 @@ function settingsResponse(overrides: Partial<LLMSettingsResponse> = {}): LLMSett
         missing_env_vars: [],
       },
     ],
+    needs_key: false,
+    provider_credentials: [
+      {
+        id: "openrouter",
+        label: "OpenRouter",
+        configured: true,
+        source: "env",
+        masked_key: "open...1234",
+      },
+      {
+        id: "gemini",
+        label: "Gemini",
+        configured: true,
+        source: "env",
+        masked_key: "gemi...5678",
+      },
+    ],
     ...overrides,
   };
 }
@@ -50,6 +67,52 @@ describe("GameStore LLM settings", () => {
     game.settingsStatus = "idle";
     game.settingsError = null;
     game.settingsSaveError = null;
+    game.runtimeStatus = "checking";
+    game.runtimeError = null;
+    game.credentialSetupOpen = false;
+    game.credentialSetupProvider = "openrouter";
+    game.credentialSetupStatus = "idle";
+    game.credentialSetupError = null;
+  });
+
+  it("bootstrapRuntime gates on needs_key without bootstrapping the save library", async () => {
+    const payload = settingsResponse({
+      needs_key: true,
+      provider_credentials: [
+        {
+          id: "openrouter",
+          label: "OpenRouter",
+          configured: false,
+          source: "none",
+          masked_key: null,
+        },
+        {
+          id: "gemini",
+          label: "Gemini",
+          configured: false,
+          source: "none",
+          masked_key: null,
+        },
+      ],
+    });
+    vi.spyOn(api, "getLlmSettings").mockResolvedValue(payload);
+    const bootstrapSpy = vi.spyOn(game, "bootstrap").mockResolvedValue();
+
+    await game.bootstrapRuntime();
+
+    expect(bootstrapSpy).not.toHaveBeenCalled();
+    expect(game.runtimeStatus).toBe("needs_key");
+    expect(game.settings?.needs_key).toBe(true);
+  });
+
+  it("bootstrapRuntime continues into normal bootstrap when a provider is configured", async () => {
+    vi.spyOn(api, "getLlmSettings").mockResolvedValue(settingsResponse());
+    const bootstrapSpy = vi.spyOn(game, "bootstrap").mockResolvedValue();
+
+    await game.bootstrapRuntime();
+
+    expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    expect(game.runtimeStatus).toBe("ready");
   });
 
   it("openSettings fetches the current preset and lands ready", async () => {
@@ -126,6 +189,48 @@ describe("GameStore LLM settings", () => {
     expect(game.settings).toEqual(updated);
     expect(game.settingsStatus).toBe("ready");
     expect(game.settingsSaveError).toBeNull();
+  });
+
+  it("saveLlmCredentials stores a key, selects the matching preset, and bootstraps", async () => {
+    const byokSaved = settingsResponse({
+      needs_key: false,
+      provider_credentials: [
+        {
+          id: "openrouter",
+          label: "OpenRouter",
+          configured: false,
+          source: "none",
+          masked_key: null,
+        },
+        {
+          id: "gemini",
+          label: "Gemini",
+          configured: true,
+          source: "stored",
+          masked_key: "gemi...1234",
+        },
+      ],
+    });
+    const switched = settingsResponse({
+      preset: "gemini_split",
+      structured_model: "gemini/gemini-3-flash-preview",
+      narration_model: "gemini/gemini-3.1-pro-preview",
+      reasoning_model: "gemini/gemini-3.1-pro-preview",
+      needs_key: false,
+      provider_credentials: byokSaved.provider_credentials,
+    });
+    const saveSpy = vi.spyOn(api, "updateLlmCredentials").mockResolvedValue(byokSaved);
+    const presetSpy = vi.spyOn(api, "updateLlmSettings").mockResolvedValue(switched);
+    const bootstrapSpy = vi.spyOn(game, "bootstrap").mockResolvedValue();
+
+    const ok = await game.saveLlmCredentials("gemini", "gemini-secret");
+
+    expect(ok).toBe(true);
+    expect(saveSpy).toHaveBeenCalledWith("gemini", "gemini-secret");
+    expect(presetSpy).toHaveBeenCalledWith("gemini_split");
+    expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    expect(game.runtimeStatus).toBe("ready");
+    expect(game.settings?.preset).toBe("gemini_split");
   });
 
   it("updateLlmPreset is a no-op when the requested preset is already active", async () => {

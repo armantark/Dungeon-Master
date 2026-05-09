@@ -30,7 +30,11 @@ button collapses the modal once they've verified.
 -->
 <script lang="ts">
   import { game } from "../lib/store.svelte";
-  import type { LLMPreset, LLMPresetOption } from "../lib/types";
+  import type {
+    LLMProviderCredential,
+    LLMPreset,
+    LLMPresetOption,
+  } from "../lib/types";
 
   let panelRef: HTMLDivElement | null = $state(null);
 
@@ -41,6 +45,9 @@ button collapses the modal once they've verified.
   // ticks over.
   const activePreset = $derived<LLMPreset | null>(game.settings?.preset ?? null);
   const presets = $derived<LLMPresetOption[]>(game.settings?.presets ?? []);
+  const providerCredentials = $derived<LLMProviderCredential[]>(
+    game.settings?.provider_credentials ?? [],
+  );
   const isSaving = $derived(game.settingsStatus === "saving");
   const isLoading = $derived(
     game.settingsStatus === "loading" && game.settings === null,
@@ -140,6 +147,39 @@ button collapses the modal once they've verified.
                 <dd>{game.settings.reasoning_model}</dd>
               </div>
             </dl>
+          </section>
+
+          <section class="credentials parchment" aria-label="Provider credentials">
+            <span class="kicker">Provider keys</span>
+            <ul class="credential-list">
+              {#each providerCredentials as credential (credential.id)}
+                <li class="credential-row">
+                  <div class="credential-copy">
+                    <span class="credential-label">{credential.label}</span>
+                    <span class="credential-status">
+                      {#if credential.configured}
+                        {credential.source === "env"
+                          ? "Loaded from .env"
+                          : "Saved in app settings"}
+                        {#if credential.masked_key}
+                          <code>{credential.masked_key}</code>
+                        {/if}
+                      {:else}
+                        No key configured yet.
+                      {/if}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn ghost credential-btn"
+                    disabled={isSaving}
+                    onclick={() => game.openCredentialSetup(credential.id)}
+                  >
+                    {credential.configured ? "Update key" : "Add key"}
+                  </button>
+                </li>
+              {/each}
+            </ul>
           </section>
         {/if}
 
@@ -274,6 +314,58 @@ button collapses the modal once they've verified.
   .active {
     padding: 0.6rem 0.8rem;
     border-radius: 2px;
+  }
+  .credentials {
+    padding: 0.6rem 0.8rem;
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .credential-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .credential-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+  .credential-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    min-width: 0;
+  }
+  .credential-label {
+    font-family: var(--font-display);
+    font-size: 0.98rem;
+    color: color-mix(in oklab, var(--ink-bruise) 82%, var(--ink-black));
+  }
+  .credential-status {
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: color-mix(in oklab, var(--ink-bruise) 76%, var(--ink-black));
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+  }
+  .credential-status code {
+    font-family: var(--font-pixel);
+    font-size: 0.84em;
+    padding: 0.05em 0.3em;
+    background: color-mix(in oklab, var(--ink-bruise) 14%, transparent);
+    border-radius: 2px;
+  }
+  .credential-btn {
+    flex-shrink: 0;
   }
   .active-models {
     display: grid;

@@ -222,6 +222,9 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "latent threats as flavor" in system_prompt
     assert "hardened present-tense facts" in system_prompt
     assert "Static character facts, injuries, and recurring motifs" in system_prompt
+    assert "Do not open narration by dismissing, recapping" in system_prompt
+    assert "Carry older context silently" in system_prompt
+    assert "Avoid repeating the same static motif, injury, location" in system_prompt
     assert '<SUPPLEMENTAL_CONTEXT REFERENCE_ONLY="true"' in system_prompt
     assert "<LATEST_USER_MESSAGE>" in system_prompt
     assert "I check my supplies before leaving." in system_prompt
@@ -230,6 +233,7 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "FOR THE FINAL NATIVE USER MESSAGE ONLY" in system_prompt
     assert "Treat the transcript above as resolved history" in system_prompt
     assert "Do not repeatedly restate unchanged character motifs" in system_prompt
+    assert "Do not open by dismissing, recapping, or putting aside older" in system_prompt
     assert "Use second person (`you`) for the player-character." in system_prompt
     assert "trust the most recent scene transcript and latest turn context" in system_prompt
     assert "Only harden facts that are supported by the supplied outcome/state." in system_prompt

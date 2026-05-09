@@ -93,6 +93,12 @@ Discipline:
 - Static character facts, injuries, and recurring motifs are reference context,
   not mandatory prose beats; mention them only when they materially affect the
   immediate action or scene.
+- Do not open narration by recapping
+  scenes, memories, motifs, or prior concerns unless the final user message
+  directly asks about them or the context of the current scene is actually relevant to it. Carry older context silently when it is only
+  background, and begin with the current action instead.
+- Avoid repeating the same static motif, injury, location, or prior event
+  across consecutive responses unless it materially changes this beat.
 - Do not manufacture urgency, consequences, or forced-choice branches unless
   the supplied outcome/state actually licenses them.
 - End on one concrete prompt for the next action; prefer a tight follow-up
@@ -503,8 +509,13 @@ class NarrativeEngine:
                     "Mirror the player's action before extending the fiction. "
                     "Do not repeatedly restate unchanged character motifs or injuries "
                     "unless they materially affect this beat. "
-                    "Use reasoning for continuity and constraint resolution, not for "
-                    "drafting the final prose in advance. "
+                    "Do not open by recapping older "
+                    "scenes or memories unless the final user message directly asks "
+                    "about them or it is materially relevant to the current scene. "
+                    "Avoid repeating the same static motif, location, or "
+                    "prior event across consecutive responses unless it materially "
+                    "changes this beat. "
+                    "Use reasoning for continuity and constraint resolution."
                     "When recent scene context and older campaign memory differ, trust the "
                     "most recent scene transcript and latest turn context. "
                     "Only harden facts that are supported by the supplied outcome/state. "

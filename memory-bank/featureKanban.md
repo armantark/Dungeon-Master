@@ -363,6 +363,17 @@
 - Note:
   This is the preferred “salvage” direction for the old F-11 area. If revisited, it should stay firmly chat-native and explanatory rather than becoming an explicit combat-controls layer.
 
+### F-17 Additional Provider Support
+- Status: `later`
+- Priority: `medium`
+- Goal: Expand the current desktop/runtime BYOK surface beyond the initial Gemini + OpenRouter beta pair.
+- Why:
+  The desktop beta now has a real app-level credential store, runtime settings API, and first-run provider prompt. Additional model/provider support should grow that typed seam deliberately instead of accreting one-off hacks.
+- Notes:
+  - Current beta scope is intentionally only `gemini` and `openrouter`.
+  - The future pass should widen the backend provider enum/credential store, the settings API, the desktop BYOK UI, and the preset catalog together.
+  - Do not change the currently selected models or public API contract unless the user explicitly asks for it.
+
 ## Tabled
 
 ### F-13 Player-Facing Rollback / Checkpoint Restore
@@ -388,3 +399,4 @@
 - **F-07 Common Actions Tray** — frontend-only discoverability layer in the Composer. New `web/src/lib/common-actions.ts` (pure helper for visibility / ordering / buffer-replacement) plus a tray strip rendered in `Composer.svelte` between the textarea and the send row. Always shows `Ask oracle`, `Random event`, `Scene check`, `Check gear`; in combat also shows `Attack`, `Recover`, `Retreat`. Click prefills the Composer (no auto-submit), with caret-at-end-of-inserted-text and an "append on a fresh line" rule that preserves typed prose. Disabled while loading; structurally absent in setup/ended layouts because the Composer itself is unmounted there. 12 new vitest cases; full suite 164 green; svelte-check + build green.
 - **F-08 Slash Suggestion Menu** — single `SLASH_COMMANDS` descriptor list shared by `/help` and the inline dropdown, with keyboard navigation, alias matching, and a11y wiring; F-02 extended it with the acquisition verbs.
 - **F-09 History Browsing** — frontend-only navigability layer over the existing `GameState` payload. New `web/src/lib/history.ts` (pure derivation + token-AND search across transcript rows and oracle outcomes, plus oracle-to-narrative event linking) drives a new "Transcript" Drawer in the Inspector and an inline filter strip (text + OracleKind pills) on "Oracle history". `ChatFeed.svelte` gains stable `data-event-id` anchors, opt-out auto-follow with a 120 px bottom band, a floating "Jump to latest" pill, and a 1.7 s gold flash on cross-component scroll targets. `store.svelte.ts` exposes `requestScrollTo` / `consumeScrollRequest` so the inspector can command the feed to scroll an event into view (with a rotating seq so repeat clicks on the same event still flash). 19 new vitest cases + 2 store cases; full suite 183 green; svelte-check + build green. Cross-campaign archive search is deferred to F-12; scene/turn jump deferred until backend exposes scene-index data from `memory.json`.
+- **F-17 Desktop Beta / Tauri Packaging** — the repo now ships a Tauri v2 shell under `web/src-tauri/`, a PyInstaller-based Python sidecar build path (`scripts/build_tauri_sidecar.py`), runtime API-base detection in the frontend, and a first-run BYOK flow that stores masked Gemini/OpenRouter credentials in the app-data directory while preserving the existing `.env` workflow. `.github/workflows/desktop-release.yml` now drafts GitHub release artifacts for macOS, Windows, and Linux. Current limitation: local Tauri compile/dev still requires Rust installed on the build machine, and signing/notarization remains a later follow-up.

@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 // Vite picks up CSS via side-effect imports; this declaration tells the
 // TypeScript compiler that those imports are valid module references.
 
