@@ -26,6 +26,8 @@ import type {
   CharacterSheet,
   GameState,
   Likelihood,
+  LLMPreset,
+  LLMSettingsResponse,
   OracleOutcome,
   SaveSummary,
 } from "./types";
@@ -240,6 +242,29 @@ export interface ClientNote {
 // loading/empty branches, which we'd otherwise drift on.
 export type LibraryStatus = "loading" | "empty" | "selecting" | "ready";
 
+// LLM settings modal lifecycle. Mirrors `LibraryStatus` in spirit:
+// modeling each phase as a discriminated string forces consumers to
+// branch exhaustively rather than juggling a `loading: boolean` plus
+// a nullable `error`.
+//   - "idle"    : modal closed; no settings payload cached.
+//   - "loading" : the modal just opened (or refreshed); we're awaiting
+//                 the GET on `/settings/llm`.
+//   - "ready"   : the GET succeeded and `settings` is the latest
+//                 server-canonical payload.
+//   - "saving"  : the player picked a different preset and the POST is
+//                 in flight. The picker stays read-only during this
+//                 phase so a double-click can't queue two swaps.
+//   - "error"   : the GET failed. `settingsError` carries the message.
+//                 Distinct from "ready + post failure" because we still
+//                 want to render the cached settings while showing a
+//                 transient save error inline.
+export type LlmSettingsStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "saving"
+  | "error";
+
 // F-09 cross-component scroll request. The Inspector commands the
 // ChatFeed to scroll a particular event into view (oracle deep-link,
 // transcript search hit). We model this as a one-shot signal with a
@@ -320,6 +345,35 @@ class GameStore {
   // can happen before any save is bound, so a top-level surface needs
   // its own error sink. The splash screen renders this verbatim.
   libraryError: string | null = $state(null);
+
+  // LLM settings modal -------------------------------------------------------
+  //
+  // We keep the picker out of the canonical `GameState` because the
+  // backend does the same thing — the active preset lives in
+  // `data/runtime_settings.json`, not in any save's memory. The
+  // store only caches the most recent payload (loaded on modal open
+  // or after a successful save) so the SettingsModal has something
+  // to render without re-fetching on every keystroke.
+  //
+  // Open/close lives on the store rather than the modal component so
+  // any surface (system menu, status strip, future quick-action) can
+  // command "open settings" with one call. The modal subscribes to
+  // `settingsStatus` to decide whether to render a spinner, the
+  // picker, or a load-error fallback.
+  settingsOpen: boolean = $state(false);
+  settingsStatus: LlmSettingsStatus = $state("idle");
+  settings: LLMSettingsResponse | null = $state(null);
+  // GET-side error. The modal renders this in place of the picker
+  // when the initial load fails so the player knows the backend
+  // didn't respond, not that "kimi" really is the only available
+  // option.
+  settingsError: string | null = $state(null);
+  // POST-side error, kept separate so the modal can render the
+  // cached `settings` payload alongside a transient "couldn't save"
+  // message (e.g. 409 while a turn is mid-stream — the backend's
+  // `_guard_request_idle` rejects swaps until the player's turn
+  // settles).
+  settingsSaveError: string | null = $state(null);
 
   // Derived: the most recent oracle outcome on the persisted state. Exposed
   // as a getter (via `$derived.by`) so the dice tumbler can subscribe and
@@ -486,6 +540,82 @@ class GameStore {
   closeLibrary(): void {
     if (this.activeSaveId !== null && this.state !== null) {
       this.libraryStatus = "ready";
+    }
+  }
+
+  /**
+   * Open the LLM settings modal and (re-)fetch the current preset.
+   *
+   * We always re-fetch on open instead of trusting the cached payload
+   * because the active preset can change out-of-band (another tab,
+   * a manual edit to `data/runtime_settings.json`) and stale cards
+   * would mislead the player into thinking "Kimi" is checked when
+   * "Gemini split" is actually live. The modal renders the cached
+   * payload optimistically while the refresh runs so the picker
+   * feels instant after the first open.
+   */
+  async openSettings(): Promise<void> {
+    this.settingsOpen = true;
+    this.settingsSaveError = null;
+    if (this.settings === null) {
+      this.settingsStatus = "loading";
+    }
+    try {
+      const response = await api.getLlmSettings();
+      this.settings = response;
+      this.settingsStatus = "ready";
+      this.settingsError = null;
+    } catch (exc) {
+      this.settingsStatus = "error";
+      this.settingsError = this.#formatError(exc);
+    }
+  }
+
+  closeSettings(): void {
+    this.settingsOpen = false;
+    this.settingsSaveError = null;
+    // We deliberately don't reset `settings` to null — keeping the
+    // last-known payload around means re-opening the modal is
+    // instantaneous (the cached cards render while the refresh
+    // round-trips).
+    if (this.settingsStatus === "saving" || this.settingsStatus === "loading") {
+      // A still-pending request will resolve onto a closed modal;
+      // setting `idle` here would clobber the eventual `ready`.
+      // Leave the status alone — the next open will refresh.
+      return;
+    }
+    if (this.settingsStatus === "error") {
+      this.settingsStatus = "idle";
+    }
+  }
+
+  /**
+   * Persist a new active LLM preset.
+   *
+   * Returns `true` on success so the modal can chain a close-on-save
+   * UX without having to subscribe to `settingsStatus`. On failure
+   * (network / 409 in-flight guard / unavailable preset) we surface
+   * the message on `settingsSaveError` and keep the modal open with
+   * the previous selection still highlighted — the player can then
+   * wait for a streamed turn to finish or fix their `.env` and try
+   * again.
+   */
+  async updateLlmPreset(preset: LLMPreset): Promise<boolean> {
+    if (this.settings !== null && this.settings.preset === preset) {
+      return true;
+    }
+    this.settingsStatus = "saving";
+    this.settingsSaveError = null;
+    try {
+      const response = await api.updateLlmSettings(preset);
+      this.settings = response;
+      this.settingsStatus = "ready";
+      this.settingsError = null;
+      return true;
+    } catch (exc) {
+      this.settingsStatus = "ready";
+      this.settingsSaveError = this.#formatError(exc);
+      return false;
     }
   }
 

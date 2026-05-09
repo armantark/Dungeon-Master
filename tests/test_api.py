@@ -32,6 +32,13 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.config import (
+    DEFAULT_GEMINI_FLASH_MODEL,
+    DEFAULT_GEMINI_PRO_MODEL,
+    DEFAULT_MODEL,
+    LLMPreset,
+    RuntimeSettingsStore,
+)
 from dungeon_master.explainer import ExplanationResult
 from dungeon_master.models import (
     NPC,
@@ -95,6 +102,7 @@ from tests.factories import sample_state
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    import pytest
     from litellm.types.utils import ModelResponse
 
 
@@ -1158,6 +1166,83 @@ def test_library_bootstrap_returns_empty_when_no_saves_exist(tmp_path: Path) -> 
     assert state_response.json()["detail"] == "No active save selected."
 
 
+def test_llm_settings_endpoint_defaults_to_kimi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+
+    with TestClient(
+        create_app(save_library=library, runtime_settings_store=settings_store),
+    ) as client:
+        response = client.get("/api/settings/llm")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preset"] == LLMPreset.KIMI.value
+    assert payload["structured_model"] == DEFAULT_MODEL
+    assert payload["narration_model"] == DEFAULT_MODEL
+    assert any(
+        option["id"] == LLMPreset.GEMINI_SPLIT.value
+        for option in payload["presets"]
+    )
+
+
+def test_llm_settings_endpoint_updates_to_gemini_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+
+    with TestClient(
+        create_app(save_library=library, runtime_settings_store=settings_store),
+    ) as client:
+        response = client.post(
+            "/api/settings/llm",
+            json={"preset": LLMPreset.GEMINI_SPLIT.value},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["preset"] == LLMPreset.GEMINI_SPLIT.value
+        assert payload["structured_model"] == DEFAULT_GEMINI_FLASH_MODEL
+        assert payload["narration_model"] == DEFAULT_GEMINI_PRO_MODEL
+        assert settings_store.load().llm_preset == LLMPreset.GEMINI_SPLIT
+        app = cast("Any", client.app)
+        assert app.state.llm_runtime.structured.model == DEFAULT_GEMINI_FLASH_MODEL
+        assert app.state.llm_runtime.narration.model == DEFAULT_GEMINI_PRO_MODEL
+
+
+def test_llm_settings_endpoint_rejects_switch_while_request_is_in_flight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    library = SaveLibrary(tmp_path / "game_state.json")
+    settings_store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+
+    with TestClient(
+        create_app(save_library=library, runtime_settings_store=settings_store),
+    ) as client:
+        cast("Any", client.app).state.cancellation_registry.register("req_live")
+        response = client.post(
+            "/api/settings/llm",
+            json={"preset": LLMPreset.GEMINI_SPLIT.value},
+        )
+
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"]
+        == "Cannot change LLM settings while a request is still in flight."
+    )
+
+
 def test_create_save_endpoint_selects_new_save_and_exposes_state(tmp_path: Path) -> None:
     service = _library_service(tmp_path)
     library = SaveLibrary(tmp_path / "game_state.json")
@@ -1414,15 +1499,21 @@ def test_submit_turn_routes_natural_question(tmp_path: Path) -> None:
     assert outcome["likelihood"] == "Unlikely"
 
 
-def test_submit_turn_returns_explicit_planning_failure(tmp_path: Path) -> None:
+def test_submit_turn_degrades_to_safe_narration_when_planning_fails(tmp_path: Path) -> None:
     with _broken_planner_client(tmp_path) as client:
         response = client.post(
             "/api/turn",
             json={"text": "I listen at the abbey door."},
         )
 
-    assert response.status_code == 503
-    assert "deterministic resolution" in response.json()["detail"]
+    assert response.status_code == 200
+    payload = response.json()
+    assert [event["title"] for event in payload["action_log"]] == [
+        "Player action",
+        "Narrative response",
+    ]
+    assert len(payload["oracle_history"]) == 1
+    assert payload["oracle_history"][-1]["kind"] == OracleKind.PLAYER_ACTION.value
 
 
 def test_submit_turn_routes_obvious_cairn_save(tmp_path: Path) -> None:
@@ -1758,7 +1849,9 @@ def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> Non
     assert resumed_events[-1]["state"]["action_log"][-1]["title"] == "Narrative response"
 
 
-def test_submit_turn_stream_emits_explicit_planning_error(tmp_path: Path) -> None:
+def test_submit_turn_stream_degrades_to_safe_final_state_on_planning_failure(
+    tmp_path: Path,
+) -> None:
     with _broken_planner_client(tmp_path) as client:
         response = client.post(
             "/api/turn/stream",
@@ -1768,8 +1861,13 @@ def test_submit_turn_stream_emits_explicit_planning_error(tmp_path: Path) -> Non
     assert response.status_code == 200
     parsed = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     assert parsed[0]["type"] == "meta"
-    assert parsed[-1]["type"] == "error"
-    assert parsed[-1]["code"] == "planning_failed"
+    assert parsed[-1]["type"] == "final_state"
+    assert len(parsed[-1]["state"]["oracle_history"]) == 1
+    assert (
+        parsed[-1]["state"]["oracle_history"][-1]["kind"]
+        == OracleKind.PLAYER_ACTION.value
+    )
+    assert parsed[-1]["state"]["action_log"][-1]["title"] == "Narrative response"
 
 
 def test_explain_endpoint_returns_non_canonical_answer(tmp_path: Path) -> None:

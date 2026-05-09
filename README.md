@@ -59,25 +59,33 @@ uv run dungeon-master --reload
 
 ## Configure The Narrative Model
 
-Default provider is OpenRouter with Kimi K2.6 Thinking. Reasoning defaults to `auto`: medium effort for ordinary narration / yes-no, high effort for scene checks and random events.
+Default preset is OpenRouter Kimi K2.6. The backend now also supports an app-global Gemini split preset:
+- `kimi`: current behavior, using `openrouter/moonshotai/kimi-k2.6` for all backend LLM work
+- `gemini_split`: `gemini/gemini-3-flash-preview` for structured routing/update work and `gemini/gemini-3.1-pro-preview` for narration plus heavier generation
+
+The active preset is stored separately from `.env` in `data/runtime_settings.json` by default and can be read/updated through `GET /api/settings/llm` and `POST /api/settings/llm`. Credentials remain env-only.
 
 Character interview, character drafting, and campaign bootstrap internally raise their own token budgets above the base `.env` default because Kimi K2.6 Thinking spends a large chunk of the budget on reasoning before it writes visible output.
 
-Copy `.env.example` to `.env` and fill in your key:
+Copy `.env.example` to `.env` and fill in the provider keys you want available:
 
 ```shell
 OPENROUTER_API_KEY=
 OPENROUTER_API_BASE=https://openrouter.ai/api/v1
+GEMINI_API_KEY=
 LITELLM_MODEL=openrouter/moonshotai/kimi-k2.6
-LITELLM_REASONING_EFFORT=auto       # or medium | high to pin
-LITELLM_EXCLUDE_REASONING=true
-LITELLM_MAX_TOKENS=1800
-LITELLM_TEMPERATURE=0.85
+LITELLM_REASONING_EFFORT=auto
+LITELLM_EXCLUDE_REASONING=false
+LITELLM_NARRATION_TEMPERATURE=1.25
+LITELLM_NARRATION_MAX_TOKENS=4500
+LITELLM_TIMEOUT_SECONDS=600
+LITELLM_MAX_RETRIES=2
 OR_APP_NAME=Dungeon Master
 DUNGEON_MASTER_STATE_PATH=data/game_state.json
+DUNGEON_MASTER_RUNTIME_SETTINGS_PATH=data/runtime_settings.json
 ```
 
-To switch models later, change `LITELLM_MODEL` to another LiteLLM model string and provide that provider's required environment variables.
+If you stay on the default Kimi preset, `LITELLM_MODEL` remains the active backend model slug. If you switch to `gemini_split`, the backend uses the fixed Gemini 3.x LiteLLM slugs above and ignores `LITELLM_MODEL` for those runtime-routed capabilities.
 
 ## Test
 

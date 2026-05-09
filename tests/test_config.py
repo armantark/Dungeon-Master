@@ -1,6 +1,17 @@
+from pathlib import Path
+
 import pytest
 
-from dungeon_master.config import AppConfig, LLMConfig
+from dungeon_master.config import (
+    DEFAULT_GEMINI_FLASH_MODEL,
+    DEFAULT_GEMINI_PRO_MODEL,
+    AppConfig,
+    LLMConfig,
+    LLMPreset,
+    LLMRuntimeSettings,
+    RuntimeSettingsStore,
+    build_llm_runtime,
+)
 from dungeon_master.models import OracleKind
 
 
@@ -88,3 +99,31 @@ def test_llm_profiles_keep_structured_calls_low_temperature() -> None:
         "exclude": True,
     }
     assert config.profiles.campaign_world.max_tokens == 12000
+
+
+def test_build_llm_runtime_uses_gemini_split_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+
+    runtime = build_llm_runtime(LLMRuntimeSettings(llm_preset=LLMPreset.GEMINI_SPLIT))
+
+    assert runtime.structured.model == DEFAULT_GEMINI_FLASH_MODEL
+    assert runtime.narration.model == DEFAULT_GEMINI_PRO_MODEL
+    assert runtime.reasoning.model == DEFAULT_GEMINI_PRO_MODEL
+    assert runtime.structured.api_key == "gemini-key"
+    assert runtime.narration.api_key == "gemini-key"
+    assert runtime.structured.base_url is None
+    assert runtime.narration.base_url is None
+
+
+def test_runtime_settings_store_round_trips(tmp_path: Path) -> None:
+    store = RuntimeSettingsStore(tmp_path / "runtime_settings.json")
+
+    initial = store.load()
+    store.save(LLMRuntimeSettings(llm_preset=LLMPreset.GEMINI_SPLIT))
+    reloaded = store.load()
+
+    assert initial.llm_preset == LLMPreset.KIMI
+    assert reloaded.llm_preset == LLMPreset.GEMINI_SPLIT

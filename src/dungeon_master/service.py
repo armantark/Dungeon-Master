@@ -17,6 +17,7 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.config import LLMRuntimeBundle, build_llm_runtime, single_llm_runtime
 from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
 from dungeon_master.memory import (
@@ -558,44 +559,53 @@ class GameService:
         thread_updater: ThreadUpdaterPort | None = None,
         npc_updater: NPCUpdaterPort | None = None,
         continuity_classifier: ContinuityClassifierPort | None = None,
+        llm_runtime: LLMRuntimeBundle | None = None,
     ) -> None:
         self._store = store
         self._oracle = oracle or OracleEngine()
-        self._narrative = narrative or NarrativeEngine()
-        self._campaign_generator = campaign_generator or CampaignGenerator.from_env()
-        self._character_generator = character_generator or CharacterGenerator.from_env()
-        default_narrative_config = getattr(self._narrative, "_config", None)
-        self._explainer = explainer or ExplainerEngine(
-            config=(
-                default_narrative_config
-                if isinstance(default_narrative_config, NarrativeConfig)
-                else None
-            ),
+        resolved_runtime = llm_runtime or self._default_llm_runtime(narrative)
+        self._llm_runtime = resolved_runtime
+        self._narrative = narrative or NarrativeEngine(config=resolved_runtime.narration)
+        self._campaign_generator = campaign_generator or CampaignGenerator(
+            config=resolved_runtime.reasoning,
         )
-        self._cairn = cairn_engine or CairnEngine()
-        self._turn_router = turn_router or TurnRouter()
+        self._character_generator = character_generator or CharacterGenerator(
+            config=resolved_runtime.reasoning,
+        )
+        self._explainer = explainer or ExplainerEngine(config=resolved_runtime.narration)
+        self._cairn = cairn_engine or CairnEngine(config=resolved_runtime.reasoning)
+        self._turn_router = turn_router or TurnRouter(config=resolved_runtime.structured)
         self._memory = memory_manager or MemoryManager()
-        self._thread_updater = thread_updater or ThreadUpdater(
-            config=(
-                default_narrative_config
-                if isinstance(default_narrative_config, NarrativeConfig)
-                else None
-            ),
-        )
-        self._npc_updater = npc_updater or NPCUpdater(
-            config=(
-                default_narrative_config
-                if isinstance(default_narrative_config, NarrativeConfig)
-                else None
-            ),
-        )
+        self._thread_updater = thread_updater or ThreadUpdater(config=resolved_runtime.structured)
+        self._npc_updater = npc_updater or NPCUpdater(config=resolved_runtime.structured)
         self._continuity_classifier = continuity_classifier or ContinuityClassifier(
-            config=(
-                default_narrative_config
-                if isinstance(default_narrative_config, NarrativeConfig)
-                else None
-            ),
+            config=resolved_runtime.structured,
         )
+
+    def _default_llm_runtime(self, narrative: NarrativePort | None) -> LLMRuntimeBundle:
+        inherited_config = getattr(narrative, "_config", None)
+        if isinstance(inherited_config, NarrativeConfig):
+            return single_llm_runtime(inherited_config)
+        return build_llm_runtime()
+
+    def apply_llm_runtime(self, runtime: LLMRuntimeBundle) -> None:
+        """Replace the model-backed collaborators for a new runtime preset.
+
+        The store/oracle/memory manager remain stable; only components that talk
+        to LiteLLM are rebuilt from the new runtime bundle. This keeps preset
+        changes app-global without having to recreate the whole service object or
+        disturb the bound save slot.
+        """
+        self._llm_runtime = runtime
+        self._narrative = NarrativeEngine(config=runtime.narration)
+        self._campaign_generator = CampaignGenerator(config=runtime.reasoning)
+        self._character_generator = CharacterGenerator(config=runtime.reasoning)
+        self._explainer = ExplainerEngine(config=runtime.narration)
+        self._cairn = CairnEngine(config=runtime.reasoning)
+        self._turn_router = TurnRouter(config=runtime.structured)
+        self._thread_updater = ThreadUpdater(config=runtime.structured)
+        self._npc_updater = NPCUpdater(config=runtime.structured)
+        self._continuity_classifier = ContinuityClassifier(config=runtime.structured)
 
     def bind_store(self, store: StateStore) -> None:
         """Rebind the service to a different save slot's StateStore.

@@ -244,3 +244,20 @@ Everything in `.env` is a developer / debugging dial, not a player-facing contro
 | `DUNGEON_MASTER_STATE_PATH` | Override the canonical state file location. |
 
 If a switch ever feels like it should be on the UI instead of the dotenv, that's a signal it's a player-facing setting and should be promoted to a real control.
+
+## LLM Preset Switching
+
+These steps cover the in-app `Narrative model` setting that swaps between Kimi (single-model OpenRouter) and the Gemini split (Flash for structured tool calls + Pro for narration / reasoning). Both `OPENROUTER_API_KEY` and `GEMINI_API_KEY` must be present in `.env` for the full round-trip; if one is missing, that preset surfaces as `Unavailable` with the exact env vars to add.
+
+Use Pinchtab (`https://github.com/pinchtab/pinchtab`) for the browser steps so the recording is reproducible:
+
+1. Start the backend and frontend as in the [Browser Smoke Test](#browser-smoke-test) section. With both keys set, the default preset is Kimi (matches `data/runtime_settings.json` on a fresh install).
+2. Open the system menu (top-right hamburger) and pick `Narrative model`. Confirm the modal opens, the `Active` readout shows three Kimi `openrouter/...` slugs, and the `Kimi (OpenRouter)` card is checked.
+3. Click the `Gemini split` card. Confirm:
+   - The button briefly enters a `Saving…` state and is disabled.
+   - On success, the `Active` readout flips to `gemini/gemini-3-flash-preview` (structured) and `gemini/gemini-3.1-pro-preview` (narration / reasoning).
+   - `data/runtime_settings.json` on disk now contains `"llm_preset": "gemini_split"`.
+4. Submit a free-text turn (`I look around`). Watch the backend log: planner / mechanics / NPC-updater calls should be against `gemini-3-flash-preview`; the narration stage should be against `gemini-3.1-pro-preview`.
+5. Start a long-running turn, immediately reopen the modal, and try clicking `Kimi`. Confirm the modal renders an inline error reading "Cannot change LLM settings while a request is still in flight." and the radio remains on Gemini split. Wait for the turn to finish and retry the swap — it should now succeed.
+6. With `GEMINI_API_KEY` empty in `.env`, restart the backend, open the modal, and confirm the `Gemini split` card is greyed out, shows an `Unavailable` badge, and lists `GEMINI_API_KEY` under "Missing environment variables". Confirm clicking the card does nothing.
+7. Reload the browser. Confirm the active preset persists across reloads (the modal still reflects the disk-resident `runtime_settings.json`).

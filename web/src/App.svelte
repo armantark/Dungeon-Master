@@ -31,6 +31,7 @@ Everything else remains peekable reference in the Inspector.
   import EndBanner from "./components/EndBanner.svelte";
   import Inspector from "./components/Inspector.svelte";
   import SaveLibrary from "./components/SaveLibrary.svelte";
+  import SettingsModal from "./components/SettingsModal.svelte";
   import SystemMenu from "./components/SystemMenu.svelte";
   import { isCampaignEnded } from "./lib/end-campaign";
 
@@ -153,6 +154,14 @@ Everything else remains peekable reference in the Inspector.
   {#if showPlayChrome && game.state}
     <Inspector state={game.state} />
   {/if}
+
+  <!--
+    Settings modal lives at the App level so it can sit on top of every
+    layout (library splash, character setup, active play, ended archive).
+    The store gates rendering via `game.settingsOpen`, so mounting it
+    unconditionally here is cheap when closed.
+  -->
+  <SettingsModal />
 </div>
 
 <style>

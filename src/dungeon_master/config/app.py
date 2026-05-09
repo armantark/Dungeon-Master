@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -13,12 +15,15 @@ type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhig
 type ReasoningPolicy = ReasoningEffort | Literal["auto"]
 
 DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.6"
+DEFAULT_GEMINI_FLASH_MODEL = "gemini/gemini-3-flash-preview"
+DEFAULT_GEMINI_PRO_MODEL = "gemini/gemini-3.1-pro-preview"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_REASONING_POLICY: ReasoningPolicy = "auto"
 DEFAULT_NARRATION_TEMPERATURE = 1.25
 DEFAULT_NARRATION_MAX_TOKENS = 4500
 DEFAULT_TIMEOUT_SECONDS = 600.0
 DEFAULT_STATE_PATH = Path("data/game_state.json")
+DEFAULT_RUNTIME_SETTINGS_PATH = Path("data/runtime_settings.json")
 
 VALID_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
     "none",
@@ -30,6 +35,101 @@ VALID_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
     "default",
 )
 VALID_REASONING_POLICIES: tuple[ReasoningPolicy, ...] = (*VALID_REASONING_EFFORTS, "auto")
+
+
+class LLMCapability(StrEnum):
+    STRUCTURED = "structured"
+    NARRATION = "narration"
+    REASONING = "reasoning"
+
+
+class LLMPreset(StrEnum):
+    KIMI = "kimi"
+    GEMINI_SPLIT = "gemini_split"
+
+
+DEFAULT_LLM_PRESET = LLMPreset.KIMI
+
+
+@dataclass(frozen=True)
+class LLMRuntimeSettings:
+    llm_preset: LLMPreset = DEFAULT_LLM_PRESET
+
+    @classmethod
+    def from_json_dict(cls, payload: object) -> LLMRuntimeSettings:
+        if not isinstance(payload, dict):
+            return cls()
+        raw_preset = payload.get("llm_preset")
+        if isinstance(raw_preset, str):
+            try:
+                return cls(llm_preset=LLMPreset(raw_preset))
+            except ValueError:
+                return cls()
+        return cls()
+
+    def to_json_dict(self) -> dict[str, str]:
+        return {"llm_preset": self.llm_preset.value}
+
+
+@dataclass(frozen=True)
+class LLMPresetDescriptor:
+    id: LLMPreset
+    label: str
+    description: str
+    structured_model: str
+    narration_model: str
+    reasoning_model: str
+    required_env_groups: tuple[tuple[str, ...], ...]
+
+    def missing_env_vars(self) -> list[str]:
+        return [
+            " or ".join(group)
+            for group in self.required_env_groups
+            if not any((os.getenv(name) or "").strip() for name in group)
+        ]
+
+    def is_available(self) -> bool:
+        return not self.missing_env_vars()
+
+
+@dataclass(frozen=True)
+class LLMRuntimeBundle:
+    settings: LLMRuntimeSettings
+    structured: LLMConfig
+    narration: LLMConfig
+    reasoning: LLMConfig
+
+    def for_capability(self, capability: LLMCapability) -> LLMConfig:
+        if capability == LLMCapability.STRUCTURED:
+            return self.structured
+        if capability == LLMCapability.NARRATION:
+            return self.narration
+        return self.reasoning
+
+
+class RuntimeSettingsStore:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def load(self) -> LLMRuntimeSettings:
+        if not self._path.exists():
+            return LLMRuntimeSettings()
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return LLMRuntimeSettings()
+        return LLMRuntimeSettings.from_json_dict(payload)
+
+    def save(self, settings: LLMRuntimeSettings) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(settings.to_json_dict(), indent=2, sort_keys=True) + "\n"
+        tmp_path = self._path.with_suffix(f"{self._path.suffix}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(self._path)
 
 
 @dataclass(frozen=True)
@@ -278,12 +378,94 @@ class LLMConfig:
             return False
         if self.model.startswith("openrouter/"):
             return self.api_key is not None
+        if self.model.startswith("gemini/"):
+            return self.api_key is not None
         return True
+
+
+def describe_llm_presets() -> tuple[LLMPresetDescriptor, ...]:
+    return (
+        LLMPresetDescriptor(
+            id=LLMPreset.KIMI,
+            label="Kimi",
+            description="Current OpenRouter Kimi path for every backend LLM workload.",
+            structured_model=DEFAULT_MODEL,
+            narration_model=DEFAULT_MODEL,
+            reasoning_model=DEFAULT_MODEL,
+            required_env_groups=(("OPENROUTER_API_KEY", "LITELLM_API_KEY"),),
+        ),
+        LLMPresetDescriptor(
+            id=LLMPreset.GEMINI_SPLIT,
+            label="Gemini split",
+            description=(
+                "Use Gemini Flash for structured routing/update work and Gemini Pro "
+                "for narration plus heavier generation."
+            ),
+            structured_model=DEFAULT_GEMINI_FLASH_MODEL,
+            narration_model=DEFAULT_GEMINI_PRO_MODEL,
+            reasoning_model=DEFAULT_GEMINI_PRO_MODEL,
+            required_env_groups=(("GEMINI_API_KEY", "GOOGLE_API_KEY", "LITELLM_API_KEY"),),
+        ),
+    )
+
+
+def build_llm_runtime(settings: LLMRuntimeSettings | None = None) -> LLMRuntimeBundle:
+    current = settings or LLMRuntimeSettings()
+    base = LLMConfig.from_env()
+    if current.llm_preset == LLMPreset.GEMINI_SPLIT:
+        gemini_key = _first_present_env(("GEMINI_API_KEY", "GOOGLE_API_KEY", "LITELLM_API_KEY"))
+        structured = replace(
+            base,
+            model=DEFAULT_GEMINI_FLASH_MODEL,
+            api_key=gemini_key,
+            base_url=None,
+            app_name=None,
+            site_url=None,
+        )
+        pro = replace(
+            base,
+            model=DEFAULT_GEMINI_PRO_MODEL,
+            api_key=gemini_key,
+            base_url=None,
+            app_name=None,
+            site_url=None,
+        )
+        return LLMRuntimeBundle(
+            settings=current,
+            structured=structured,
+            narration=pro,
+            reasoning=pro,
+        )
+
+    kimi = replace(
+        base,
+        model=DEFAULT_MODEL,
+        api_key=_first_present_env(("OPENROUTER_API_KEY", "LITELLM_API_KEY")),
+        base_url=_env_str("OPENROUTER_API_BASE", default=DEFAULT_OPENROUTER_BASE_URL).rstrip("/"),
+        app_name=os.getenv("OR_APP_NAME") or "Dungeon Master",
+        site_url=os.getenv("OR_SITE_URL") or None,
+    )
+    return LLMRuntimeBundle(
+        settings=current,
+        structured=kimi,
+        narration=kimi,
+        reasoning=kimi,
+    )
+
+
+def single_llm_runtime(config: LLMConfig) -> LLMRuntimeBundle:
+    return LLMRuntimeBundle(
+        settings=LLMRuntimeSettings(),
+        structured=config,
+        narration=config,
+        reasoning=config,
+    )
 
 
 @dataclass(frozen=True)
 class AppConfig:
     state_path: Path
+    runtime_settings_path: Path
     llm: LLMConfig
 
     @classmethod
@@ -291,6 +473,12 @@ class AppConfig:
         load_dotenv()
         return cls(
             state_path=Path(_env_str("DUNGEON_MASTER_STATE_PATH", default=str(DEFAULT_STATE_PATH))),
+            runtime_settings_path=Path(
+                _env_str(
+                    "DUNGEON_MASTER_RUNTIME_SETTINGS_PATH",
+                    default=str(DEFAULT_RUNTIME_SETTINGS_PATH),
+                ),
+            ),
             llm=LLMConfig.from_env(),
         )
 

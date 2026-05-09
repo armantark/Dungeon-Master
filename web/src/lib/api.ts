@@ -22,6 +22,8 @@ import type {
   ExplanationResponse,
   GameState,
   Likelihood,
+  LLMPreset,
+  LLMSettingsResponse,
   OracleOutcome,
   SaveLibraryBootstrapResponse,
 } from "./types";
@@ -101,6 +103,25 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<SaveLibraryBootstrapResponse> =>
     request("/library/select", { method: "POST", signal, json: { save_id } }),
+
+  // App-global LLM preset surface. The backend owns the source of
+  // truth (`data/runtime_settings.json`) and the UI just round-trips
+  // it: GET to populate the modal on open, POST to persist a swap.
+  // The backend rejects POSTs while a streamed turn is in flight
+  // (HTTP 409); the modal surfaces that as a non-fatal error so the
+  // player can wait for the current turn to finish and try again.
+  getLlmSettings: (signal?: AbortSignal): Promise<LLMSettingsResponse> =>
+    request("/settings/llm", { signal }),
+
+  updateLlmSettings: (
+    preset: LLMPreset,
+    signal?: AbortSignal,
+  ): Promise<LLMSettingsResponse> =>
+    request("/settings/llm", {
+      method: "POST",
+      signal,
+      json: { preset },
+    }),
 
   getState: (signal?: AbortSignal): Promise<GameState> => request("/state", { signal }),
 

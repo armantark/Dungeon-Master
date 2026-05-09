@@ -76,6 +76,14 @@ on the trigger and `role="menu"` on the panel for screen readers.
     await game.createSave(true);
   }
 
+  // Settings modal owns its own load lifecycle (re-fetch on open), so
+  // we just close the menu and hand off to the store. The void-return
+  // is intentional: the menu shouldn't block on the GET completing.
+  function openSettings(): void {
+    open = false;
+    void game.openSettings();
+  }
+
   // We hide the "Switch save" item when there's only one save (or
   // none), because the splash would render a one-tile shelf with no
   // navigational value. The "New campaign" item still surfaces in
@@ -119,6 +127,10 @@ on the trigger and `role="menu"` on the panel for screen readers.
       >
         <span class="item__label">Begin a new campaign</span>
         <span class="item__hint">Adds a fresh tome — the current archive is preserved.</span>
+      </button>
+      <button class="link item" type="button" role="menuitem" onclick={openSettings}>
+        <span class="item__label">Narrative model</span>
+        <span class="item__hint">Swap between Kimi and the Gemini split routing.</span>
       </button>
     </div>
   {/if}

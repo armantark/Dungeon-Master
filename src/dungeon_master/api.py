@@ -25,6 +25,14 @@ from pydantic import BaseModel, Field
 
 from dungeon_master.campaign import CharacterDraftMode
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
+from dungeon_master.config import (
+    LLMPreset,
+    LLMRuntimeBundle,
+    LLMRuntimeSettings,
+    RuntimeSettingsStore,
+    build_llm_runtime,
+    describe_llm_presets,
+)
 from dungeon_master.models import (
     AttackStance,
     CairnAbility,
@@ -40,7 +48,7 @@ from dungeon_master.models import (
 from dungeon_master.narrative import CompletionDelta
 from dungeon_master.save_library import SaveLibrary, SaveSummary
 from dungeon_master.service import GameService
-from dungeon_master.settings import state_path_from_env
+from dungeon_master.settings import runtime_settings_path_from_env, state_path_from_env
 from dungeon_master.state_store import StateStore
 from dungeon_master.stream_session import SessionRegistry, StreamSession
 from dungeon_master.turn_router import TurnPlanningError
@@ -174,6 +182,29 @@ class SaveLibraryBootstrapResponse(BaseModel):
     saves: list[SaveSummary]
 
 
+class LLMSettingsUpdateRequest(BaseModel):
+    preset: LLMPreset
+
+
+class LLMPresetOptionResponse(BaseModel):
+    id: LLMPreset
+    label: str
+    description: str
+    structured_model: str
+    narration_model: str
+    reasoning_model: str
+    available: bool
+    missing_env_vars: list[str] = Field(default_factory=list)
+
+
+class LLMSettingsResponse(BaseModel):
+    preset: LLMPreset
+    structured_model: str
+    narration_model: str
+    reasoning_model: str
+    presets: list[LLMPresetOptionResponse]
+
+
 class CharacterQuizzedDraftRequest(BaseModel):
     concept: str = Field(min_length=1, max_length=2000)
     answers: list[CharacterQuizAnswer] = Field(default_factory=list)
@@ -188,19 +219,28 @@ class CancelRequestResponse(BaseModel):
     cancelled: bool
 
 
-def build_service(state_path: Path | None = None) -> GameService:
+def build_service(
+    state_path: Path | None = None,
+    *,
+    llm_runtime: LLMRuntimeBundle | None = None,
+) -> GameService:
     """Construct a `GameService` bound to a single state file.
 
     Kept as a free function so tests can inject a tmp_path without
     monkey-patching environment variables.
     """
     path = state_path or state_path_from_env()
-    return GameService(store=StateStore(path))
+    return GameService(store=StateStore(path), llm_runtime=llm_runtime)
 
 
 def build_save_library(legacy_state_path: Path | None = None) -> SaveLibrary:
     path = legacy_state_path or state_path_from_env()
     return SaveLibrary(path)
+
+
+def build_runtime_settings_store(settings_path: Path | None = None) -> RuntimeSettingsStore:
+    path = settings_path or runtime_settings_path_from_env()
+    return RuntimeSettingsStore(path)
 
 
 def get_service(request: Request) -> GameService:
@@ -229,6 +269,13 @@ def get_save_library(request: Request) -> SaveLibrary:
     return library
 
 
+def get_runtime_settings_store(request: Request) -> RuntimeSettingsStore:
+    store = getattr(request.app.state, "runtime_settings_store", None)
+    if not isinstance(store, RuntimeSettingsStore):
+        raise ServiceUnavailableError
+    return store
+
+
 def get_cancellation_registry(request: Request) -> CancellationRegistry:
     registry = getattr(request.app.state, "cancellation_registry", None)
     if not isinstance(registry, CancellationRegistry):
@@ -245,6 +292,7 @@ def get_session_registry(request: Request) -> SessionRegistry:
 
 ServiceDep = Annotated[GameService, Depends(get_service)]
 LibraryDep = Annotated[SaveLibrary, Depends(get_save_library)]
+RuntimeSettingsStoreDep = Annotated[RuntimeSettingsStore, Depends(get_runtime_settings_store)]
 RegistryDep = Annotated[CancellationRegistry, Depends(get_cancellation_registry)]
 SessionRegistryDep = Annotated[SessionRegistry, Depends(get_session_registry)]
 
@@ -259,6 +307,51 @@ def _service_seed(app: FastAPI) -> GameService | None:
     return None
 
 
+def _runtime_bundle(app: FastAPI) -> LLMRuntimeBundle:
+    bundle = getattr(app.state, "llm_runtime", None)
+    if not isinstance(bundle, LLMRuntimeBundle):
+        raise ServiceUnavailableError
+    return bundle
+
+
+def _llm_settings_response(bundle: LLMRuntimeBundle) -> LLMSettingsResponse:
+    return LLMSettingsResponse(
+        preset=bundle.settings.llm_preset,
+        structured_model=bundle.structured.model,
+        narration_model=bundle.narration.model,
+        reasoning_model=bundle.reasoning.model,
+        presets=[
+            LLMPresetOptionResponse(
+                id=descriptor.id,
+                label=descriptor.label,
+                description=descriptor.description,
+                structured_model=descriptor.structured_model,
+                narration_model=descriptor.narration_model,
+                reasoning_model=descriptor.reasoning_model,
+                available=descriptor.is_available(),
+                missing_env_vars=descriptor.missing_env_vars(),
+            )
+            for descriptor in describe_llm_presets()
+        ],
+    )
+
+
+def _apply_runtime_settings(app: FastAPI, settings: LLMRuntimeSettings) -> LLMRuntimeBundle:
+    bundle = build_llm_runtime(settings)
+    seen_services: set[int] = set()
+    for attr in ("service", "service_template"):
+        service = getattr(app.state, attr, None)
+        if not isinstance(service, GameService):
+            continue
+        identity = id(service)
+        if identity in seen_services:
+            continue
+        service.apply_llm_runtime(bundle)
+        seen_services.add(identity)
+    app.state.llm_runtime = bundle
+    return bundle
+
+
 def _bind_service_to_active_save(app: FastAPI, save_id: str) -> GameService:
     library = getattr(app.state, "save_library", None)
     if not isinstance(library, SaveLibrary):
@@ -270,12 +363,16 @@ def _bind_service_to_active_save(app: FastAPI, save_id: str) -> GameService:
         app.state.service = seed
         return seed
 
-    service = build_service(state_path)
+    service = build_service(state_path, llm_runtime=_runtime_bundle(app))
     app.state.service = service
     return service
 
 
-def _guard_save_library_idle(registry: CancellationRegistry) -> None:
+def _guard_request_idle(
+    registry: CancellationRegistry,
+    *,
+    detail: str,
+) -> None:
     # F-12 keeps the backend single-active-save for v1. Switching the bound
     # store while a streamed request is still registered would let one request
     # start against save A and commit against save B. We therefore force the
@@ -284,7 +381,7 @@ def _guard_save_library_idle(registry: CancellationRegistry) -> None:
     if registry.has_active_requests():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot switch saves while a request is still in flight.",
+            detail=detail,
         )
 
 
@@ -589,6 +686,47 @@ def library_bootstrap(library: LibraryDep) -> SaveLibraryBootstrapResponse:
     return SaveLibraryBootstrapResponse(active_save_id=active_save_id, saves=saves)
 
 
+@router.get("/settings/llm", response_model=LLMSettingsResponse)
+def read_llm_settings(request: Request) -> LLMSettingsResponse:
+    return _llm_settings_response(_runtime_bundle(request.app))
+
+
+@router.post("/settings/llm", response_model=LLMSettingsResponse)
+def update_llm_settings(
+    request: Request,
+    settings_store: RuntimeSettingsStoreDep,
+    registry: RegistryDep,
+    payload: Annotated[LLMSettingsUpdateRequest, Body()],
+) -> LLMSettingsResponse:
+    _guard_request_idle(
+        registry,
+        detail="Cannot change LLM settings while a request is still in flight.",
+    )
+    settings = LLMRuntimeSettings(llm_preset=payload.preset)
+    candidate = build_llm_runtime(settings)
+    candidate_response = _llm_settings_response(candidate)
+    selected_option = next(
+        (
+            option
+            for option in candidate_response.presets
+            if option.id == payload.preset
+        ),
+        None,
+    )
+    if selected_option is not None and not selected_option.available:
+        missing = (
+            ", ".join(selected_option.missing_env_vars)
+            or "required provider credentials"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Preset {payload.preset.value!r} is unavailable. Missing: {missing}.",
+        )
+    settings_store.save(settings)
+    bundle = _apply_runtime_settings(request.app, settings)
+    return _llm_settings_response(bundle)
+
+
 @router.post("/library/saves", response_model=SaveLibraryBootstrapResponse)
 def create_save(
     request: Request,
@@ -599,9 +737,16 @@ def create_save(
     if payload is None:
         payload = CreateSaveRequest()
     if payload.select:
-        _guard_save_library_idle(registry)
+        _guard_request_idle(
+            registry,
+            detail="Cannot switch saves while a request is still in flight.",
+        )
     seed = _service_seed(request.app)
-    create_state = seed.new_setup_state() if seed is not None else build_service().new_setup_state()
+    create_state = (
+        seed.new_setup_state()
+        if seed is not None
+        else build_service(llm_runtime=_runtime_bundle(request.app)).new_setup_state()
+    )
     save_id = library.create_save(create_state=create_state, select=payload.select)
     if payload.select:
         _bind_service_to_active_save(request.app, save_id)
@@ -616,7 +761,10 @@ def select_save(
     registry: RegistryDep,
     payload: Annotated[SelectSaveRequest, Body()],
 ) -> SaveLibraryBootstrapResponse:
-    _guard_save_library_idle(registry)
+    _guard_request_idle(
+        registry,
+        detail="Cannot switch saves while a request is still in flight.",
+    )
     try:
         library.select_active(payload.save_id)
     except ValueError as exc:
@@ -1139,6 +1287,7 @@ def regenerate_message_stream(
 def create_app(
     service: GameService | None = None,
     save_library: SaveLibrary | None = None,
+    runtime_settings_store: RuntimeSettingsStore | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -1153,8 +1302,13 @@ def create_app(
         library = save_library
         if library is None and service is None:
             library = build_save_library()
+        settings_store = runtime_settings_store or build_runtime_settings_store()
+        runtime_settings = settings_store.load()
+        llm_runtime = build_llm_runtime(runtime_settings)
 
         app.state.save_library = library
+        app.state.runtime_settings_store = settings_store
+        app.state.llm_runtime = llm_runtime
         app.state.service_template = service
 
         if library is not None:
@@ -1165,11 +1319,13 @@ def create_app(
                     service.bind_store(StateStore(active_state_path))
                     app.state.service = service
                 else:
-                    app.state.service = build_service(active_state_path)
+                    app.state.service = build_service(active_state_path, llm_runtime=llm_runtime)
             else:
                 app.state.service = None
+        elif service is not None:
+            app.state.service = service
         else:
-            app.state.service = service or build_service()
+            app.state.service = build_service(llm_runtime=llm_runtime)
         app.state.cancellation_registry = CancellationRegistry()
         app.state.session_registry = SessionRegistry()
         app.state.stream_executor = ThreadPoolExecutor(
@@ -1185,6 +1341,8 @@ def create_app(
             app.state.service = None
             app.state.service_template = None
             app.state.save_library = None
+            app.state.runtime_settings_store = None
+            app.state.llm_runtime = None
             app.state.cancellation_registry = None
             executor = getattr(app.state, "stream_executor", None)
             if isinstance(executor, ThreadPoolExecutor):

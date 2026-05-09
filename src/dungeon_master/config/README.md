@@ -8,6 +8,7 @@ This package exists to make model/runtime tuning easy to trace without pretendin
 
 1. `AppConfig`
    - Cross-cutting runtime settings such as `DUNGEON_MASTER_STATE_PATH`.
+   - Persistent runtime-settings path for app-global LLM preset selection.
 2. `LLMConfig`
    - Model/provider/runtime settings shared across LiteLLM calls:
      - model slug
@@ -24,12 +25,16 @@ This package exists to make model/runtime tuning easy to trace without pretendin
      - Cairn structured helpers
      - character generation
      - campaign generation
+4. Runtime preset selection
+   - app-global preset routing that can switch between the default Kimi path and
+     backend-defined multi-model presets such as the Gemini split
 
 That split is deliberate:
 
 - Global runtime knobs stay in env.
 - Task behavior stays in typed Python profiles so it is obvious which calls are meant to be creative vs mechanical.
 - The narrator keeps its own env-facing creativity knob because that is the one setting the player is most likely to want to bias intentionally.
+- Provider secrets stay in env; the selected preset is stored separately in the runtime-settings file.
 
 ## Current Tuning Intent
 
@@ -43,6 +48,7 @@ The supported env knobs are intentionally small:
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_API_BASE`
+- `GEMINI_API_KEY`
 - `LITELLM_MODEL`
 - `LITELLM_REASONING_EFFORT`
 - `LITELLM_EXCLUDE_REASONING`
@@ -53,6 +59,7 @@ The supported env knobs are intentionally small:
 - `OR_APP_NAME`
 - `OR_SITE_URL`
 - `DUNGEON_MASTER_STATE_PATH`
+- `DUNGEON_MASTER_RUNTIME_SETTINGS_PATH`
 
 Backward-compatible fallbacks remain for the older `LITELLM_TEMPERATURE` and `LITELLM_MAX_TOKENS` names, but the new names are the source of truth.
 
