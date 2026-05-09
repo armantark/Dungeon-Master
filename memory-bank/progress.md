@@ -37,7 +37,7 @@
 - Manual testing notes exist at `docs/manual-testing.md` (product walkthrough + short developer-knobs appendix).
 - Project setup exists in `pyproject.toml`, `.env.example`, `.gitignore`, and `README.md`.
 - A persistent feature backlog now exists at `memory-bank/featureKanban.md`, organized as a Kanban-style ticket board for staged planning.
-- Desktop beta scaffolding now exists too: `web/src-tauri/` (Tauri v2 shell), `scripts/build_tauri_sidecar.py` (PyInstaller sidecar build), and `.github/workflows/desktop-release.yml` (draft desktop release pipeline).
+- Desktop beta scaffolding now exists too: `web/src-tauri/` (Tauri v2 shell), `web/src-tauri/app-icon.png` + `web/src-tauri/icons/` (rounded desktop icon source and generated platform assets), `scripts/build_tauri_sidecar.py` (PyInstaller sidecar build), and `.github/workflows/desktop-release.yml` (draft desktop release pipeline).
 
 ## What Has Been Decided
 
@@ -129,7 +129,7 @@
 
 The chat-first pivot is complete and now sits behind a real pre-campaign setup phase. Character creation supports templates, scratch editing, and a multi-step AI-assisted **interview** path (concept → tailored quiz → review → draft). All generation phases show a `LoadingPanel` with a same-place cancel button. `StatusStrip`, `CharacterFolio`, `ChatFeed`, `ChatMessage`, `MessageActions`, `MechanicalReceipt`, `Composer`, and compact `Inspector` ship as the active-play shell. Alagard pixel font wired in with a VT323 fallback. Slash-command parser unit-tested. Backend `/api/turn` uses LLM-backed structured classification instead of regex routing. `GameState.character` provides both structured narrative character data and nested Cairn mechanics data, with a one-time LLM-backed backfill path for the current authored character.
 
-Desktop beta scaffolding is now in the repo as well. The Tauri shell uses the existing Svelte frontend, spawns a bundled FastAPI sidecar, injects app-data paths via env, and tells the frontend which local API base to use. The PyInstaller sidecar build succeeds locally; the remaining local desktop compile/smoke gap is that this machine currently does not have Rust/cargo installed, so the real Tauri compile must be verified in CI or on a Rust-equipped machine.
+Desktop beta scaffolding is now in the repo as well. The Tauri shell uses the existing Svelte frontend, spawns a bundled FastAPI sidecar, injects app-data paths via env, and tells the frontend which local API base to use. Desktop icon assets are generated from a transparent rounded 1024px source at `web/src-tauri/app-icon.png` so the macOS `.icns` has cropped corners. The PyInstaller sidecar build succeeds locally; the remaining local desktop compile/smoke gap is that this machine currently does not have Rust/cargo installed, so the real Tauri compile must be verified in CI or on a Rust-equipped machine.
 
 Continuity percolation (cheap scope classifier before thread/NPC updater LLM calls) and the typed `src/dungeon_master/config/` LLM profile layer are both documented in the memory bank and ship on `feature/continuity-percolation` together with refreshed `.env.example` and tests (`tests/test_config.py`, extended `tests/test_narrative.py`).
 

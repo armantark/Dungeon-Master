@@ -79,6 +79,7 @@ Frontend:
 Desktop shell:
 
 - `web/src-tauri/`: Tauri v2 desktop host. The Rust side spawns a bundled Python FastAPI sidecar, retains the child handle in managed app state for the window lifetime, injects app-data paths via env (`DUNGEON_MASTER_STATE_PATH`, `DUNGEON_MASTER_RUNTIME_SETTINGS_PATH`, `DUNGEON_MASTER_CREDENTIALS_PATH`), and exposes a small invoke command so the Svelte app can discover the local sidecar base URL at startup.
+- `web/src-tauri/app-icon.png` plus `web/src-tauri/icons/`: desktop icon source and generated platform assets. The source PNG is pre-masked with rounded transparent corners before running `npm exec tauri icon -- src-tauri/app-icon.png`, so the macOS `.icns`, Windows `.ico`, and desktop PNG outputs share the same Apple-compliant corner crop.
 - `scripts/build_tauri_sidecar.py`: PyInstaller-based sidecar build script. It compiles `src/dungeon_master/cli.py` into a one-file binary, adds the target-triple suffix Tauri expects under `web/src-tauri/binaries/`, and falls back to platform-based triple inference when `rustc` is not on `PATH`. It explicitly collects LiteLLM package data and imports `tiktoken_ext.openai_public`, because LiteLLM reads bundled model metadata and `tiktoken` discovers encodings through that namespace plugin at runtime.
 - `.github/workflows/desktop-release.yml`: draft GitHub release pipeline for desktop artifacts. It installs Node, Python, uv, and Rust; runs backend/frontend checks; then runs `tauri-apps/tauri-action` with `projectPath: web`.
 
