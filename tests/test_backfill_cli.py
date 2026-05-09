@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING
 
 from dungeon_master.backfill_cli import main
@@ -133,5 +133,5 @@ def test_backfill_cli_targets_active_save_and_emits_json_report(
     assert payload["applied"] is True
     assert payload["state_changed"] is True
     assert payload["memory_rebuilt"] is True
-    assert payload["state_path"].endswith(f"{save_id}/game_state.json")
+    assert PurePath(payload["state_path"]).parts[-3:] == ("saves", save_id, "game_state.json")
     assert (library.save_dir_for(save_id) / "memory.json").exists()
