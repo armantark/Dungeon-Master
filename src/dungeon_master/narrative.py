@@ -95,7 +95,8 @@ Discipline:
   immediate action or scene.
 - Do not open narration by recapping
   scenes, memories, motifs, or prior concerns unless the final user message
-  directly asks about them or the context of the current scene is actually relevant to it. Carry older context silently when it is only
+  directly asks about them or the current scene context is actually relevant
+  to it. Carry older context silently when it is only
   background, and begin with the current action instead.
 - Avoid repeating the same static motif, injury, location, or prior event
   across consecutive responses unless it materially changes this beat.
