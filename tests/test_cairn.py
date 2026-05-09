@@ -1,6 +1,6 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.cairn import CairnEngine
+from dungeon_master.cairn import CairnEngine, GeneratedCairnBackfill
 from dungeon_master.models import (
     AttackStance,
     CairnCharacterState,
@@ -131,6 +131,97 @@ class RecordingAcquisitionCompletion:
             ]
 
         return _stream()  # type: ignore[return-value]
+
+
+def test_generated_backfill_normalizes_zero_weapon_damage_for_non_weapons() -> None:
+    generated = GeneratedCairnBackfill.model_validate(
+        {
+            "skills": ["Road-hardened"],
+            "abilities": [],
+            "str_score": 10,
+            "dex_score": 10,
+            "wil_score": 10,
+            "max_hp": 3,
+            "fatigue": 0,
+            "deprived": False,
+            "critically_wounded": False,
+            "doomed": False,
+            "paralyzed": False,
+            "delirious": False,
+            "dead": False,
+            "notes": "Generated from a model payload that used 0 as a placeholder.",
+            "inventory": [
+                {
+                    "name": "Tallow candle",
+                    "details": "A tiny light for the ash road.",
+                    "tags": ["light", "petty"],
+                    "slots": 0,
+                    "weapon_damage_die": 0,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": False,
+                },
+                {
+                    "name": "Trail rations",
+                    "details": "Dried bread and salt fish.",
+                    "tags": ["supplies"],
+                    "slots": 1,
+                    "weapon_damage_die": "0",
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": False,
+                },
+            ],
+        },
+    )
+
+    assert [item.weapon_damage_die for item in generated.inventory] == [None, None]
+
+
+def test_generated_backfill_defaults_missing_weapon_damage_for_weapons() -> None:
+    generated = GeneratedCairnBackfill.model_validate(
+        {
+            "skills": ["Road-hardened"],
+            "abilities": [],
+            "str_score": 10,
+            "dex_score": 10,
+            "wil_score": 10,
+            "max_hp": 3,
+            "fatigue": 0,
+            "deprived": False,
+            "critically_wounded": False,
+            "doomed": False,
+            "paralyzed": False,
+            "delirious": False,
+            "dead": False,
+            "notes": "Generated from a model payload that omitted a weapon die.",
+            "inventory": [
+                {
+                    "name": "Notched cudgel",
+                    "details": "A heavy pilgrim's club.",
+                    "tags": ["weapon"],
+                    "slots": 1,
+                    "weapon_damage_die": 0,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": True,
+                },
+                {
+                    "name": "Trail rations",
+                    "details": "Dried bread and salt fish.",
+                    "tags": ["supplies"],
+                    "slots": 1,
+                    "weapon_damage_die": None,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": False,
+                },
+            ],
+        },
+    )
+
+    assert generated.inventory[0].weapon_damage_die == 6
+    assert generated.inventory[1].weapon_damage_die is None
 
 
 def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:

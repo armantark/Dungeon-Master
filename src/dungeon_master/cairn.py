@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.models import (
@@ -116,6 +116,8 @@ Mechanical constraints:
 - `deprived`, `critically_wounded`, `doomed`, `paralyzed`, `delirious`, and
   `dead` should default false unless the condition clearly requires otherwise.
 - Favor at least one equipped primary weapon if the character plausibly has one.
+- `weapon_damage_die` must be null for non-weapon items. For weapon items, use
+  one of 4, 6, 8, 10, or 12; do not use 0 as a placeholder.
 """
 
 CAIRN_BACKFILL_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
@@ -165,6 +167,8 @@ Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, h
 Allowed power kinds: none, spellbook, scroll, relic, holy_relic
 Allowed effects: none, restore_hp, restore_attribute, clear_condition, enhance_attack, impair_target, force_save, reveal_sign, create_safe_passage, ward_or_pacify, extraordinary_aid, resurrect
 Allowed clear conditions: deprived, critically_wounded, doomed, paralyzed, delirious
+Inventory rule: `weapon_damage_die` is null for every non-weapon item. If `tags`
+includes `weapon`, `weapon_damage_die` must be 4, 6, 8, 10, or 12. Never emit 0.
 
 The authored character is:
 <<CHARACTER_JSON>>
@@ -329,6 +333,28 @@ class GeneratedCairnItemProfile(StrictModel):
     uses: int | None = Field(default=None, ge=1)
     equipped: bool = False
     power: CairnItemPower = Field(default_factory=CairnItemPower)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_weapon_damage_die(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        migrated = dict(data)
+        raw_tags = migrated.get("tags", [])
+        tags = {
+            tag.value if isinstance(tag, CairnItemTag) else str(tag)
+            for tag in raw_tags
+            if isinstance(tag, CairnItemTag | str)
+        }
+        has_weapon_tag = CairnItemTag.WEAPON.value in tags
+        raw_die = migrated.get("weapon_damage_die")
+        if raw_die in (0, "0", ""):
+            migrated["weapon_damage_die"] = D6_SIDES if has_weapon_tag else None
+        elif has_weapon_tag and raw_die is None:
+            migrated["weapon_damage_die"] = D6_SIDES
+        elif not has_weapon_tag:
+            migrated["weapon_damage_die"] = None
+        return migrated
 
 
 class GeneratedCairnBackfill(StrictModel):
