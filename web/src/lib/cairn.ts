@@ -12,16 +12,36 @@ import type {
   CairnAbility,
   CairnCharacterState,
   CairnConditionKey,
+  CairnDayPhase,
   CairnItemEffectKind,
   CairnItemPower,
   CairnItemPowerKind,
   CairnItemState,
   CairnItemTag,
   CairnMechanicsSource,
+  CairnResolution,
   CairnRestKind,
+  CairnSurvivalClock,
+  CairnTimeAdvance,
   EncounterInitiator,
   OracleOutcome,
 } from "./types";
+
+// --- Survival-clock thresholds -----------------------------------------
+//
+// Mirrors the constants in src/dungeon_master/cairn.py. We hand-mirror
+// them rather than fetch them from the backend because the frontend
+// only uses them to color the pressure meters — never to decide
+// deprivation, which is always the backend's call. Keeping the numbers
+// in lockstep is enforced by Vitest cross-checks against
+// `CairnSurvivalClock.food_deprived` / `sleep_deprived`: if the
+// thresholds drift, those tests start failing because the warning tier
+// stops bracketing the deprivation tier.
+export const FOOD_WARNING_WATCHES = 2;
+export const FOOD_DEPRIVED_WATCHES = 3;
+export const SLEEP_WARNING_WATCHES = 4;
+export const SLEEP_DEPRIVED_WATCHES = 6;
+export const WATCHES_PER_DAY = 6;
 
 // --- Defaults ----------------------------------------------------------
 
@@ -58,7 +78,25 @@ export function defaultCairnCharacterState(): CairnCharacterState {
     slots_used: 0,
     overloaded: false,
     primary_weapon_item_id: null,
+    survival: defaultCairnSurvivalClock(),
     notes: "",
+  };
+}
+
+// Mirrors `CairnSurvivalClock` defaults in models.py. Day 1 / dawn /
+// no pressure / no flags is the resting state of a fresh sheet — the
+// backend uses the same starting point so any draft and any started
+// campaign read identically until the engine actually advances time.
+export function defaultCairnSurvivalClock(): CairnSurvivalClock {
+  return {
+    day_number: 1,
+    watch_index: 0,
+    day_phase: "dawn",
+    watches_since_meal: 0,
+    watches_since_sleep: 0,
+    food_deprived: false,
+    sleep_deprived: false,
+    other_deprived: false,
   };
 }
 
@@ -451,4 +489,138 @@ export function isAmbushOpener(outcome: OracleOutcome): boolean {
     && cairn.combat_started === true
     && cairn.combat_initiator === "enemy"
   );
+}
+
+// --- Survival clock ----------------------------------------------------
+//
+// Pure presentation helpers for the watch-based survival surface. None
+// of these decide deprivation themselves; they translate the backend's
+// numeric pressure / phase data into player-readable strings and tier
+// keys the folio + receipt use for color and copy. Putting the labels
+// here (instead of inline in the .svelte) keeps every UI surface that
+// renders survival pulling from the same dictionary.
+
+const DAY_PHASE_LABEL: Record<CairnDayPhase, string> = {
+  dawn: "Dawn",
+  day: "Day",
+  dusk: "Dusk",
+  night: "Night",
+  deep_night: "Deep night",
+};
+
+const TIME_ADVANCE_LABEL: Record<CairnTimeAdvance, string> = {
+  none: "No time passes",
+  brief: "A breath",
+  watch: "A watch",
+  day: "A day",
+  overnight: "Overnight",
+};
+
+export function formatDayPhase(phase: CairnDayPhase): string {
+  return DAY_PHASE_LABEL[phase];
+}
+
+export function formatTimeAdvance(time: CairnTimeAdvance | null): string | null {
+  return time === null ? null : TIME_ADVANCE_LABEL[time];
+}
+
+// Three-tier read of the food / sleep pressure meters. `easy` is "no
+// concern yet", `warning` is "this is getting close", `deprived` is
+// "the engine has flipped the deprived flag". We return the tier even
+// when the flag isn't set yet (warning > easy), so the UI can show a
+// soft amber pre-deprivation hint without claiming to be authoritative
+// — only `deprived` corresponds to the backend actually gating HP.
+export type SurvivalTier = "easy" | "warning" | "deprived";
+
+export function foodPressureTier(survival: CairnSurvivalClock): SurvivalTier {
+  if (survival.food_deprived) return "deprived";
+  if (survival.watches_since_meal >= FOOD_WARNING_WATCHES) return "warning";
+  return "easy";
+}
+
+export function sleepPressureTier(survival: CairnSurvivalClock): SurvivalTier {
+  if (survival.sleep_deprived) return "deprived";
+  if (survival.watches_since_sleep >= SLEEP_WARNING_WATCHES) return "warning";
+  return "easy";
+}
+
+export interface SurvivalMeter {
+  // The current pressure count (watches without food / sleep).
+  value: number;
+  // The threshold at which the backend flips the deprived flag, used
+  // as the meter's max so the bar visually fills toward "Deprived".
+  threshold: number;
+  // The earlier "warning" watermark, rendered as a tick on the bar.
+  warning: number;
+  tier: SurvivalTier;
+  // True when the backend has already flipped this axis to deprived.
+  // The meter renders the "DEPRIVED" chip / bar color from this flag,
+  // never from `value >= threshold` alone — the backend is the
+  // authority and may grant exceptions (e.g. an item that suppresses
+  // deprivation while `value` is still high).
+  deprived: boolean;
+}
+
+export function foodPressureMeter(survival: CairnSurvivalClock): SurvivalMeter {
+  return {
+    value: Math.max(0, survival.watches_since_meal),
+    threshold: FOOD_DEPRIVED_WATCHES,
+    warning: FOOD_WARNING_WATCHES,
+    tier: foodPressureTier(survival),
+    deprived: survival.food_deprived,
+  };
+}
+
+export function sleepPressureMeter(survival: CairnSurvivalClock): SurvivalMeter {
+  return {
+    value: Math.max(0, survival.watches_since_sleep),
+    threshold: SLEEP_DEPRIVED_WATCHES,
+    warning: SLEEP_WARNING_WATCHES,
+    tier: sleepPressureTier(survival),
+    deprived: survival.sleep_deprived,
+  };
+}
+
+// Compact "Day 3 · Dusk · Watch 4/6" line for the folio readout. We
+// 1-index the watch in the display because watches are inclusive of the
+// current beat — "Watch 0/6" reads as "the day hasn't started" which
+// isn't what the player feels at dawn-of-day-1. The underlying field
+// stays 0-indexed; this is a pure presentation choice.
+export function formatSurvivalLine(survival: CairnSurvivalClock): string {
+  const phase = formatDayPhase(survival.day_phase);
+  const watchHuman = Math.min(survival.watch_index + 1, WATCHES_PER_DAY);
+  return `Day ${survival.day_number} · ${phase} · Watch ${watchHuman}/${WATCHES_PER_DAY}`;
+}
+
+// Receipt-side compact representation: only emit a line when the turn
+// actually billed time. `none` is genuinely "no fiction time passed"
+// and reads as noise on the receipt, so we suppress it. The label is
+// short on purpose — it lives in the dl row alongside dice readouts.
+export function formatTurnTimeAdvance(time: CairnTimeAdvance | null): string | null {
+  if (time === null || time === "none") return null;
+  return formatTimeAdvance(time);
+}
+
+// True when the survival snapshot pair on a CairnResolution actually
+// moved. We consult this from the receipt to decide whether to draw
+// the "Survival" sub-block at all. The check is forgiving — any of
+// day, watch, meal pressure, sleep pressure, deprivation flags, or
+// ration consumption counts as movement — so a turn that only ate
+// (no time passed) still surfaces a row.
+export function survivalChanged(resolution: CairnResolution): boolean {
+  if (resolution.time_advance !== null && resolution.time_advance !== "none") return true;
+  if (resolution.ration_item_id !== null) return true;
+  const pairs: Array<[number | boolean | null, number | boolean | null]> = [
+    [resolution.day_number_before, resolution.day_number_after],
+    [resolution.watch_index_before, resolution.watch_index_after],
+    [resolution.watches_since_meal_before, resolution.watches_since_meal_after],
+    [resolution.watches_since_sleep_before, resolution.watches_since_sleep_after],
+    [resolution.food_deprived_before, resolution.food_deprived_after],
+    [resolution.sleep_deprived_before, resolution.sleep_deprived_after],
+    [resolution.deprived_before, resolution.deprived_after],
+  ];
+  for (const [before, after] of pairs) {
+    if (before !== null && after !== null && before !== after) return true;
+  }
+  return false;
 }

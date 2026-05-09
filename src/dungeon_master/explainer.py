@@ -279,6 +279,15 @@ class ExplainerEngine:
                     "armor": cairn.armor,
                     "fatigue": cairn.fatigue,
                     "burden": [cairn.slots_used, cairn.slots_total],
+                    "survival": {
+                        "day": cairn.survival.day_number,
+                        "phase": cairn.survival.day_phase.value,
+                        "watch_index": cairn.survival.watch_index,
+                        "meal_pressure": cairn.survival.watches_since_meal,
+                        "sleep_pressure": cairn.survival.watches_since_sleep,
+                        "food_deprived": cairn.survival.food_deprived,
+                        "sleep_deprived": cairn.survival.sleep_deprived,
+                    },
                     "statuses": {
                         "deprived": cairn.deprived,
                         "critically_wounded": cairn.critically_wounded,

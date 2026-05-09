@@ -23,7 +23,7 @@ from dungeon_master.api import (
     reattach_request_stream,
     submit_turn_stream,
 )
-from dungeon_master.cairn import CairnEngine
+from dungeon_master.cairn import CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -45,6 +45,7 @@ from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
+    CairnDayPhase,
     CairnItemEffectKind,
     CairnItemPower,
     CairnItemPowerKind,
@@ -53,6 +54,8 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnResolution,
     CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
     CampaignEndReason,
     CampaignStatus,
     CharacterQuiz,
@@ -768,6 +771,51 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             summary=f"Recovery: {kind.value}",
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(rest_kind=kind, hp_before=0, hp_after=state.character.cairn.hp),
+        )
+
+    def advance_survival_clock(
+        self,
+        state: GameState,
+        *,
+        time_advance: CairnTimeAdvance,
+        actions: tuple[CairnSurvivalAction, ...] = (),
+        actor_id: str | None = None,
+        extra_days: int = 0,
+    ) -> SurvivalUpdate:
+        del actor_id
+        survival = state.character.cairn.survival
+        before_day = survival.day_number
+        before_phase = survival.day_phase
+        before_meal = survival.watches_since_meal
+        before_sleep = survival.watches_since_sleep
+        if time_advance == CairnTimeAdvance.WATCH:
+            survival.watch_index = (survival.watch_index + 1) % 6
+        elif time_advance == CairnTimeAdvance.DAY:
+            survival.watch_index = (survival.watch_index + 3) % 6
+        elif time_advance == CairnTimeAdvance.OVERNIGHT:
+            survival.day_number += 1
+            survival.watch_index = 0
+        survival.day_number += extra_days
+        if CairnSurvivalAction.EAT in actions:
+            survival.watches_since_meal = 0
+        if CairnSurvivalAction.SLEEP in actions:
+            survival.watches_since_sleep = 0
+        phase_after = CairnDayPhase.DAWN if survival.watch_index == 0 else before_phase
+        return SurvivalUpdate(
+            summary="Survival clock updated in fake engine.",
+            resolution=CairnResolution(
+                time_advance=time_advance,
+                day_number_before=before_day,
+                day_number_after=survival.day_number,
+                day_phase_before=before_phase,
+                day_phase_after=phase_after,
+                watches_since_meal_before=before_meal,
+                watches_since_meal_after=survival.watches_since_meal,
+                watches_since_sleep_before=before_sleep,
+                watches_since_sleep_after=survival.watches_since_sleep,
+                deprived_before=False,
+                deprived_after=False,
+            ),
         )
 
 
@@ -1499,6 +1547,40 @@ def test_submit_turn_routes_natural_question(tmp_path: Path) -> None:
     assert outcome["likelihood"] == "Unlikely"
 
 
+def test_submit_turn_recon_question_does_not_advance_scene(tmp_path: Path) -> None:
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+        if text == "Are there enemies along the goat-path?":
+            return TurnPlan(
+                route=TurnRoute.PLAYER_ACTION,
+                text=text,
+                ops=(
+                    PlannedTurnOp(
+                        kind=PlannedTurnOpKind.SEARCH_SCENE,
+                        text=text,
+                    ),
+                ),
+            )
+        return scripted_classifier(text, likelihood)
+
+    with _client(tmp_path, turn_router=TurnRouter(classifier=recon_classifier)) as client:
+        initial = client.get("/api/state").json()
+        response = client.post(
+            "/api/turn",
+            json={"text": "Are there enemies along the goat-path?"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scene_number"] == initial["scene_number"]
+    assert payload["current_scene"] == initial["current_scene"]
+    assert [event["title"] for event in payload["action_log"]] == [
+        "Player action",
+        "Narrative response",
+    ]
+    assert payload["oracle_history"][-1]["kind"] == OracleKind.PLAYER_ACTION.value
+    assert "current vantage without advancing" in payload["action_log"][-1]["content"]
+
+
 def test_submit_turn_degrades_to_safe_narration_when_planning_fails(tmp_path: Path) -> None:
     with _broken_planner_client(tmp_path) as client:
         response = client.post(
@@ -1584,6 +1666,125 @@ def test_submit_turn_routes_recovery(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["oracle_history"][0]["kind"] == "recovery"
     assert payload["oracle_history"][0]["cairn"]["rest_kind"] == "breather"
+
+
+def test_submit_turn_persists_survival_clock_fields(tmp_path: Path) -> None:
+    def waiting_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            time_advance=CairnTimeAdvance.WATCH,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            seed=1,
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+        ),
+        turn_router=TurnRouter(classifier=waiting_classifier),
+    )
+    seeded = sample_state()
+    seeded.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=12,
+        dex_score=12,
+        wil_score=10,
+        max_str_score=12,
+        max_dex_score=12,
+        max_wil_score=10,
+        hp=4,
+        max_hp=4,
+        primary_weapon_item_id=seeded.character.inventory[0].id,
+    )
+    seeded.character.inventory[0].cairn = CairnItemState(
+        source=CairnMechanicsSource.EXPLICIT,
+        tags=[CairnItemTag.WEAPON],
+        weapon_damage_die=6,
+        equipped=True,
+    )
+    service._store.save(seeded, create_checkpoint=False)  # noqa: SLF001
+
+    with TestClient(create_app(service=service)) as client:
+        response = client.post(
+            "/api/turn",
+            json={"text": "I keep watch by the thorn hedge until dusk."},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["character"]["cairn"]["survival"]["watch_index"] == 1
+    assert payload["oracle_history"][-1]["cairn"]["time_advance"] == "watch"
+
+
+def test_cairn_recover_full_rest_consumes_rations_before_healing(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            seed=1,
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+        ),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+    state = sample_state()
+    state.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=12,
+        dex_score=12,
+        wil_score=10,
+        max_str_score=12,
+        max_dex_score=12,
+        max_wil_score=10,
+        hp=4,
+        max_hp=4,
+        primary_weapon_item_id=state.character.inventory[0].id,
+    )
+    state.character.inventory[0].cairn = CairnItemState(
+        source=CairnMechanicsSource.EXPLICIT,
+        tags=[CairnItemTag.WEAPON],
+        weapon_damage_die=6,
+        equipped=True,
+    )
+    state.character.cairn.hp = 1
+    state.character.cairn.survival.watches_since_meal = 3
+    state.character.cairn.survival.food_deprived = True
+    state.character.cairn.deprived = True
+    state.character.inventory.append(
+        InventoryItem(
+            name="Trail rations",
+            details="Hard bread and salt fish.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.SUPPLIES],
+                slots=1,
+                uses=None,
+            ),
+        ),
+    )
+    service._store.save(state, create_checkpoint=False)  # noqa: SLF001
+
+    with TestClient(create_app(service=service)) as client:
+        response = client.post(
+            "/api/cairn/recover",
+            json={"kind": CairnRestKind.FULL_REST.value},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["character"]["cairn"]["hp"] == payload["character"]["cairn"]["max_hp"]
+    assert payload["character"]["cairn"]["deprived"] is False
+    assert payload["oracle_history"][-1]["cairn"]["ration_uses_before"] == 3
+    assert payload["oracle_history"][-1]["cairn"]["ration_uses_after"] == 2
 
 
 def test_submit_turn_routes_retreat(tmp_path: Path) -> None:

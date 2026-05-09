@@ -5,12 +5,15 @@ from dungeon_master.models import (
     AttackStance,
     CairnCharacterState,
     CairnConditionKey,
+    CairnDayPhase,
     CairnItemEffectKind,
     CairnItemPower,
     CairnItemPowerKind,
     CairnItemState,
     CairnItemTag,
     CairnMechanicsSource,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
     EncounterEndReason,
     EncounterInitiator,
     EncounterState,
@@ -327,6 +330,85 @@ def test_resolve_retreat_can_fail_and_take_enemy_harm() -> None:
     assert outcome.cairn.enemy_damage is not None
     assert state.encounter.active is True
     assert state.encounter.player_disengaged is False
+
+
+def test_watch_advance_updates_phase_and_triggers_food_deprivation() -> None:
+    state = _ready_state()
+    state.character.cairn.survival.watch_index = 2
+    state.character.cairn.survival.day_phase = CairnDayPhase.DAY
+    state.character.cairn.survival.watches_since_meal = 2
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    update = engine.advance_survival_clock(
+        state,
+        time_advance=CairnTimeAdvance.WATCH,
+    )
+
+    assert state.character.cairn.survival.watch_index == 3
+    assert state.character.cairn.survival.day_phase == CairnDayPhase.DUSK
+    assert state.character.cairn.survival.watches_since_meal == 3
+    assert state.character.cairn.survival.food_deprived is True
+    assert state.character.cairn.deprived is True
+    assert update.resolution.day_phase_after == CairnDayPhase.DUSK
+
+
+def test_eating_ration_bundle_initializes_uses_and_clears_food_deprivation() -> None:
+    state = _ready_state()
+    ration = InventoryItem(
+        name="Trail rations",
+        details="Waxed cloth around hard bread and salt fish.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.SUPPLIES],
+            slots=1,
+            uses=None,
+        ),
+    )
+    state.character.inventory.append(ration)
+    state.character.cairn.survival.watches_since_meal = 3
+    state.character.cairn.survival.food_deprived = True
+    state.character.cairn.deprived = True
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    update = engine.advance_survival_clock(
+        state,
+        time_advance=CairnTimeAdvance.NONE,
+        actions=(CairnSurvivalAction.EAT,),
+    )
+
+    assert ration.cairn.uses == 2
+    assert state.character.cairn.survival.watches_since_meal == 0
+    assert state.character.cairn.survival.food_deprived is False
+    assert state.character.cairn.deprived is False
+    assert update.resolution.ration_item_name == "Trail rations"
+    assert update.resolution.ration_uses_before == 3
+    assert update.resolution.ration_uses_after == 2
+
+
+def test_overnight_sleep_rolls_to_next_dawn_and_clears_sleep_deprivation() -> None:
+    state = _ready_state()
+    state.character.cairn.survival.day_number = 2
+    state.character.cairn.survival.watch_index = 4
+    state.character.cairn.survival.day_phase = CairnDayPhase.NIGHT
+    state.character.cairn.survival.watches_since_sleep = 6
+    state.character.cairn.survival.sleep_deprived = True
+    state.character.cairn.deprived = True
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    update = engine.advance_survival_clock(
+        state,
+        time_advance=CairnTimeAdvance.OVERNIGHT,
+        actions=(CairnSurvivalAction.SLEEP,),
+    )
+
+    assert state.character.cairn.survival.day_number == 3
+    assert state.character.cairn.survival.watch_index == 0
+    assert state.character.cairn.survival.day_phase == CairnDayPhase.DAWN
+    assert state.character.cairn.survival.watches_since_sleep == 0
+    assert state.character.cairn.survival.sleep_deprived is False
+    assert state.character.cairn.deprived is False
+    assert update.resolution.day_number_before == 2
+    assert update.resolution.day_number_after == 3
 
 
 def test_acquire_items_adds_typed_loot_and_recomputes_burden() -> None:

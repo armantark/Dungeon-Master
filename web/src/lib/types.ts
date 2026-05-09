@@ -96,6 +96,26 @@ export type AttackStance = "normal" | "impaired" | "enhanced";
 
 export type CairnRestKind = "breather" | "full_rest" | "week_recovery";
 
+// Mirrors backend `CairnDayPhase`. The phase is a *derived* read of
+// `watch_index` (see _WATCH_PHASES in models.py) — the frontend never
+// recomputes it from the index, it only renders what the wire reports.
+// Keeping the union exhaustive lets `formatDayPhase` fail at type-check
+// time when the backend grows another phase.
+export type CairnDayPhase = "dawn" | "day" | "dusk" | "night" | "deep_night";
+
+// Mirrors backend `CairnTimeAdvance`. The router classifies how much
+// fiction time a turn cost; the engine then advances the watch clock
+// by that bucket. We mirror it so the receipt can render the time
+// bucket the player just spent — useful when the player rereads
+// history to see why a `watch` push tipped them into food deprivation.
+export type CairnTimeAdvance = "none" | "brief" | "watch" | "day" | "overnight";
+
+// Mirrors backend `CairnSurvivalAction`. Only `eat` and `sleep` are
+// modeled because the survival clock cares only about what clears
+// food / sleep pressure; other "actions" like resting briefly have
+// always belonged to the recovery surface, not the survival clock.
+export type CairnSurvivalAction = "eat" | "sleep";
+
 export type EncounterEndReason =
   | "victory"
   | "enemy_rout"
@@ -241,6 +261,29 @@ export interface InventoryItem {
   cairn: CairnItemState;
 }
 
+// Mirrors backend `CairnSurvivalClock`. The clock lives nested on the
+// character so it travels with whoever is being tracked, instead of
+// hanging off `GameState` (party members can in principle drift apart
+// in deprivation). `day_phase` is derived from `watch_index` on the
+// backend; the frontend treats both as authoritative and never
+// recomputes one from the other.
+//
+// `food_deprived` / `sleep_deprived` / `other_deprived` are individual
+// causes; the aggregate `deprived` flag on `CairnCharacterState` is
+// what gates HP recovery. We mirror the disaggregated flags so the
+// folio can label *why* the character is deprived without re-deriving
+// from the pressure counters (the backend's threshold could shift).
+export interface CairnSurvivalClock {
+  day_number: number;
+  watch_index: number;
+  day_phase: CairnDayPhase;
+  watches_since_meal: number;
+  watches_since_sleep: number;
+  food_deprived: boolean;
+  sleep_deprived: boolean;
+  other_deprived: boolean;
+}
+
 // Mirrors `CairnCharacterState`. We keep the field names identical to
 // the Pydantic model so the JSON wire format is the source of truth and
 // no transformation layer hides drift. `*_before` / `*_after` snapshots
@@ -272,6 +315,11 @@ export interface CairnCharacterState {
   slots_used: number;
   overloaded: boolean;
   primary_weapon_item_id: string | null;
+  // Survival clock + day-night phase, populated even on freshly created
+  // characters (defaults to dawn / day 1 / no pressure). The folio gates
+  // its rendering on `source !== "unset"` like every other Cairn block,
+  // so a draft sheet never shows a misleading watch counter.
+  survival: CairnSurvivalClock;
   notes: string;
 }
 
@@ -285,6 +333,43 @@ export interface CairnResolution {
   target: number | null;
   success: boolean | null;
   rest_kind: CairnRestKind | null;
+  // Survival-clock attribution. `time_advance` is the bucket the router
+  // billed this turn for; the `*_before` / `*_after` pairs and ration
+  // fields are what the engine actually applied. They are independently
+  // optional because not every Cairn outcome touches the clock — only
+  // turns that consume time, sleep, eat, or take a rest do — and a
+  // resolution with no clock movement leaves them all null. Receipts
+  // render only the rows where a `before` / `after` pair actually
+  // shifted, so unchanged counters disappear instead of cluttering the
+  // strip.
+  time_advance: CairnTimeAdvance | null;
+  day_number_before: number | null;
+  day_number_after: number | null;
+  watch_index_before: number | null;
+  watch_index_after: number | null;
+  day_phase_before: CairnDayPhase | null;
+  day_phase_after: CairnDayPhase | null;
+  watches_since_meal_before: number | null;
+  watches_since_meal_after: number | null;
+  watches_since_sleep_before: number | null;
+  watches_since_sleep_after: number | null;
+  food_deprived_before: boolean | null;
+  food_deprived_after: boolean | null;
+  sleep_deprived_before: boolean | null;
+  sleep_deprived_after: boolean | null;
+  // Aggregate deprived flag snapshot. We surface this even though the
+  // disaggregated food/sleep flags are also present so the receipt can
+  // narrate "Deprived cleared" / "Deprived gained" in one row when a
+  // turn touched both axes (e.g. a full rest that ate *and* slept).
+  deprived_before: boolean | null;
+  deprived_after: boolean | null;
+  // Ration consumed on this turn (when the turn ate). Always together:
+  // either all four are populated for an `eat` turn, or all four are
+  // null. The receipt renders item name + uses delta as one row.
+  ration_item_id: string | null;
+  ration_item_name: string | null;
+  ration_uses_before: number | null;
+  ration_uses_after: number | null;
   actor_id: string | null;
   actor_name: string | null;
   item_id: string | null;

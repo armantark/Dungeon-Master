@@ -128,6 +128,7 @@ Current verification commands:
 - `uv run ruff check .`
 - `uv run mypy src tests`
 - `uv run pytest` (full backend suite currently passing)
+- Focused backend survival-clock verification: `uv run pytest tests/test_cairn.py tests/test_turn_router.py tests/test_service.py tests/test_api.py -q`, `uv run ruff check src/dungeon_master/models.py src/dungeon_master/cairn.py src/dungeon_master/service.py src/dungeon_master/turn_router.py src/dungeon_master/narrative.py src/dungeon_master/explainer.py tests/test_cairn.py tests/test_turn_router.py tests/test_service.py tests/test_api.py`, and `uv run mypy src tests`.
 - `uv run dungeon-master-backfill --json` (one-time save audit, dry-run by default)
 - `uv run dungeon-master-fixtures --state-path "/tmp/dungeon-master-fixtures/game_state.json" --force --json` (seed an isolated fixture save library for browser/manual smoke)
 - Focused F-06 backend verification: `uv run pytest tests/test_service.py tests/test_api.py -q` (77 passing), `uv run ruff check src/dungeon_master/models.py src/dungeon_master/service.py src/dungeon_master/api.py tests/test_service.py tests/test_api.py`, `uv run mypy src tests`, plus `uv run pytest -q` for the full backend suite. One test-harness hardening landed incidentally: `tests/test_service.py::CountingNarrative` now carries an inert `_config = NarrativeConfig(model="", api_key=None, base_url=None)` so the real thread updater never inherits live env model settings during regenerate-path tests.

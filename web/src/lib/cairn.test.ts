@@ -5,6 +5,15 @@ import {
   cairnHeadline,
   defaultCairnCharacterState,
   defaultCairnItemState,
+  defaultCairnSurvivalClock,
+  FOOD_DEPRIVED_WATCHES,
+  FOOD_WARNING_WATCHES,
+  foodPressureMeter,
+  foodPressureTier,
+  formatDayPhase,
+  formatSurvivalLine,
+  formatTimeAdvance,
+  formatTurnTimeAdvance,
   hasItemPower,
   itemEffectLabel,
   itemPowerKindLabel,
@@ -19,11 +28,20 @@ import {
   isAmbushOpener,
   itemTagLabel,
   itemTagLabels,
+  SLEEP_DEPRIVED_WATCHES,
+  SLEEP_WARNING_WATCHES,
+  sleepPressureMeter,
+  sleepPressureTier,
+  survivalChanged,
+  WATCHES_PER_DAY,
 } from "./cairn";
 import type {
+  CairnDayPhase,
   CairnItemTag,
   CairnResolution,
   CairnRestKind,
+  CairnSurvivalClock,
+  CairnTimeAdvance,
   OracleOutcome,
 } from "./types";
 import { CAIRN_ABILITIES, CAIRN_ITEM_TAGS } from "./types";
@@ -66,6 +84,27 @@ function emptyCairnResolution(): CairnResolution {
     target: null,
     success: null,
     rest_kind: null,
+    time_advance: null,
+    day_number_before: null,
+    day_number_after: null,
+    watch_index_before: null,
+    watch_index_after: null,
+    day_phase_before: null,
+    day_phase_after: null,
+    watches_since_meal_before: null,
+    watches_since_meal_after: null,
+    watches_since_sleep_before: null,
+    watches_since_sleep_after: null,
+    food_deprived_before: null,
+    food_deprived_after: null,
+    sleep_deprived_before: null,
+    sleep_deprived_after: null,
+    deprived_before: null,
+    deprived_after: null,
+    ration_item_id: null,
+    ration_item_name: null,
+    ration_uses_before: null,
+    ration_uses_after: null,
     actor_id: null,
     actor_name: null,
     item_id: null,
@@ -114,6 +153,23 @@ describe("default factories", () => {
     expect(state.str_score).toBe(10);
     expect(state.dex_score).toBe(10);
     expect(state.wil_score).toBe(10);
+    // Survival clock is mirrored at its resting state — Day 1, dawn,
+    // no pressure, no flags. The whole-state factory must include it
+    // by construction so freshly drafted sheets round-trip through
+    // the wire shape without TypeScript pruning the field.
+    expect(state.survival).toEqual(defaultCairnSurvivalClock());
+  });
+
+  it("defaultCairnSurvivalClock mirrors the resting Pydantic defaults", () => {
+    const survival = defaultCairnSurvivalClock();
+    expect(survival.day_number).toBe(1);
+    expect(survival.watch_index).toBe(0);
+    expect(survival.day_phase).toBe("dawn");
+    expect(survival.watches_since_meal).toBe(0);
+    expect(survival.watches_since_sleep).toBe(0);
+    expect(survival.food_deprived).toBe(false);
+    expect(survival.sleep_deprived).toBe(false);
+    expect(survival.other_deprived).toBe(false);
   });
 
   it("defaultCairnItemState mirrors the unset Pydantic defaults", () => {
@@ -559,5 +615,235 @@ describe("isAmbushOpener", () => {
     // implicitly via `formatHarmHeadline`. We still pin the
     // structural behavior here so a future change to the receipt
     // can rely on the predicate consistently.
+  });
+});
+
+// --- Survival clock helpers -------------------------------------------
+//
+// These tests pin the *frontend* contract for the watch clock:
+// presentation-only translation of backend numeric pressure into
+// tier reads + meter shapes, plus the receipt-side
+// "did anything actually move?" predicate. The backend owns when
+// deprivation flips; the frontend just renders the verdict and the
+// approach.
+
+function survivalAt(overrides: Partial<CairnSurvivalClock> = {}): CairnSurvivalClock {
+  return { ...defaultCairnSurvivalClock(), ...overrides };
+}
+
+describe("formatDayPhase / formatTimeAdvance", () => {
+  it("labels every CairnDayPhase variant", () => {
+    const phases: CairnDayPhase[] = ["dawn", "day", "dusk", "night", "deep_night"];
+    for (const phase of phases) {
+      const label = formatDayPhase(phase);
+      expect(label.length).toBeGreaterThan(0);
+      expect(label[0]).toBe(label[0]?.toUpperCase());
+    }
+    expect(formatDayPhase("deep_night")).toBe("Deep night");
+  });
+
+  it("labels every CairnTimeAdvance variant and skips 'none' on the receipt path", () => {
+    const advances: CairnTimeAdvance[] = ["none", "brief", "watch", "day", "overnight"];
+    for (const advance of advances) {
+      expect(formatTimeAdvance(advance)).not.toBeNull();
+    }
+    expect(formatTimeAdvance(null)).toBeNull();
+    // formatTurnTimeAdvance is the receipt-facing variant: it
+    // suppresses `none` because the receipt should not surface
+    // "No time passes" as a row of its own.
+    expect(formatTurnTimeAdvance("none")).toBeNull();
+    expect(formatTurnTimeAdvance(null)).toBeNull();
+    expect(formatTurnTimeAdvance("watch")).toBe("A watch");
+  });
+});
+
+describe("formatSurvivalLine", () => {
+  it("1-indexes the watch in the readable line so the player feels the current beat", () => {
+    // Backend `watch_index=0, day_phase=dawn` reads as "Watch 1/6"
+    // because watches are inclusive of the current beat. The
+    // underlying field stays 0-indexed; this is purely presentation.
+    expect(formatSurvivalLine(survivalAt({ watch_index: 0, day_phase: "dawn" }))).toBe(
+      `Day 1 · Dawn · Watch 1/${WATCHES_PER_DAY}`,
+    );
+    expect(
+      formatSurvivalLine(
+        survivalAt({ day_number: 3, watch_index: 4, day_phase: "night" }),
+      ),
+    ).toBe(`Day 3 · Night · Watch 5/${WATCHES_PER_DAY}`);
+  });
+
+  it("clamps the human watch number at WATCHES_PER_DAY for the deep-night beat", () => {
+    // watch_index=5 is the deep-night beat; the human watch should
+    // read 6/6, never 7/6, even if the backend ever overshoots.
+    expect(
+      formatSurvivalLine(
+        survivalAt({ watch_index: 5, day_phase: "deep_night" }),
+      ),
+    ).toBe(`Day 1 · Deep night · Watch ${WATCHES_PER_DAY}/${WATCHES_PER_DAY}`);
+  });
+});
+
+describe("foodPressureTier / sleepPressureTier", () => {
+  it("returns 'easy' below the warning watermark", () => {
+    expect(foodPressureTier(survivalAt({ watches_since_meal: 0 }))).toBe("easy");
+    expect(
+      foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES - 1 })),
+    ).toBe("easy");
+    expect(sleepPressureTier(survivalAt({ watches_since_sleep: 0 }))).toBe("easy");
+    expect(
+      sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES - 1 })),
+    ).toBe("easy");
+  });
+
+  it("returns 'warning' between the warning and deprivation watermarks", () => {
+    // The "warning" tier is presentational — the backend has *not*
+    // yet flipped the deprived flag, so we must not claim to be
+    // authoritative. We pin both edges of the range here.
+    expect(
+      foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES })),
+    ).toBe("warning");
+    expect(
+      sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES })),
+    ).toBe("warning");
+    // Pressure can sit at the deprivation watermark while the
+    // backend still hasn't flipped (e.g. an item suppresses it). We
+    // honor the backend flag, so without it we still read 'warning'.
+    expect(
+      foodPressureTier(
+        survivalAt({ watches_since_meal: FOOD_DEPRIVED_WATCHES, food_deprived: false }),
+      ),
+    ).toBe("warning");
+  });
+
+  it("returns 'deprived' when the backend has flipped the flag, regardless of pressure", () => {
+    // The backend's flag is authoritative. A character whose food
+    // pressure is below the warning watermark but who is *flagged*
+    // deprived (e.g. by a scar) should still read 'deprived' on the
+    // food meter — because that's what is gating HP.
+    expect(
+      foodPressureTier(survivalAt({ watches_since_meal: 0, food_deprived: true })),
+    ).toBe("deprived");
+    expect(
+      sleepPressureTier(
+        survivalAt({ watches_since_sleep: 1, sleep_deprived: true }),
+      ),
+    ).toBe("deprived");
+  });
+});
+
+describe("foodPressureMeter / sleepPressureMeter", () => {
+  it("shapes a meter the bar can render directly", () => {
+    const food = foodPressureMeter(
+      survivalAt({ watches_since_meal: FOOD_DEPRIVED_WATCHES, food_deprived: true }),
+    );
+    expect(food.threshold).toBe(FOOD_DEPRIVED_WATCHES);
+    expect(food.warning).toBe(FOOD_WARNING_WATCHES);
+    expect(food.value).toBe(FOOD_DEPRIVED_WATCHES);
+    expect(food.tier).toBe("deprived");
+    expect(food.deprived).toBe(true);
+
+    const sleep = sleepPressureMeter(survivalAt({ watches_since_sleep: 5 }));
+    expect(sleep.threshold).toBe(SLEEP_DEPRIVED_WATCHES);
+    expect(sleep.warning).toBe(SLEEP_WARNING_WATCHES);
+    expect(sleep.value).toBe(5);
+    expect(sleep.tier).toBe("warning");
+    expect(sleep.deprived).toBe(false);
+  });
+
+  it("clamps negative pressure to zero (defensive against weird wire shapes)", () => {
+    // Backend `Field(ge=0)` should make this impossible, but we
+    // defend the renderer anyway — a negative segment count would
+    // crash the meter loop.
+    const food = foodPressureMeter(survivalAt({ watches_since_meal: -1 }));
+    expect(food.value).toBe(0);
+    expect(food.tier).toBe("easy");
+  });
+});
+
+describe("survivalChanged", () => {
+  function emptySurvival(): CairnResolution {
+    return emptyCairnResolution();
+  }
+
+  it("returns false when no survival fields moved", () => {
+    expect(survivalChanged(emptySurvival())).toBe(false);
+    // A `none` time advance with no eat is the canonical "this turn
+    // didn't bill the clock" shape. Receipt should stay quiet.
+    expect(survivalChanged({ ...emptySurvival(), time_advance: "none" })).toBe(false);
+  });
+
+  it("returns true when the router billed real time", () => {
+    expect(
+      survivalChanged({ ...emptySurvival(), time_advance: "watch" }),
+    ).toBe(true);
+    expect(
+      survivalChanged({ ...emptySurvival(), time_advance: "overnight" }),
+    ).toBe(true);
+  });
+
+  it("returns true when the player ate, even with no time passing", () => {
+    // A pure `eat` action (player ate without time advancing) still
+    // belongs on the receipt — the ration was consumed.
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        time_advance: "none",
+        ration_item_id: "item_ration_1",
+        ration_item_name: "Trail rations",
+        ration_uses_before: 3,
+        ration_uses_after: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true when any pressure / deprivation pair shifted", () => {
+    // Each axis on its own should flip the predicate, since the
+    // receipt should never silently drop a real change.
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        watches_since_meal_before: 2,
+        watches_since_meal_after: 0,
+      }),
+    ).toBe(true);
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        watches_since_sleep_before: 0,
+        watches_since_sleep_after: 1,
+      }),
+    ).toBe(true);
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        food_deprived_before: true,
+        food_deprived_after: false,
+      }),
+    ).toBe(true);
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        deprived_before: false,
+        deprived_after: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not flip on equal before/after pairs", () => {
+    // A turn where watches_since_meal stayed at 2 (engine snapshot
+    // taken but no movement) shouldn't be surfaced as a change.
+    expect(
+      survivalChanged({
+        ...emptySurvival(),
+        watches_since_meal_before: 2,
+        watches_since_meal_after: 2,
+        watches_since_sleep_before: 4,
+        watches_since_sleep_after: 4,
+        food_deprived_before: false,
+        food_deprived_after: false,
+        sleep_deprived_before: false,
+        sleep_deprived_after: false,
+      }),
+    ).toBe(false);
   });
 });

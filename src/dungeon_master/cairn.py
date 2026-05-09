@@ -14,6 +14,7 @@ from dungeon_master.models import (
     CairnAbility,
     CairnCharacterState,
     CairnConditionKey,
+    CairnDayPhase,
     CairnItemEffectKind,
     CairnItemPower,
     CairnItemPowerKind,
@@ -22,6 +23,8 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnResolution,
     CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
     CharacterSheet,
     EncounterEndReason,
     EncounterInitiator,
@@ -58,6 +61,11 @@ COMFORTABLE_SLOTS = 5
 CURRENT_BACKFILL_VERSION = 4
 STR_BRANCH_MAX = 2
 DEX_BRANCH_MAX = 4
+WATCHES_PER_DAY = 6
+FOOD_WARNING_WATCHES = 2
+FOOD_DEPRIVED_WATCHES = 3
+SLEEP_WARNING_WATCHES = 4
+SLEEP_DEPRIVED_WATCHES = 6
 
 LASTING_SCAR_LOCATIONS: tuple[str, ...] = (
     "Neck",
@@ -412,6 +420,12 @@ class ItemUseResolution:
     target_name: str | None = None
     wil_save_target: int | None = None
     wil_save_success: bool | None = None
+
+
+@dataclass(frozen=True)
+class SurvivalUpdate:
+    summary: str
+    resolution: CairnResolution
 
 
 @dataclass(frozen=True)
@@ -900,6 +914,91 @@ class CairnEngine:
             ),
         )
 
+    def advance_survival_clock(
+        self,
+        state: GameState,
+        *,
+        time_advance: CairnTimeAdvance,
+        actions: tuple[CairnSurvivalAction, ...] = (),
+        actor_id: str | None = None,
+        extra_days: int = 0,
+    ) -> SurvivalUpdate:
+        self._require_ready(state)
+        actor = self._resolve_actor(state, actor_id)
+        cairn = actor.sheet.cairn
+        self._sync_survival_flags(cairn)
+        before = cairn.survival.model_copy(deep=True)
+        deprived_before = cairn.deprived
+        ration_item_id: str | None = None
+        ration_item_name: str | None = None
+        ration_uses_before: int | None = None
+        ration_uses_after: int | None = None
+        notes: list[str] = []
+
+        watches = self._watch_count_for_time_advance(before.watch_index, time_advance)
+        if watches > 0:
+            self._advance_survival_watches(cairn, watches)
+        if extra_days > 0:
+            cairn.survival.day_number += extra_days
+        if CairnSurvivalAction.EAT in actions:
+            ration = self._find_ration_item(actor.sheet)
+            if ration is None:
+                notes.append("No rations available to eat")
+            else:
+                ration_item_id = ration.id
+                ration_item_name = ration.name
+                ration_uses_before, ration_uses_after = self._consume_ration(actor.sheet, ration)
+                cairn.survival.watches_since_meal = 0
+                cairn.survival.food_deprived = False
+                notes.append(
+                    f"Ate {ration.name} ({ration_uses_before}->{ration_uses_after})"
+                )
+        if CairnSurvivalAction.SLEEP in actions:
+            cairn.survival.watches_since_sleep = 0
+            cairn.survival.sleep_deprived = False
+            notes.append("Slept and reset exhaustion pressure")
+        self._sync_survival_flags(cairn)
+        self._recompute_derived(actor.sheet)
+        after = cairn.survival.model_copy(deep=True)
+        actor_prefix = "" if actor.is_player else f"{actor.name}: "
+        if time_advance != CairnTimeAdvance.NONE:
+            notes.insert(
+                0,
+                f"time {time_advance.value} ({before.day_number}:{before.day_phase.value} -> "
+                f"{after.day_number}:{after.day_phase.value})",
+            )
+        if not notes:
+            notes.append("No survival-clock change")
+        return SurvivalUpdate(
+            summary=f"{actor_prefix}Survival clock updated: {'; '.join(notes)}.",
+            resolution=CairnResolution(
+                time_advance=time_advance,
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
+                day_number_before=before.day_number,
+                day_number_after=after.day_number,
+                watch_index_before=before.watch_index,
+                watch_index_after=after.watch_index,
+                day_phase_before=before.day_phase,
+                day_phase_after=after.day_phase,
+                watches_since_meal_before=before.watches_since_meal,
+                watches_since_meal_after=after.watches_since_meal,
+                watches_since_sleep_before=before.watches_since_sleep,
+                watches_since_sleep_after=after.watches_since_sleep,
+                food_deprived_before=before.food_deprived,
+                food_deprived_after=after.food_deprived,
+                sleep_deprived_before=before.sleep_deprived,
+                sleep_deprived_after=after.sleep_deprived,
+                deprived_before=deprived_before,
+                deprived_after=cairn.deprived,
+                ration_item_id=ration_item_id,
+                ration_item_name=ration_item_name,
+                ration_uses_before=ration_uses_before,
+                ration_uses_after=ration_uses_after,
+                overloaded=cairn.overloaded,
+            ),
+        )
+
     def set_item_equipped(
         self,
         state: GameState,
@@ -1198,7 +1297,10 @@ class CairnEngine:
     def _clear_condition(self, cairn: CairnCharacterState, condition: CairnConditionKey) -> bool:
         if condition == CairnConditionKey.DEPRIVED:
             was_active = cairn.deprived
-            cairn.deprived = False
+            cairn.survival.food_deprived = False
+            cairn.survival.sleep_deprived = False
+            cairn.survival.other_deprived = False
+            self._sync_survival_flags(cairn)
             return was_active
         if condition == CairnConditionKey.CRITICALLY_WOUNDED:
             was_active = cairn.critically_wounded
@@ -2138,6 +2240,7 @@ class CairnEngine:
         cairn.armor = min(MAX_ARMOR, armor_value)
         cairn.slots_used = slots_used
         cairn.overloaded = slots_used >= cairn.slots_total
+        self._sync_survival_flags(cairn)
         if cairn.overloaded:
             cairn.hp = 0
         cairn.paralyzed = cairn.dex_score == 0
@@ -2165,7 +2268,8 @@ class CairnEngine:
             hp_roll = self._roll(D6_SIDES, "scar_hp")
             rolls.append(hp_roll)
             cairn.max_hp += hp_roll.result
-            cairn.deprived = True
+            cairn.survival.other_deprived = True
+            self._sync_survival_flags(cairn)
             return ("Walloped", rolls)
         if entry == 4:
             part_roll = self._roll(D6_SIDES, "scar_part")
@@ -2234,7 +2338,8 @@ class CairnEngine:
             hp_roll = self._roll(D8_SIDES, "scar_hp")
             rolls.append(hp_roll)
             cairn.max_hp = hp_roll.result
-            cairn.deprived = True
+            cairn.survival.other_deprived = True
+            self._sync_survival_flags(cairn)
             cairn.critically_wounded = True
             return ("Mortal Wound", rolls)
 
@@ -2243,6 +2348,83 @@ class CairnEngine:
         cairn.max_hp = max(cairn.max_hp, hp_roll.result)
         cairn.doomed = True
         return ("Doomed", rolls)
+
+    def _sync_survival_flags(self, cairn: CairnCharacterState) -> None:
+        cairn.survival.food_deprived = cairn.survival.watches_since_meal >= FOOD_DEPRIVED_WATCHES
+        cairn.survival.sleep_deprived = cairn.survival.watches_since_sleep >= SLEEP_DEPRIVED_WATCHES
+        cairn.deprived = (
+            cairn.survival.food_deprived
+            or cairn.survival.sleep_deprived
+            or cairn.survival.other_deprived
+        )
+
+    def _watch_count_for_time_advance(
+        self,
+        watch_index: int,
+        time_advance: CairnTimeAdvance,
+    ) -> int:
+        if time_advance in (CairnTimeAdvance.NONE, CairnTimeAdvance.BRIEF):
+            return 0
+        if time_advance == CairnTimeAdvance.WATCH:
+            return 1
+        if time_advance == CairnTimeAdvance.DAY:
+            return 3
+        return WATCHES_PER_DAY - watch_index if watch_index > 0 else WATCHES_PER_DAY
+
+    def _advance_survival_watches(self, cairn: CairnCharacterState, watches: int) -> None:
+        if watches <= 0:
+            return
+        total = cairn.survival.watch_index + watches
+        day_increment, watch_index = divmod(total, WATCHES_PER_DAY)
+        cairn.survival.day_number += day_increment
+        cairn.survival.watch_index = watch_index
+        cairn.survival.day_phase = self._phase_for_watch_index(watch_index)
+        cairn.survival.watches_since_meal += watches
+        cairn.survival.watches_since_sleep += watches
+        self._sync_survival_flags(cairn)
+
+    def _phase_for_watch_index(self, watch_index: int) -> CairnDayPhase:
+        phases = (
+            CairnDayPhase.DAWN,
+            CairnDayPhase.DAY,
+            CairnDayPhase.DAY,
+            CairnDayPhase.DUSK,
+            CairnDayPhase.NIGHT,
+            CairnDayPhase.DEEP_NIGHT,
+        )
+        return phases[watch_index]
+
+    def _find_ration_item(self, character: CharacterSheet) -> InventoryItem | None:
+        candidates = [
+            item
+            for item in character.inventory
+            if CairnItemTag.SUPPLIES in item.cairn.tags and (item.cairn.uses is None or item.cairn.uses > 0)
+        ]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda item: (
+                CairnItemTag.CONSUMABLE not in item.cairn.tags,
+                item.cairn.uses is None,
+                item.cairn.slots,
+                item.name,
+            ),
+        )
+        return candidates[0]
+
+    def _consume_ration(
+        self,
+        character: CharacterSheet,
+        item: InventoryItem,
+    ) -> tuple[int, int]:
+        uses_before = item.cairn.uses if item.cairn.uses is not None else max(1, item.cairn.slots * 3)
+        uses_after = max(0, uses_before - 1)
+        if uses_after == 0:
+            character.inventory = [candidate for candidate in character.inventory if candidate.id != item.id]
+        else:
+            item.cairn.uses = uses_after
+        self._recompute_derived(character)
+        return (uses_before, uses_after)
 
     def _resolve_weapon(
         self,

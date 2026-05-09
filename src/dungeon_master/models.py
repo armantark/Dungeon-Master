@@ -195,6 +195,53 @@ class CairnConditionKey(StrEnum):
     DELIRIOUS = "delirious"
 
 
+class CairnDayPhase(StrEnum):
+    DAWN = "dawn"
+    DAY = "day"
+    DUSK = "dusk"
+    NIGHT = "night"
+    DEEP_NIGHT = "deep_night"
+
+
+class CairnTimeAdvance(StrEnum):
+    NONE = "none"
+    BRIEF = "brief"
+    WATCH = "watch"
+    DAY = "day"
+    OVERNIGHT = "overnight"
+
+
+class CairnSurvivalAction(StrEnum):
+    EAT = "eat"
+    SLEEP = "sleep"
+
+
+_WATCH_PHASES: tuple[CairnDayPhase, ...] = (
+    CairnDayPhase.DAWN,
+    CairnDayPhase.DAY,
+    CairnDayPhase.DAY,
+    CairnDayPhase.DUSK,
+    CairnDayPhase.NIGHT,
+    CairnDayPhase.DEEP_NIGHT,
+)
+
+
+class CairnSurvivalClock(StrictModel):
+    day_number: int = Field(default=1, ge=1)
+    watch_index: int = Field(default=0, ge=0, le=5)
+    day_phase: CairnDayPhase = CairnDayPhase.DAWN
+    watches_since_meal: int = Field(default=0, ge=0)
+    watches_since_sleep: int = Field(default=0, ge=0)
+    food_deprived: bool = False
+    sleep_deprived: bool = False
+    other_deprived: bool = False
+
+    @model_validator(mode="after")
+    def normalize_phase(self) -> CairnSurvivalClock:
+        object.__setattr__(self, "day_phase", _WATCH_PHASES[self.watch_index])
+        return self
+
+
 class Roll(StrictModel):
     sides: int = Field(ge=2)
     result: int = Field(ge=1)
@@ -334,7 +381,21 @@ class CairnCharacterState(StrictModel):
     slots_used: int = Field(default=0, ge=0)
     overloaded: bool = False
     primary_weapon_item_id: str | None = None
+    survival: CairnSurvivalClock = Field(default_factory=CairnSurvivalClock)
     notes: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_legacy_deprived_source(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        if "survival" in data:
+            return data
+        if not data.get("deprived"):
+            return data
+        migrated = dict(data)
+        migrated["survival"] = {"other_deprived": True}
+        return migrated
 
     @model_validator(mode="after")
     def normalize_current_values(self) -> CairnCharacterState:
@@ -342,6 +403,15 @@ class CairnCharacterState(StrictModel):
         object.__setattr__(self, "dex_score", min(self.dex_score, self.max_dex_score))
         object.__setattr__(self, "wil_score", min(self.wil_score, self.max_wil_score))
         object.__setattr__(self, "hp", min(self.hp, self.max_hp))
+        object.__setattr__(
+            self,
+            "deprived",
+            (
+                self.survival.food_deprived
+                or self.survival.sleep_deprived
+                or self.survival.other_deprived
+            ),
+        )
         return self
 
 
@@ -350,6 +420,7 @@ class CairnResolution(StrictModel):
     target: int | None = Field(default=None, ge=1, le=20)
     success: bool | None = None
     rest_kind: CairnRestKind | None = None
+    time_advance: CairnTimeAdvance | None = None
     actor_id: str | None = None
     actor_name: str | None = None
     item_id: str | None = None
@@ -360,6 +431,26 @@ class CairnResolution(StrictModel):
     uses_before: int | None = Field(default=None, ge=0)
     uses_after: int | None = Field(default=None, ge=0)
     recharge_condition: str | None = None
+    day_number_before: int | None = Field(default=None, ge=1)
+    day_number_after: int | None = Field(default=None, ge=1)
+    watch_index_before: int | None = Field(default=None, ge=0, le=5)
+    watch_index_after: int | None = Field(default=None, ge=0, le=5)
+    day_phase_before: CairnDayPhase | None = None
+    day_phase_after: CairnDayPhase | None = None
+    watches_since_meal_before: int | None = Field(default=None, ge=0)
+    watches_since_meal_after: int | None = Field(default=None, ge=0)
+    watches_since_sleep_before: int | None = Field(default=None, ge=0)
+    watches_since_sleep_after: int | None = Field(default=None, ge=0)
+    food_deprived_before: bool | None = None
+    food_deprived_after: bool | None = None
+    sleep_deprived_before: bool | None = None
+    sleep_deprived_after: bool | None = None
+    deprived_before: bool | None = None
+    deprived_after: bool | None = None
+    ration_item_id: str | None = None
+    ration_item_name: str | None = None
+    ration_uses_before: int | None = Field(default=None, ge=0)
+    ration_uses_after: int | None = Field(default=None, ge=0)
     combat_round: int | None = Field(default=None, ge=0)
     combat_started: bool | None = None
     combat_active: bool | None = None

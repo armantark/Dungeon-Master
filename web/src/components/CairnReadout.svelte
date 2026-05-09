@@ -17,8 +17,12 @@ backend endpoints that this pass deliberately does not bind to controls.
 <script lang="ts">
   import {
     activeStatuses,
+    foodPressureMeter,
     formatBurden,
+    formatSurvivalLine,
+    sleepPressureMeter,
     type StatusKey,
+    type SurvivalMeter,
   } from "../lib/cairn";
   import type { CairnCharacterState } from "../lib/types";
 
@@ -42,6 +46,39 @@ backend endpoints that this pass deliberately does not bind to controls.
     { key: "DEX", current: cairn.dex_score, max: cairn.max_dex_score },
     { key: "WIL", current: cairn.wil_score, max: cairn.max_wil_score },
   ] as const);
+
+  // Survival readout. We display the day-night line + two pressure
+  // meters (food, sleep). The meters are tier-colored from the helper:
+  // `easy` is the comfortable green of the burden bar, `warning` is
+  // the gold-tarnished pre-deprivation hint, `deprived` is the
+  // blood-rust everything-is-bad tier shared with overloaded burden.
+  // We deliberately avoid spelling out the watch counts as raw numbers
+  // — the meter is the read; the chip is the verdict.
+  const survivalLine = $derived(formatSurvivalLine(cairn.survival));
+  const foodMeter: SurvivalMeter = $derived(foodPressureMeter(cairn.survival));
+  const sleepMeter: SurvivalMeter = $derived(sleepPressureMeter(cairn.survival));
+
+  // The bar segments grow with the deprivation threshold, so the eye
+  // can read "two ticks shy of deprivation" rather than parsing a
+  // percent. We render a tick at the warning watermark to make that
+  // intermediate stage visible at a glance.
+  function meterSegments(meter: SurvivalMeter): Array<{
+    filled: boolean;
+    warning: boolean;
+    tier: SurvivalMeter["tier"];
+  }> {
+    const segments = [];
+    for (let i = 1; i <= meter.threshold; i += 1) {
+      segments.push({
+        filled: i <= meter.value,
+        warning: i === meter.warning,
+        tier: meter.tier,
+      });
+    }
+    return segments;
+  }
+  const foodSegments = $derived(meterSegments(foodMeter));
+  const sleepSegments = $derived(meterSegments(sleepMeter));
 
   // The bar is segmented at three thresholds so the player can read the
   // tier transition at a glance: comfortable -> backpack -> overloaded.
@@ -124,6 +161,92 @@ backend endpoints that this pass deliberately does not bind to controls.
         Fatigue · {cairn.fatigue}
       </p>
     {/if}
+  </section>
+
+  <!--
+    Survival clock — the watch-based day-night + food/sleep pressure
+    surface. We render it after burden because deprivation propagates
+    upward into the status chips below; the player's eye reads
+    "Day 2 · Dusk · Watch 4/6" first, then sees the meters that explain
+    why "Deprived" is lit on the chip strip. We never expose buttons
+    here: the player triggers eat / sleep / rest through natural
+    language, and this surface is strictly the receipt of what the
+    backend has decided.
+  -->
+  <section class="survival" aria-label="Survival clock">
+    <div class="survival__head">
+      <span class="kicker">Survival</span>
+      <span class="pixel survival__line" aria-label="Day, phase, and watch">
+        {survivalLine}
+      </span>
+    </div>
+    <div class="survival__rail">
+      <div class="meter" data-axis="food" data-tier={foodMeter.tier}>
+        <div class="meter__head">
+          <span class="kicker">Food</span>
+          <span class="meter__chip pixel" data-tier={foodMeter.tier}>
+            {#if foodMeter.deprived}
+              Deprived
+            {:else if foodMeter.tier === "warning"}
+              Hungry
+            {:else}
+              Fed
+            {/if}
+          </span>
+        </div>
+        <div
+          class="meter__bar"
+          role="meter"
+          aria-valuenow={foodMeter.value}
+          aria-valuemin={0}
+          aria-valuemax={foodMeter.threshold}
+          aria-label="Watches without food"
+        >
+          {#each foodSegments as segment, idx (idx)}
+            <span
+              class="meter__seg"
+              data-filled={segment.filled}
+              data-warning={segment.warning}
+              data-tier={segment.tier}
+              aria-hidden="true"
+            ></span>
+          {/each}
+        </div>
+      </div>
+
+      <div class="meter" data-axis="sleep" data-tier={sleepMeter.tier}>
+        <div class="meter__head">
+          <span class="kicker">Sleep</span>
+          <span class="meter__chip pixel" data-tier={sleepMeter.tier}>
+            {#if sleepMeter.deprived}
+              Deprived
+            {:else if sleepMeter.tier === "warning"}
+              Weary
+            {:else}
+              Rested
+            {/if}
+          </span>
+        </div>
+        <div
+          class="meter__bar"
+          role="meter"
+          aria-valuenow={sleepMeter.value}
+          aria-valuemin={0}
+          aria-valuemax={sleepMeter.threshold}
+          aria-label="Watches without sleep"
+        >
+          {#each sleepSegments as segment, idx (idx)}
+            <span
+              class="meter__seg"
+              data-filled={segment.filled}
+              data-warning={segment.warning}
+              data-tier={segment.tier}
+              aria-hidden="true"
+            ></span>
+          {/each}
+        </div>
+      </div>
+    </div>
   </section>
 
   {#if statuses.length > 0}
@@ -300,6 +423,110 @@ backend endpoints that this pass deliberately does not bind to controls.
     font-size: 0.78rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  /*
+   * Survival rail. We mirror the burden block visually (kicker + pixel
+   * readout, segmented bar) so the rail reads as a consistent stack of
+   * mechanical meters: Burden, Food, Sleep. The two pressure meters
+   * sit on a single row at desktop widths to keep the rail compact
+   * and stack at narrower widths so the labels never crowd the chips.
+   */
+  .survival {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .survival__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+  }
+  .survival__head .kicker {
+    margin: 0;
+  }
+  .survival__line {
+    color: var(--gold-bright);
+    letter-spacing: 0.05em;
+  }
+  .survival__rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+  @media (max-width: 320px) {
+    .survival__rail {
+      grid-template-columns: 1fr;
+    }
+  }
+  .meter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .meter__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.45rem;
+  }
+  .meter__head .kicker {
+    margin: 0;
+  }
+  .meter__chip {
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.35rem;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
+    color: var(--gold-tarnished);
+  }
+  .meter__chip[data-tier="warning"] {
+    color: var(--gold-bright);
+    border-color: var(--gold-tarnished);
+  }
+  .meter__chip[data-tier="deprived"] {
+    color: var(--paper-warm);
+    border-color: var(--rust-blood);
+    background: color-mix(in oklab, var(--rust-blood) 30%, var(--ink-deep));
+  }
+  .meter__bar {
+    display: flex;
+    gap: 2px;
+    height: 0.45rem;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+    background: rgba(0, 0, 0, 0.55);
+    padding: 1px;
+  }
+  .meter__seg {
+    flex: 1 1 0;
+    background: transparent;
+    transition: background 120ms ease;
+    position: relative;
+  }
+  /*
+   * Render the warning watermark as a thin tick on the top edge of
+   * the segment that *crosses* the threshold. Keeping it visual (not
+   * a separate row) lets the eye read "we're past the warning"
+   * without parsing extra labels.
+   */
+  .meter__seg[data-warning="true"]::before {
+    content: "";
+    position: absolute;
+    inset: -3px 0 auto 0;
+    height: 2px;
+    background: color-mix(in oklab, var(--gold-bright) 80%, transparent);
+  }
+  .meter__seg[data-filled="true"][data-tier="easy"] {
+    background: color-mix(in oklab, var(--green-verdigris) 70%, var(--gold-tarnished));
+  }
+  .meter__seg[data-filled="true"][data-tier="warning"] {
+    background: var(--gold-bright);
+  }
+  .meter__seg[data-filled="true"][data-tier="deprived"] {
+    background: var(--rust-blood);
   }
 
   .statuses {

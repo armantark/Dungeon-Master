@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from dungeon_master.cairn import CairnEngine
+from dungeon_master.cairn import CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -21,6 +21,7 @@ from dungeon_master.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
+    CairnDayPhase,
     CairnItemEffectKind,
     CairnItemPower,
     CairnItemPowerKind,
@@ -29,6 +30,8 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnResolution,
     CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
     CampaignEndReason,
     CampaignStatus,
     CharacterQuiz,
@@ -753,6 +756,51 @@ class FakeCairnEngine:
             cairn=CairnResolution(rest_kind=kind, hp_before=0, hp_after=state.character.cairn.hp),
         )
 
+    def advance_survival_clock(
+        self,
+        state: GameState,
+        *,
+        time_advance: CairnTimeAdvance,
+        actions: tuple[CairnSurvivalAction, ...] = (),
+        actor_id: str | None = None,
+        extra_days: int = 0,
+    ) -> SurvivalUpdate:
+        del actor_id
+        survival = state.character.cairn.survival
+        before_day = survival.day_number
+        before_phase = survival.day_phase
+        before_meal = survival.watches_since_meal
+        before_sleep = survival.watches_since_sleep
+        if time_advance == CairnTimeAdvance.WATCH:
+            survival.watch_index = (survival.watch_index + 1) % 6
+        elif time_advance == CairnTimeAdvance.DAY:
+            survival.watch_index = (survival.watch_index + 3) % 6
+        elif time_advance == CairnTimeAdvance.OVERNIGHT:
+            survival.day_number += 1
+            survival.watch_index = 0
+        survival.day_number += extra_days
+        if CairnSurvivalAction.EAT in actions:
+            survival.watches_since_meal = 0
+        if CairnSurvivalAction.SLEEP in actions:
+            survival.watches_since_sleep = 0
+        phase_after = CairnDayPhase.DAWN if survival.watch_index == 0 else before_phase
+        return SurvivalUpdate(
+            summary="Survival clock updated in fake engine.",
+            resolution=CairnResolution(
+                time_advance=time_advance,
+                day_number_before=before_day,
+                day_number_after=survival.day_number,
+                day_phase_before=before_phase,
+                day_phase_after=phase_after,
+                watches_since_meal_before=before_meal,
+                watches_since_meal_after=survival.watches_since_meal,
+                watches_since_sleep_before=before_sleep,
+                watches_since_sleep_after=survival.watches_since_sleep,
+                deprived_before=False,
+                deprived_after=False,
+            ),
+        )
+
     def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
         state.encounter.active = False
         state.encounter.notes = "You escaped the encounter."
@@ -1196,6 +1244,132 @@ def test_service_player_turn_routes_recovery(tmp_path: Path) -> None:
     assert state.oracle_history[0].kind == "recovery"
     assert state.oracle_history[0].cairn is not None
     assert state.oracle_history[0].cairn.rest_kind == CairnRestKind.BREATHER
+
+
+def test_service_player_turn_commits_survival_clock_advance(tmp_path: Path) -> None:
+    def waiting_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            time_advance=CairnTimeAdvance.WATCH,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            seed=1,
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+        ),
+        turn_router=TurnRouter(classifier=waiting_classifier),
+    )
+    seeded = sample_state()
+    seeded.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=12,
+        dex_score=12,
+        wil_score=10,
+        max_str_score=12,
+        max_dex_score=12,
+        max_wil_score=10,
+        hp=4,
+        max_hp=4,
+        primary_weapon_item_id=seeded.character.inventory[0].id,
+    )
+    seeded.character.inventory[0].cairn = CairnItemState(
+        source=CairnMechanicsSource.EXPLICIT,
+        tags=[CairnItemTag.WEAPON],
+        weapon_damage_die=6,
+        equipped=True,
+    )
+    service._store.save(seeded, create_checkpoint=False)  # noqa: SLF001
+
+    state = service.submit_player_turn("I keep watch by the thorn hedge until dusk.")
+
+    assert state.character.cairn.survival.watch_index == 1
+    assert state.oracle_history[-1].cairn is not None
+    assert state.oracle_history[-1].cairn.time_advance == CairnTimeAdvance.WATCH
+
+
+def test_service_full_rest_eats_and_sleeps_before_recovery(tmp_path: Path) -> None:
+    def full_rest_classifier(text: str, _likelihood: Likelihood | None) -> TurnPlan:
+        return TurnPlan(
+            route=TurnRoute.RECOVERY,
+            text=text,
+            time_advance=CairnTimeAdvance.OVERNIGHT,
+            survival_actions=(CairnSurvivalAction.EAT, CairnSurvivalAction.SLEEP),
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECOVERY,
+                    text=text,
+                    rest_kind=CairnRestKind.FULL_REST,
+                ),
+            ),
+        )
+
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            seed=1,
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+        ),
+        turn_router=TurnRouter(classifier=full_rest_classifier),
+    )
+    state = sample_state()
+    state.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        str_score=12,
+        dex_score=12,
+        wil_score=10,
+        max_str_score=12,
+        max_dex_score=12,
+        max_wil_score=10,
+        hp=4,
+        max_hp=4,
+        primary_weapon_item_id=state.character.inventory[0].id,
+    )
+    state.character.inventory[0].cairn = CairnItemState(
+        source=CairnMechanicsSource.EXPLICIT,
+        tags=[CairnItemTag.WEAPON],
+        weapon_damage_die=6,
+        equipped=True,
+    )
+    state.character.cairn.hp = 1
+    state.character.cairn.survival.watches_since_meal = 3
+    state.character.cairn.survival.food_deprived = True
+    state.character.cairn.deprived = True
+    state.character.inventory.append(
+        InventoryItem(
+            name="Trail rations",
+            details="Hard bread and salt fish.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.SUPPLIES],
+                slots=1,
+                uses=None,
+            ),
+        ),
+    )
+    store.save(state, create_checkpoint=False)
+
+    rested = service.submit_player_turn("I eat my trail rations and sleep by the fire.")
+
+    assert rested.character.cairn.hp == rested.character.cairn.max_hp
+    assert rested.character.cairn.deprived is False
+    assert rested.character.cairn.survival.watches_since_meal == 0
+    assert rested.character.cairn.survival.watches_since_sleep == 0
+    assert rested.oracle_history[-1].cairn is not None
+    assert rested.oracle_history[-1].cairn.ration_uses_before == 3
+    assert rested.oracle_history[-1].cairn.ration_uses_after == 2
 
 
 def test_service_player_turn_routes_retreat(tmp_path: Path) -> None:
@@ -2103,6 +2277,77 @@ def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
+def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continuity(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater()
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
+
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+        if text == "Are there enemies along the goat-path?":
+            return TurnPlan(
+                route=TurnRoute.PLAYER_ACTION,
+                text=text,
+                ops=(
+                    PlannedTurnOp(
+                        kind=PlannedTurnOpKind.SEARCH_SCENE,
+                        text=text,
+                    ),
+                ),
+            )
+        return scripted_classifier(text, likelihood)
+
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=recon_classifier),
+    )
+    initial = service.load_state()
+
+    updated = service.submit_player_turn("Are there enemies along the goat-path?")
+
+    assert updated.scene_number == initial.scene_number
+    assert updated.current_scene == initial.current_scene
+    assert [event.title for event in updated.action_log] == [
+        "Player action",
+        "Narrative response",
+    ]
+    assert updated.oracle_history[-1].kind == OracleKind.PLAYER_ACTION
+    assert "current vantage without advancing" in updated.action_log[-1].content
+    assert classifier.calls == [
+        (
+            "Are there enemies along the goat-path?",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert thread_updater.calls == []
+    assert npc_updater.calls == []
+    assert thread_updater.post_calls == [
+        (
+            "Are there enemies along the goat-path?",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert npc_updater.post_calls == [
+        (
+            "Are there enemies along the goat-path?",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+
+
 def test_service_post_narration_continuity_can_touch_threads_and_npcs(
     tmp_path: Path,
 ) -> None:
@@ -2797,6 +3042,59 @@ def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
     assert classifier.calls == [
         (
             "I study the icon and pray for intercession.",
+            final.oracle_history[-1].summary,
+            final.action_log[-1].content,
+        ),
+    ]
+    for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
+        timing = by_id[skipped_id]
+        assert timing.status == StageStatus.SKIPPED
+        assert timing.started_at is None
+        assert timing.completed_at is None
+    assert by_id["streaming_narration"].status == StageStatus.DONE
+    assert by_id["reconciling_continuity"].status == StageStatus.DONE
+    assert by_id["reconciling_continuity"].started_at is not None
+    assert by_id["reconciling_continuity"].completed_at is not None
+
+
+def test_streamed_recon_turn_marks_pre_narration_continuity_stages_skipped(
+    tmp_path: Path,
+) -> None:
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
+
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+        if text == "Are there enemies along the goat-path?":
+            return TurnPlan(
+                route=TurnRoute.PLAYER_ACTION,
+                text=text,
+                ops=(
+                    PlannedTurnOp(
+                        kind=PlannedTurnOpKind.SEARCH_SCENE,
+                        text=text,
+                    ),
+                ),
+            )
+        return scripted_classifier(text, likelihood)
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=recon_classifier),
+    )
+
+    final = _consume_stream(
+        service.stream_submit_player_turn("Are there enemies along the goat-path?"),
+    )
+    by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
+
+    assert classifier.calls == [
+        (
+            "Are there enemies along the goat-path?",
             final.oracle_history[-1].summary,
             final.action_log[-1].content,
         ),

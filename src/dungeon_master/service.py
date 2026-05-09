@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
-from dungeon_master.cairn import CairnEngine
+from dungeon_master.cairn import CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignGenerator,
     CampaignWorldResult,
@@ -31,7 +31,10 @@ from dungeon_master.models import (
     NPC,
     AttackStance,
     CairnAbility,
+    CairnResolution,
     CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
     CampaignDirectives,
     CampaignEndReason,
     CampaignStatus,
@@ -286,6 +289,17 @@ class CairnPort(Protocol):
         *,
         actor_id: str | None = None,
     ) -> OracleOutcome:
+        raise NotImplementedError
+
+    def advance_survival_clock(
+        self,
+        state: GameState,
+        *,
+        time_advance: CairnTimeAdvance,
+        actions: tuple[CairnSurvivalAction, ...] = (),
+        actor_id: str | None = None,
+        extra_days: int = 0,
+    ) -> SurvivalUpdate:
         raise NotImplementedError
 
     def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
@@ -1085,12 +1099,21 @@ class GameService:
     def recover_character(self, kind: CairnRestKind) -> GameState:
         state = self.load_state()
         self._ensure_active(state)
+        survival_update = self._advance_survival_for_rest(
+            state,
+            kind=kind,
+        )
         outcome = self._cairn.recover(state, kind)
+        if survival_update is not None:
+            outcome.cairn = self._merge_cairn_resolution(outcome.cairn, survival_update.resolution)
         self._commit_oracle_turn(
             state=state,
             player_input=f"Recovery: {kind.value}",
             outcome=outcome,
             oracle_title="Recovery",
+            execution_context=self._format_execution_context(
+                [survival_update.summary] if survival_update is not None else []
+            ),
         )
         return state
 
@@ -1605,6 +1628,7 @@ class GameService:
         step_summaries: list[str] = []
         primary_outcome: OracleOutcome | None = None
         oracle_title: str | None = None
+        survival_update: SurvivalUpdate | None = None
 
         for op in plan.ops:
             if op.kind == PlannedTurnOpKind.INSPECT_INVENTORY:
@@ -1767,6 +1791,15 @@ class GameService:
 
             if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is not None:
                 actor = self._character_for_actor_name(state, op.actor_name)
+                survival_update = self._advance_survival_for_rest(
+                    state,
+                    kind=op.rest_kind,
+                    actor=actor,
+                    time_advance=plan.time_advance,
+                    actions=plan.survival_actions,
+                )
+                if survival_update is not None:
+                    step_summaries.append(survival_update.summary)
                 primary_outcome = self._cairn.recover(
                     state,
                     op.rest_kind,
@@ -1782,12 +1815,21 @@ class GameService:
                 step_summaries.append(f"Retreat resolved: {primary_outcome.summary}")
                 continue
 
+        if survival_update is None:
+            survival_update = self._advance_survival_for_plan(state, plan=plan)
+            if survival_update is not None:
+                step_summaries.append(survival_update.summary)
         if primary_outcome is None:
             summary = self._player_action_plan_summary(step_summaries)
             primary_outcome = OracleOutcome(
                 kind=OracleKind.PLAYER_ACTION,
                 summary=summary,
                 chaos_factor=state.chaos_factor,
+            )
+        if survival_update is not None:
+            primary_outcome.cairn = self._merge_cairn_resolution(
+                primary_outcome.cairn,
+                survival_update.resolution,
             )
         execution_context = self._format_execution_context(step_summaries)
         return ExecutedTurn(
@@ -1802,7 +1844,20 @@ class GameService:
         # the expensive thread/NPC updater before the narrator answers only
         # makes the turn slower; newly narrated canon is captured after prose
         # by the normal committed-turn memory path.
+        #
+        # Recon/search turns follow the same rule: inspecting the immediate
+        # scene from the current vantage should not mutate continuity before
+        # the narrator answers, because the player has not yet committed to
+        # movement and no durable new fact has been established.
+        if self._plan_is_recon_lookup(plan):
+            return False
         return any(op.kind is not PlannedTurnOpKind.NARRATE for op in plan.ops)
+
+    def _plan_is_recon_lookup(self, plan: TurnPlan) -> bool:
+        return any(op.kind == PlannedTurnOpKind.SEARCH_SCENE for op in plan.ops) and all(
+            op.kind in (PlannedTurnOpKind.SEARCH_SCENE, PlannedTurnOpKind.NARRATE)
+            for op in plan.ops
+        )
 
     def _inspect_inventory_summary(self, state: GameState) -> str:
         inventory = state.character.inventory
@@ -1838,7 +1893,7 @@ class GameService:
         ]
         if item.cairn.equipped:
             item.cairn.equipped = False
-        target.sheet.inventory.append(item)
+        target.sheet.inventory = [*target.sheet.inventory, item]
         self._recompute_party_burden(source.sheet, target.sheet)
         return f"Transferred {item.name} from {source.name} to {target.name}."
 
@@ -1940,8 +1995,92 @@ class GameService:
             if cairn.overloaded:
                 cairn.hp = 0
 
+    def _rest_survival_defaults(
+        self,
+        kind: CairnRestKind,
+    ) -> tuple[CairnTimeAdvance, tuple[CairnSurvivalAction, ...], int]:
+        if kind == CairnRestKind.BREATHER:
+            return (CairnTimeAdvance.BRIEF, (), 0)
+        if kind == CairnRestKind.FULL_REST:
+            return (
+                CairnTimeAdvance.OVERNIGHT,
+                (CairnSurvivalAction.EAT, CairnSurvivalAction.SLEEP),
+                0,
+            )
+        return (
+            CairnTimeAdvance.OVERNIGHT,
+            (CairnSurvivalAction.EAT, CairnSurvivalAction.SLEEP),
+            6,
+        )
+
+    def _advance_survival_for_rest(
+        self,
+        state: GameState,
+        *,
+        kind: CairnRestKind,
+        actor: ServiceActor | None = None,
+        time_advance: CairnTimeAdvance | None = None,
+        actions: tuple[CairnSurvivalAction, ...] = (),
+    ) -> SurvivalUpdate | None:
+        default_time_advance, default_actions, extra_days = self._rest_survival_defaults(kind)
+        resolved_time_advance = (
+            default_time_advance
+            if time_advance is None
+            or (
+                time_advance == CairnTimeAdvance.NONE
+                and kind != CairnRestKind.BREATHER
+            )
+            else time_advance
+        )
+        resolved_actions = actions or default_actions
+        if (
+            resolved_time_advance in (CairnTimeAdvance.NONE, CairnTimeAdvance.BRIEF)
+            and not resolved_actions
+            and extra_days == 0
+        ):
+            return None
+        actor_id = None if actor is None or actor.is_player else actor.id
+        return self._cairn.advance_survival_clock(
+            state,
+            time_advance=resolved_time_advance,
+            actions=resolved_actions,
+            actor_id=actor_id,
+            extra_days=extra_days,
+        )
+
+    def _advance_survival_for_plan(
+        self,
+        state: GameState,
+        *,
+        plan: TurnPlan,
+    ) -> SurvivalUpdate | None:
+        if (
+            plan.time_advance in (CairnTimeAdvance.NONE, CairnTimeAdvance.BRIEF)
+            and not plan.survival_actions
+        ):
+            return None
+        return self._cairn.advance_survival_clock(
+            state,
+            time_advance=plan.time_advance,
+            actions=plan.survival_actions,
+        )
+
+    def _merge_cairn_resolution(
+        self,
+        base: CairnResolution | None,
+        update: CairnResolution,
+    ) -> CairnResolution:
+        if base is None:
+            return update
+        merged = base.model_dump()
+        merged.update(update.model_dump(exclude_none=True, exclude_defaults=True))
+        return CairnResolution.model_validate(merged)
+
     def _search_scene_summary(self, step_text: str) -> str:
-        return f"Searched the immediate scene carefully: {step_text}."
+        return (
+            "Surveyed the immediate scene from the current vantage without "
+            f"advancing: {step_text}."
+        )
 
     def _player_action_plan_summary(self, step_summaries: list[str]) -> str:
         if not step_summaries:

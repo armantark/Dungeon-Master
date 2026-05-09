@@ -1,7 +1,14 @@
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import AttackStance, CairnAbility, CairnRestKind, Likelihood
+from dungeon_master.models import (
+    AttackStance,
+    CairnAbility,
+    CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
+    Likelihood,
+)
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from dungeon_master.turn_router import (
     PlannedTurnOp,
@@ -206,6 +213,26 @@ def test_classifier_can_return_recovery_route() -> None:
     assert routed.rest_kind == CairnRestKind.BREATHER
 
 
+def test_classifier_can_return_survival_time_and_actions() -> None:
+    router = TurnRouter(
+        classifier=lambda text, _likelihood: TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            time_advance=CairnTimeAdvance.WATCH,
+            survival_actions=(CairnSurvivalAction.EAT,),
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+        ),
+    )
+
+    planned = router.plan("I eat some trail rations and keep moving.")
+    routed = router.route("I eat some trail rations and keep moving.")
+
+    assert planned.time_advance == CairnTimeAdvance.WATCH
+    assert planned.survival_actions == (CairnSurvivalAction.EAT,)
+    assert routed.time_advance == CairnTimeAdvance.WATCH
+    assert routed.survival_actions == (CairnSurvivalAction.EAT,)
+
+
 def test_classifier_can_return_equip_route() -> None:
     router = TurnRouter(
         classifier=lambda text, likelihood: RoutedTurn(
@@ -235,6 +262,52 @@ def test_classifier_can_return_retreat_route() -> None:
 
     assert routed.route == TurnRoute.RETREAT
     assert routed.text == "I fall back through the chapel arch."
+
+
+def test_classifier_can_return_recon_search_scene_plan() -> None:
+    router = TurnRouter(
+        classifier=lambda text, _likelihood: TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SEARCH_SCENE,
+                    text=text,
+                ),
+            ),
+        ),
+    )
+
+    planned = router.plan("Are there enemies along the goat-path?")
+    routed = router.route("Are there enemies along the goat-path?")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert [op.kind for op in planned.ops] == [PlannedTurnOpKind.SEARCH_SCENE]
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert routed.text == "Are there enemies along the goat-path?"
+
+
+def test_classifier_can_return_committed_scene_transition_plan() -> None:
+    router = TurnRouter(
+        classifier=lambda text, _likelihood: TurnPlan(
+            route=TurnRoute.SCENE_CHECK,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SCENE_CHECK,
+                    text=text,
+                ),
+            ),
+        ),
+    )
+
+    planned = router.plan("I continue down the goat-path.")
+    routed = router.route("I continue down the goat-path.")
+
+    assert planned.route == TurnRoute.SCENE_CHECK
+    assert [op.kind for op in planned.ops] == [PlannedTurnOpKind.SCENE_CHECK]
+    assert routed.route == TurnRoute.SCENE_CHECK
+    assert routed.text == "I continue down the goat-path."
 
 
 def test_classifier_can_return_compound_plan_and_route_uses_primary_op() -> None:
@@ -443,6 +516,34 @@ def test_router_prompt_includes_bounded_memory_context() -> None:
     user_prompt = completion.messages[1]["content"]
     assert "Bounded memory context" in user_prompt
     assert "Rain drums on the abbey gate." in user_prompt
+
+
+def test_router_prompt_distinguishes_recon_from_scene_transition() -> None:
+    completion = RecordingRouterCompletion()
+    router = TurnRouter(
+        config=NarrativeConfig(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://example.com",
+            exclude_reasoning=True,
+        ),
+        completion_function=completion,
+    )
+
+    router.plan("Are there enemies along the goat-path?")
+
+    assert completion.messages is not None
+    system_prompt = " ".join(completion.messages[0]["content"].split())
+    assert "prefer `search_scene` even if the wording is a question" in system_prompt
+    assert "Do not treat recon questions like" in system_prompt
+    assert (
+        "Use `scene_check` only when the player explicitly commits to moving onward"
+        in system_prompt
+    )
+    assert "time_advance" in completion.messages[1]["content"]
+    assert "survival_actions" in completion.messages[1]["content"]
+    assert "Also classify elapsed time for the whole turn" in system_prompt
+    assert "Also classify explicit survival actions for the whole turn" in system_prompt
 
 
 def test_router_repairs_invalid_model_json_before_safe_fallback() -> None:

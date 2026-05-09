@@ -10,7 +10,15 @@ from enum import StrEnum
 from pydantic import Field, ValidationError
 
 from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import AttackStance, CairnAbility, CairnRestKind, Likelihood, StrictModel
+from dungeon_master.models import (
+    AttackStance,
+    CairnAbility,
+    CairnRestKind,
+    CairnSurvivalAction,
+    CairnTimeAdvance,
+    Likelihood,
+    StrictModel,
+)
 from dungeon_master.narrative import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionFunction,
@@ -85,6 +93,8 @@ class TurnPlan:
     route: TurnRoute
     text: str
     ops: tuple[PlannedTurnOp, ...]
+    time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
+    survival_actions: tuple[CairnSurvivalAction, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,8 @@ class RoutedTurn:
     harm_source: str | None = None
     armor_applies: bool | None = None
     in_combat: bool | None = None
+    time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
+    survival_actions: tuple[CairnSurvivalAction, ...] = ()
     plan: TurnPlan | None = None
 
 
@@ -133,6 +145,8 @@ class GeneratedTurnPlan(StrictModel):
     route: TurnRoute
     text: str = Field(min_length=1)
     ops: list[GeneratedPlannedTurnOp] = Field(min_length=1, max_length=3)
+    time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
+    survival_actions: list[CairnSurvivalAction] = Field(default_factory=list, max_length=2)
 
 
 RouterClassifier = Callable[[str, Likelihood | None], RoutedTurn | TurnPlan]
@@ -193,9 +207,11 @@ Return only valid JSON.
 
 Allowed op kinds:
 - narrate: pure narration, no deterministic backend step inferred
-- yes_no: an explicit yes/no oracle question
+- yes_no: an explicit yes/no oracle question about uncertainty, fate, luck,
+  or facts not directly answerable by immediate observation
 - random_event: the player is explicitly asking for a complication, twist, or random event
-- scene_check: the player is explicitly pushing into a new scene, location, or travel transition
+- scene_check: the player is explicitly pushing into a new scene, location, or
+  travel transition right now
 - save: the player is attempting one risky immediate action that should
   resolve as a Cairn-style save
 - attack: the player is attacking or striking a concrete foe right now
@@ -209,8 +225,9 @@ Allowed op kinds:
   withdrawing, or trying to escape an active fight
 - inspect_inventory: the player is checking carried gear, supplies, burden,
   or what they currently have
-- search_scene: the player is rummaging, checking, or inspecting the
-  immediate area without definitely transitioning scenes
+- search_scene: the player is visually or physically inspecting the immediate
+  area, path ahead, doorway, or nearby situation from the current vantage
+  without definitely transitioning scenes
 - acquire_item: the player is explicitly taking, looting, receiving, buying,
   or otherwise adding a concrete item or bundle to their carried gear now
 - transfer_item: an existing carried item is being moved between the player
@@ -263,6 +280,25 @@ Rules:
   spellbook, oil, or similar object should be `use_item` with that item name.
 - Use `harm` sparingly. Prefer `save` for risky actions and `attack` for offensive actions.
 - If kind is `yes_no`, preserve a supplied likelihood hint if one was explicitly given.
+- Also classify elapsed time for the whole turn:
+  - `none`: no meaningful fiction time passes
+  - `brief`: a quick exchange, breath, glance, or immediate beat
+  - `watch`: exploration, waiting, one travel leg, or an extended search
+  - `day`: a major daylight push, march, or downtime span
+  - `overnight`: bedding down, camp sleep, or resting through the night
+- Also classify explicit survival actions for the whole turn:
+  - include `eat` only when the player explicitly eats carried food, rations, or supplies now
+  - include `sleep` only when the player explicitly sleeps, makes camp, or beds down now
+  - a `full_rest` usually includes `sleep`, and often `eat` when the player clearly consumes rations
+- If the player is asking what they can currently see, hear, notice, or make
+  out about the immediate area or path ahead, prefer `search_scene` even if
+  the wording is a question.
+- Do not treat recon questions like "Are there enemies ahead?", "Do I see
+  movement on the trail?", or "Can I spot a guard from here?" as committed
+  travel or a scene transition by themselves.
+- Use `scene_check` only when the player explicitly commits to moving onward,
+  entering, crossing, descending, approaching, traveling, or otherwise
+  advancing into a new scene now.
 """
 
 
@@ -272,6 +308,8 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "route": "player_action | yes_no | random_event | scene_check | save | '
     'attack | harm | recovery | equip | retreat",\n'
     '  "text": "normalized player text",\n'
+    '  "time_advance": "none | brief | watch | day | overnight",\n'
+    '  "survival_actions": ["eat | sleep", "..."],\n'
     '  "ops": [\n'
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
@@ -502,6 +540,8 @@ class TurnRouter:
             route=plan.route.value,
             source=source,
             ops=ops,
+            time_advance=plan.time_advance.value,
+            survival_actions=",".join(action.value for action in plan.survival_actions) or "none",
         )
 
     def _fallback_plan(self, text: str) -> TurnPlan:
@@ -509,6 +549,8 @@ class TurnRouter:
             route=TurnRoute.PLAYER_ACTION,
             text=text,
             ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+            time_advance=CairnTimeAdvance.NONE,
+            survival_actions=(),
         )
 
     def _normalize_classifier_result(
@@ -524,6 +566,8 @@ class TurnRouter:
                 route=classified.route,
                 text=classified.text,
                 ops=(self._planned_op_from_routed_turn(classified),),
+                time_advance=classified.time_advance,
+                survival_actions=classified.survival_actions,
             ),
             normalized_text,
             likelihood,
@@ -560,6 +604,8 @@ class TurnRouter:
                 )
                 for op in parsed.ops
             ),
+            time_advance=parsed.time_advance,
+            survival_actions=tuple(parsed.survival_actions),
         )
         return self._finalize_plan(plan, normalized_text, likelihood)
 
@@ -580,7 +626,13 @@ class TurnRouter:
         )
         if not ops:
             return self._fallback_plan(text)
-        return TurnPlan(route=plan.route, text=text, ops=ops)
+        return TurnPlan(
+            route=plan.route,
+            text=text,
+            ops=ops,
+            time_advance=plan.time_advance,
+            survival_actions=tuple(dict.fromkeys(plan.survival_actions)),
+        )
 
     def _normalize_op(  # noqa: C901, PLR0912
         self,
@@ -716,6 +768,8 @@ class TurnRouter:
             harm_source=primary.harm_source,
             armor_applies=primary.armor_applies,
             in_combat=primary.in_combat,
+            time_advance=plan.time_advance,
+            survival_actions=plan.survival_actions,
             plan=plan,
         )
 

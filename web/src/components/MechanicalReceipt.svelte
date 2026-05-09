@@ -20,11 +20,14 @@ and add a Cairn-specific dl block with the resolution snapshot.
     cairnHeadline,
     formatAbility,
     formatCombatInitiator,
+    formatDayPhase,
     formatRestKind,
     formatStance,
+    formatTurnTimeAdvance,
     isAmbushOpener,
     itemEffectLabel,
     itemPowerKindLabel,
+    survivalChanged,
   } from "../lib/cairn";
   import {
     npcDisplayLabel,
@@ -119,6 +122,60 @@ and add a Cairn-specific dl block with the resolution snapshot.
   const initiatorLabel = $derived(
     cairn === null ? null : formatCombatInitiator(cairn.combat_initiator),
   );
+
+  // Survival-clock deltas. The backend stamps `time_advance` on every
+  // resolution that billed time and a *_before/*_after snapshot pair
+  // on every counter that moved. We render survival rows only when
+  // any of those pairs actually shifted (or the turn ate); a
+  // `time_advance` of `none` with no eat leaves the section silent so
+  // pure-roll outcomes (a save with no fiction time) don't add noise.
+  const showSurvival = $derived(cairn !== null && survivalChanged(cairn));
+  const turnTimeLabel = $derived(
+    cairn === null ? null : formatTurnTimeAdvance(cairn.time_advance),
+  );
+  // We collapse the day / phase / watch trio into one human row when
+  // any of them moved. The wire stores them independently, but the
+  // player reads them as a single "where am I in the day" beat.
+  const dayPhaseLine = $derived.by((): string | null => {
+    if (cairn === null) return null;
+    const dayBefore = cairn.day_number_before;
+    const dayAfter = cairn.day_number_after;
+    const phaseBefore = cairn.day_phase_before;
+    const phaseAfter = cairn.day_phase_after;
+    if (dayBefore === null || dayAfter === null) return null;
+    if (phaseBefore === null || phaseAfter === null) return null;
+    const before = `Day ${dayBefore} · ${formatDayPhase(phaseBefore)}`;
+    const after = `Day ${dayAfter} · ${formatDayPhase(phaseAfter)}`;
+    if (before === after) return before;
+    return `${before} → ${after}`;
+  });
+  // Aggregate "Deprived" delta — true → false (cleared by eating /
+  // sleeping) or false → true (newly deprived). We render it as the
+  // single most legible deprivation row so the player sees the
+  // verdict before the disaggregated food/sleep flips. If neither
+  // changed, this returns null and the row disappears.
+  const deprivedDelta = $derived.by((): string | null => {
+    if (cairn === null) return null;
+    const before = cairn.deprived_before;
+    const after = cairn.deprived_after;
+    if (before === null || after === null) return null;
+    if (before === after) return null;
+    return after ? "Newly deprived" : "Deprivation cleared";
+  });
+  const foodDelta = $derived.by((): string | null => {
+    if (cairn === null) return null;
+    const before = cairn.food_deprived_before;
+    const after = cairn.food_deprived_after;
+    if (before === null || after === null || before === after) return null;
+    return after ? "Hungry to deprived" : "Food deprivation cleared";
+  });
+  const sleepDelta = $derived.by((): string | null => {
+    if (cairn === null) return null;
+    const before = cairn.sleep_deprived_before;
+    const after = cairn.sleep_deprived_after;
+    if (before === null || after === null || before === after) return null;
+    return after ? "Weary to deprived" : "Sleep deprivation cleared";
+  });
   const referencedThreads = $derived(referencedThreadsForOutcome(threads, outcome));
   const referencedNpcs = $derived(referencedNpcsForOutcome(npcs, outcome));
 
@@ -361,6 +418,66 @@ and add a Cairn-specific dl block with the resolution snapshot.
           {/if}
         </dl>
       {/if}
+
+      {#if showSurvival && cairn !== null}
+        <!--
+          Survival-clock sub-block. We render it independently of the
+          Cairn block above because survival can move on any outcome
+          (an oracle yes/no that consumed a watch should still show
+          its time bill), and because grouping it visually keeps the
+          day/watch reads from being lost in the longer save / attack
+          / harm rows.
+        -->
+        <dl class="survival">
+          {#if turnTimeLabel !== null}
+            <dt>Time</dt>
+            <dd class="pixel">{turnTimeLabel}</dd>
+          {/if}
+          {#if dayPhaseLine !== null}
+            <dt>Day-phase</dt>
+            <dd class="pixel">{dayPhaseLine}</dd>
+          {/if}
+          {#if cairn.watches_since_meal_before !== null
+              && cairn.watches_since_meal_after !== null
+              && cairn.watches_since_meal_before !== cairn.watches_since_meal_after}
+            <dt>Food pressure</dt>
+            <dd class="pixel">
+              {cairn.watches_since_meal_before} → {cairn.watches_since_meal_after}
+            </dd>
+          {/if}
+          {#if cairn.watches_since_sleep_before !== null
+              && cairn.watches_since_sleep_after !== null
+              && cairn.watches_since_sleep_before !== cairn.watches_since_sleep_after}
+            <dt>Sleep pressure</dt>
+            <dd class="pixel">
+              {cairn.watches_since_sleep_before} → {cairn.watches_since_sleep_after}
+            </dd>
+          {/if}
+          {#if cairn.ration_item_name !== null}
+            <dt>Ration</dt>
+            <dd>
+              {cairn.ration_item_name}
+              {#if cairn.ration_uses_before !== null && cairn.ration_uses_after !== null}
+                <span class="pixel muted">
+                  · {cairn.ration_uses_before} → {cairn.ration_uses_after}
+                </span>
+              {/if}
+            </dd>
+          {/if}
+          {#if foodDelta !== null}
+            <dt>Food</dt>
+            <dd>{foodDelta}</dd>
+          {/if}
+          {#if sleepDelta !== null}
+            <dt>Sleep</dt>
+            <dd>{sleepDelta}</dd>
+          {/if}
+          {#if deprivedDelta !== null}
+            <dt>Deprived</dt>
+            <dd>{deprivedDelta}</dd>
+          {/if}
+        </dl>
+      {/if}
     </div>
   {/if}
 </div>
@@ -501,6 +618,13 @@ and add a Cairn-specific dl block with the resolution snapshot.
   dl.cairn {
     border-top: 1px dashed color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
     padding-top: 0.5rem;
+  }
+  dl.survival {
+    border-top: 1px dashed color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+    padding-top: 0.5rem;
+  }
+  .muted {
+    color: var(--gold-tarnished);
   }
   dt {
     font-family: var(--font-pixel);
