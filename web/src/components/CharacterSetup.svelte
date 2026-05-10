@@ -50,7 +50,10 @@ Why three paths plus a quiz step:
 
   $effect(() => {
     if (gs.campaign_status === "ready_to_start" || gs.campaign_status === "active") {
-      draft = structuredClone(gs.character ?? draft);
+      // `gs.character` is part of the store's `$state`-wrapped GameState
+      // proxy. `structuredClone` chokes on Svelte 5 proxies (DataCloneError),
+      // so we use `$state.snapshot` to deep-copy into a plain object first.
+      draft = $state.snapshot(gs.character ?? draft);
       mode = deriveSetupMode(gs.campaign_status);
     }
   });
@@ -73,7 +76,11 @@ Why three paths plus a quiz step:
 
   async function editTemplate(template: CharacterSheet): Promise<void> {
     const next = await game.generateCharacterDraft("template", undefined, template);
-    draft = next ?? structuredClone(template);
+    // The fallback path keeps the player on the picked template if the
+    // backend draft request failed. `template` came from a `$state`-wrapped
+    // array, so we snapshot rather than `structuredClone` to avoid the
+    // DataCloneError on Svelte 5 proxies.
+    draft = next ?? $state.snapshot(template);
     mode = "edit";
   }
 

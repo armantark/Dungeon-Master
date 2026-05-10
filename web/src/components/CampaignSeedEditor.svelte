@@ -59,12 +59,18 @@ its own modal:
   // Local draft so the player can scrub the sliders without each tick
   // hitting the backend. We rebase on the persisted seed every time
   // the props update — that's the sync we want when another path
-  // committed a seed (e.g. picking a preset reloaded GameState). The
-  // initial structuredClone is wrapped in `untrack` because the
-  // canonical sync source is the $effect below; tying the runes
-  // initializer to `seed` would create a duplicate dependency that
-  // Svelte (correctly) warns about.
-  let draft: CampaignSeed = $state(untrack(() => structuredClone(seed)));
+  // committed a seed (e.g. picking a preset reloaded GameState).
+  //
+  // We use `$state.snapshot(seed)` rather than `structuredClone(seed)`
+  // because `seed` arrives as part of the parent's `$state`-wrapped
+  // GameState; it is a reactive proxy. `structuredClone` cannot clone
+  // proxies and throws `DataCloneError`, which kills the editor (and
+  // therefore the whole CharacterSetup screen, since this component
+  // mounts above it). `$state.snapshot` deep-copies a proxy into a
+  // plain JS value safely. The initial read is wrapped in `untrack`
+  // so the runes initializer doesn't double up on the $effect's
+  // canonical sync subscription below.
+  let draft: CampaignSeed = $state(untrack(() => $state.snapshot(seed)));
   let expanded: boolean = $state(false);
 
   $effect(() => {
@@ -73,7 +79,7 @@ its own modal:
     // they already typed — but since we apply on explicit commit,
     // the canonical seed only changes after we POST, so a hard
     // overwrite is the right call.
-    draft = structuredClone(seed);
+    draft = $state.snapshot(seed);
   });
 
   const dirty = $derived(!seedsEqual(draft, seed));
@@ -112,7 +118,11 @@ its own modal:
     if (locked) return;
     const preset = CAMPAIGN_SEED_PRESETS.find((p) => p.id === presetId);
     if (preset === undefined) return;
-    draft = structuredClone(preset.seed);
+    // Preset seeds are plain literals (see `campaign-seed.ts`), so a
+    // shallow spread is enough to detach the editor's draft from the
+    // shared module-level constant. We still copy the genres array
+    // explicitly because it would otherwise alias the literal's array.
+    draft = { ...preset.seed, genres: [...preset.seed.genres] };
   }
 
   function toggleGenre(genre: CampaignGenre): void {
@@ -150,7 +160,7 @@ its own modal:
 
   function discardDraft(): void {
     if (locked || !dirty) return;
-    draft = structuredClone(seed);
+    draft = $state.snapshot(seed);
   }
 
   // Summary strip readout: a one-liner that always shows what the
