@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
-from dungeon_master.cairn import CairnEngine, SurvivalUpdate
+from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignGenerator,
     CampaignWorldResult,
@@ -77,7 +77,7 @@ from dungeon_master.thread_updater import (
     ThreadUpdater,
     ThreadUpdateResult,
 )
-from dungeon_master.turn_router import PlannedTurnOpKind, TurnPlan, TurnRouter
+from dungeon_master.turn_router import PlannedTurnOp, PlannedTurnOpKind, TurnPlan, TurnRouter
 
 CURRENT_NPC_ROSTER_VERSION = 2
 CURRENT_SAVE_SCHEMA_VERSION = 4
@@ -93,6 +93,9 @@ TURN_STREAM_STAGE_LABELS: dict[str, str] = {
 }
 TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
 PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}
+MIN_COORDINATED_ATTACK_PARTICIPANTS = 2
+RECENT_NPC_CONTEXT_LIMIT = 4
+CLARIFICATION_EVENT_TITLE = "Clarification needed"
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,11 @@ class ServiceActor:
     name: str
     sheet: CharacterSheet
     is_player: bool
+
+
+@dataclass(frozen=True)
+class ClarificationPrompt:
+    question: str
 
 # Map between the wire-stream enum (`narrative.StreamStageStatus`) and
 # the persisted enum (`models.StageStatus`). The two are intentionally
@@ -258,6 +266,18 @@ class CairnPort(Protocol):
         actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
+        raise NotImplementedError
+
+    def resolve_coordinated_attack(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        participants: tuple[AttackActor, ...],
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del state, target_name, target_armor, participants, cancel_token
         raise NotImplementedError
 
     def suffer_harm(  # noqa: PLR0913
@@ -1307,6 +1327,18 @@ class GameService:
             state,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
+        clarification = self._clarification_prompt_for_plan(plan)
+        if clarification is not None:
+            self._record_event(
+                state,
+                GameEvent(
+                    event_type=EventType.NARRATIVE,
+                    title=CLARIFICATION_EVENT_TITLE,
+                    content=clarification.question,
+                ),
+            )
+            self._save_state_commit(state, create_checkpoint=True)
+            return state
         executed = self._execute_turn_plan(state, plan)
         self._commit_oracle_turn(
             state=state,
@@ -1478,6 +1510,30 @@ class GameService:
             queued_events,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
+        clarification = self._clarification_prompt_for_plan(plan)
+        if clarification is not None:
+            yield self._stage_delta(
+                "resolving_mechanics",
+                StreamStageStatus.SKIPPED,
+                tracker=tracker,
+            )
+            self._queue_event(
+                state,
+                queued_events,
+                GameEvent(
+                    event_type=EventType.NARRATIVE,
+                    title=CLARIFICATION_EVENT_TITLE,
+                    content=clarification.question,
+                    stage_timings=tracker.snapshot(),
+                ),
+            )
+            self._persist_streamed_state(
+                state,
+                queued_events,
+                cancel_token=cancel_token,
+                committed_turn=None,
+            )
+            return state
         self._raise_if_cancelled(cancel_token)
         yield self._stage_delta("resolving_mechanics", StreamStageStatus.ACTIVE, tracker=tracker)
         executed = self._execute_turn_plan(state, plan, cancel_token=cancel_token)
@@ -1770,6 +1826,19 @@ class GameService:
                 step_summaries.append(f"Attack resolved: {primary_outcome.summary}")
                 continue
 
+            if op.kind == PlannedTurnOpKind.COORDINATED_ATTACK and op.target_name is not None:
+                participants = self._coordinated_attack_participants(state, op)
+                primary_outcome = self._cairn.resolve_coordinated_attack(
+                    state,
+                    target_name=op.target_name,
+                    target_armor=0,
+                    participants=participants,
+                    cancel_token=cancel_token,
+                )
+                oracle_title = "Coordinated attack"
+                step_summaries.append(f"Coordinated attack resolved: {primary_outcome.summary}")
+                continue
+
             if op.kind == PlannedTurnOpKind.HARM:
                 actor = self._character_for_actor_name(state, op.actor_name)
                 primary_outcome = self._cairn.suffer_harm(
@@ -1865,6 +1934,12 @@ class GameService:
             for op in plan.ops
         )
 
+    def _clarification_prompt_for_plan(self, plan: TurnPlan) -> ClarificationPrompt | None:
+        for op in plan.ops:
+            if op.kind == PlannedTurnOpKind.CLARIFY:
+                return ClarificationPrompt(question=op.text)
+        return None
+
     def _inspect_inventory_summary(self, state: GameState) -> str:
         inventory = state.character.inventory
         names = ", ".join(item.name for item in inventory) if inventory else "nothing"
@@ -1920,7 +1995,9 @@ class GameService:
             epithet=npc.disposition,
             backstory=(
                 f"{npc.display_label()} was recruited from the current NPC roster. "
-                f"Role: {npc.role or 'unknown'}. Disposition: {npc.disposition}."
+                f"Role: {npc.role or 'unknown'}. Disposition: {npc.disposition}.\n\n"
+                "Recent player-visible context for this recruit:\n"
+                + self._recent_visible_context_for_npc(state, npc)
             ),
             drive="Survive with the party and honor the terms of recruitment.",
             flaw="Has loyalties and limits beyond the player character's control.",
@@ -1940,6 +2017,33 @@ class GameService:
         state.party_members.append(member)
         npc.status = NPCStatus.RETIRED
         return f"Recruited {member.display_label()} into the party."
+
+    def _recent_visible_context_for_npc(self, state: GameState, npc: NPC) -> str:
+        labels = {
+            npc.display_label().strip().lower(),
+            npc.name.strip().lower(),
+        }
+        labels.discard("")
+        snippets: list[str] = []
+        for event in reversed(state.action_log):
+            content = event.content.strip()
+            if not content:
+                continue
+            lowered = content.lower()
+            if labels and not any(label in lowered for label in labels):
+                continue
+            snippets.append(f"- {event.title}: {self._clip_context_line(content, 420)}")
+            if len(snippets) >= RECENT_NPC_CONTEXT_LIMIT:
+                break
+        if snippets:
+            return "\n".join(reversed(snippets))
+        return "(No recent visible transcript context found for this recruit.)"
+
+    def _clip_context_line(self, text: str, limit: int) -> str:
+        compact = " ".join(text.split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
 
     def _require_visible_npc_by_name(self, state: GameState, npc_name: str) -> NPC:
         cleaned = npc_name.strip().lower()
@@ -1991,6 +2095,34 @@ class GameService:
                 )
         message = f"Unknown party actor: {actor_name}"
         raise ValueError(message)
+
+    def _coordinated_attack_participants(
+        self,
+        state: GameState,
+        op: PlannedTurnOp,
+    ) -> tuple[AttackActor, ...]:
+        lead = self._character_for_actor_name(state, op.actor_name)
+        participants: list[ServiceActor] = [lead]
+        seen_ids = {lead.id}
+        for name in op.supporting_actor_names:
+            actor = self._character_for_actor_name(state, name)
+            if actor.id in seen_ids:
+                continue
+            participants.append(actor)
+            seen_ids.add(actor.id)
+        if len(participants) < MIN_COORDINATED_ATTACK_PARTICIPANTS:
+            message = "Coordinated attack requires the player and at least one party member."
+            raise ValueError(message)
+        return tuple(
+            AttackActor(
+                id=None if actor.is_player else actor.id,
+                name=actor.name,
+                sheet=actor.sheet,
+                weapon_item_id=self._item_id_from_name(actor.sheet, op.item_name),
+                stance=op.stance or AttackStance.NORMAL,
+            )
+            for actor in participants
+        )
 
     def _recompute_party_burden(self, *sheets: CharacterSheet) -> None:
         for sheet in sheets:

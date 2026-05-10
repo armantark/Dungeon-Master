@@ -23,7 +23,7 @@ from dungeon_master.api import (
     reattach_request_stream,
     submit_turn_stream,
 )
-from dungeon_master.cairn import CairnEngine, SurvivalUpdate
+from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -75,6 +75,7 @@ from dungeon_master.models import (
     NPCStatus,
     OracleKind,
     OracleOutcome,
+    PartyMember,
     RetreatOutcome,
     SceneStatus,
 )
@@ -235,6 +236,9 @@ class BlockingThoughtfulNarrative(ThoughtfulNarrative):
 
 
 class FakeExplainer:
+    def __init__(self) -> None:
+        self.state: GameState | None = None
+
     def generate_result(
         self,
         state: GameState,
@@ -244,6 +248,7 @@ class FakeExplainer:
         cancel_token: CancellationToken | None = None,
     ) -> ExplanationResult:
         del cancel_token
+        self.state = state
         memory_suffix = " / mem yes" if memory_context else ""
         latest = state.oracle_history[-1].summary if state.oracle_history else "no prior outcome"
         return ExplanationResult(
@@ -261,6 +266,7 @@ class FakeExplainer:
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, ExplanationResult]:
         del cancel_token
+        self.state = state
         yield CompletionDelta(thinking="Explainer considered the current state.")
         yield CompletionDelta(
             content=self.generate_result(
@@ -690,6 +696,28 @@ class FakePlayableCairnEngine(FakeCairnEngine):
                 attack_stance=stance,
                 base_damage=5,
                 damage_after_armor=max(0, 5 - target_armor),
+            ),
+        )
+
+    def resolve_coordinated_attack(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        participants: tuple[AttackActor, ...],
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        actor_names = ", ".join(participant.name for participant in participants)
+        return OracleOutcome(
+            kind=OracleKind.ATTACK,
+            summary=f"Coordinated attack against {target_name} by {actor_names}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=target_name,
+                target_armor=target_armor,
+                coordinated_attack=True,
             ),
         )
 
@@ -2197,6 +2225,52 @@ def test_explain_endpoint_returns_non_canonical_answer(tmp_path: Path) -> None:
     assert payload["answer"].startswith("OOC: Why did that outcome happen?")
     assert "latest" in payload["answer"]
     assert payload["thinking"] == ""
+
+
+def test_explain_endpoint_receives_party_member_weapon_state(tmp_path: Path) -> None:
+    explainer = FakeExplainer()
+    with _client(tmp_path, explainer=explainer) as client:
+        state_response = client.get("/api/state")
+        state_payload = state_response.json()
+        state = GameState.model_validate(state_payload)
+        weapon = InventoryItem(
+            name="Rusted wood-axe",
+            details="Already surfaced as this companion's weapon.",
+            cairn=CairnItemState(
+                source=CairnMechanicsSource.EXPLICIT,
+                tags=[CairnItemTag.WEAPON],
+                weapon_damage_die=6,
+                equipped=True,
+            ),
+        )
+        companion_sheet = state.character.model_copy(
+            update={
+                "name": "Test Companion",
+                "inventory": [weapon],
+                "cairn": CairnCharacterState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    hp=3,
+                    max_hp=3,
+                    primary_weapon_item_id=weapon.id,
+                ),
+            },
+            deep=True,
+        )
+        state.party_members.append(PartyMember(sheet=companion_sheet))
+        StateStore(tmp_path / "game_state.json").save(state, create_checkpoint=False)
+
+        response = client.post(
+            "/api/explain",
+            json={"question": "What weapon does my companion use by default?"},
+        )
+
+    assert response.status_code == 200
+    assert explainer.state is not None
+    assert explainer.state.party_members[0].sheet.inventory[0].name == "Rusted wood-axe"
+    assert (
+        explainer.state.party_members[0].sheet.cairn.primary_weapon_item_id
+        == explainer.state.party_members[0].sheet.inventory[0].id
+    )
 
 
 def test_explain_stream_emits_final_payload(tmp_path: Path) -> None:

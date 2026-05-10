@@ -323,6 +323,22 @@ export interface CairnCharacterState {
   notes: string;
 }
 
+export interface CoordinatedAttackParticipant {
+  actor_id: string | null;
+  actor_name: string;
+  weapon_item_id: string | null;
+  weapon_name: string;
+  base_damage: number | null;
+  damage_after_armor: number;
+  target_hp_before: number;
+  target_hp_after: number;
+  target_str_before: number;
+  target_str_after: number;
+  target_defeated: boolean;
+  target_fled: boolean;
+  acted: boolean;
+}
+
 // Mirrors `CairnResolution`. Every field is nullable because a single
 // resolution only fills the slots relevant to its kind: a save uses
 // `ability/target/success`; an attack uses `weapon_*`/`base_damage`/
@@ -383,6 +399,7 @@ export interface CairnResolution {
   attack_stance: AttackStance | null;
   weapon_item_id: string | null;
   weapon_name: string | null;
+  target_combatant_id?: string | null;
   target_name: string | null;
   target_armor: number | null;
   base_damage: number | null;
@@ -397,6 +414,12 @@ export interface CairnResolution {
   wil_after: number | null;
   fatigue_before: number | null;
   fatigue_after: number | null;
+  target_hp_before?: number | null;
+  target_hp_after?: number | null;
+  target_str_before?: number | null;
+  target_str_after?: number | null;
+  target_defeated?: boolean | null;
+  target_fled?: boolean | null;
   // Combat-context fields published when the resolution belongs to an
   // active encounter (F-05). All optional because most non-combat
   // outcomes (yes/no oracle, scene check, recovery outside the fight)
@@ -415,12 +438,19 @@ export interface CairnResolution {
   // get to act yet — the foe seized initiative. We use this on the
   // receipt to render "(no player action)" / "Initiative · enemy".
   player_acted?: boolean | null;
+  initiative_target?: number | null;
   // Damage the foe applied to the player on this very resolution.
   // F-05 enemy openers always populate this (the opener strike is
   // the whole point); player attacks may also set it when the
   // counterattack landed in the same turn.
   enemy_damage?: number | null;
   enemy_damage_source?: string | null;
+  morale_target?: number | null;
+  morale_success?: boolean | null;
+  coordinated_attack?: boolean;
+  coordinated_participants?: CoordinatedAttackParticipant[];
+  defeated_combatant_ids?: string[];
+  fled_combatant_ids?: string[];
   retreat_outcome?: RetreatOutcome | null;
   player_disengaged?: boolean | null;
   pursuit_active?: boolean | null;

@@ -132,7 +132,32 @@ function emptyCairnResolution(): CairnResolution {
     wil_after: null,
     fatigue_before: null,
     fatigue_after: null,
+    combat_round: null,
+    combat_started: null,
+    combat_active: null,
+    combat_initiator: null,
+    player_acted: null,
+    initiative_target: null,
     scar_result: null,
+    target_combatant_id: null,
+    target_hp_before: null,
+    target_hp_after: null,
+    target_str_before: null,
+    target_str_after: null,
+    target_defeated: null,
+    target_fled: null,
+    enemy_damage: null,
+    enemy_damage_source: null,
+    morale_target: null,
+    morale_success: null,
+    coordinated_attack: false,
+    coordinated_participants: [],
+    defeated_combatant_ids: [],
+    fled_combatant_ids: [],
+    retreat_outcome: null,
+    player_disengaged: null,
+    pursuit_active: null,
+    encounter_end_reason: null,
     overloaded: null,
   };
 }
@@ -471,6 +496,34 @@ describe("cairnHeadline", () => {
     expect(cairnHeadline(noDamage)).toBe("Attack · Plague-ox");
   });
 
+  it("formats coordinated attack headlines without a new outcome kind", () => {
+    const coordinated = makeOutcome("attack", {
+      ...emptyCairnResolution(),
+      target_name: "Roadside brigand",
+      damage_after_armor: 5,
+      coordinated_attack: true,
+      coordinated_participants: [
+        {
+          actor_id: null,
+          actor_name: "Vrtanes",
+          weapon_item_id: "item_cudgel",
+          weapon_name: "Notched iron cudgel",
+          base_damage: 5,
+          damage_after_armor: 5,
+          target_hp_before: 6,
+          target_hp_after: 1,
+          target_str_before: 12,
+          target_str_after: 12,
+          target_defeated: false,
+          target_fled: false,
+          acted: true,
+        },
+      ],
+    });
+
+    expect(cairnHeadline(coordinated)).toBe("Coordinated attack · Roadside brigand · 5 dmg");
+  });
+
   it("formats harm headlines with damage, hp tracking, and optional scar", () => {
     const survived = makeOutcome("harm", {
       ...emptyCairnResolution(),
@@ -541,7 +594,7 @@ describe("cairnHeadline", () => {
 
 describe("formatCombatInitiator", () => {
   it("labels each known initiator with a player-facing string", () => {
-    expect(formatCombatInitiator("player")).toBe("Player struck first");
+    expect(formatCombatInitiator("player")).toBe("Player opened the fight");
     expect(formatCombatInitiator("enemy")).toBe("Foe seized initiative");
   });
 

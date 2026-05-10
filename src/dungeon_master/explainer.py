@@ -6,7 +6,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import GameState, OracleOutcome
+from dungeon_master.models import CharacterSheet, GameState, OracleOutcome
 from dungeon_master.narrative import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionDelta,
@@ -50,6 +50,9 @@ IMPLEMENTED_MECHANICS_SUMMARY = """Implemented mechanics summary:
   when it is routed through a carried holy relic/icon, an oracle/save, or
   another surfaced Cairn mechanism.
 - Combat is tracked canonically, including enemy-opened ambushes and retreat outcomes.
+- Attacks use the actor's canonical primary/equipped weapon by default. The
+  player only needs to name a weapon when overriding that default or when no
+  usable weapon is equipped/tracked.
 - Mechanics live in Python and receipts; narration is downstream of the deterministic result.
 """
 
@@ -257,7 +260,6 @@ class ExplainerEngine:
 
     def _compact_state_json(self, state: GameState) -> str:
         character = state.character
-        cairn = character.cairn
         payload = {
             "campaign_status": state.campaign_status.value,
             "campaign_end_reason": (
@@ -266,55 +268,17 @@ class ExplainerEngine:
             "current_scene": self._clip(state.current_scene, 220),
             "scene_status": state.scene_status.value,
             "chaos_factor": state.chaos_factor,
-            "character": {
-                "name": character.name,
-                "archetype": character.archetype,
-                "drive": self._clip(character.drive, 140),
-                "condition": self._clip(character.condition, 140),
-                "cairn": {
-                    "str": [cairn.str_score, cairn.max_str_score],
-                    "dex": [cairn.dex_score, cairn.max_dex_score],
-                    "wil": [cairn.wil_score, cairn.max_wil_score],
-                    "hp": [cairn.hp, cairn.max_hp],
-                    "armor": cairn.armor,
-                    "fatigue": cairn.fatigue,
-                    "burden": [cairn.slots_used, cairn.slots_total],
-                    "survival": {
-                        "day": cairn.survival.day_number,
-                        "phase": cairn.survival.day_phase.value,
-                        "watch_index": cairn.survival.watch_index,
-                        "meal_pressure": cairn.survival.watches_since_meal,
-                        "sleep_pressure": cairn.survival.watches_since_sleep,
-                        "food_deprived": cairn.survival.food_deprived,
-                        "sleep_deprived": cairn.survival.sleep_deprived,
-                    },
-                    "statuses": {
-                        "deprived": cairn.deprived,
-                        "critically_wounded": cairn.critically_wounded,
-                        "doomed": cairn.doomed,
-                        "paralyzed": cairn.paralyzed,
-                        "delirious": cairn.delirious,
-                        "dead": cairn.dead,
-                        "overloaded": cairn.overloaded,
-                    },
-                    "skills": cairn.skills[:6],
-                    "abilities": cairn.abilities[:6],
-                    "primary_weapon_item_id": cairn.primary_weapon_item_id,
-                },
-                "inventory": [
-                    {
-                        "id": item.id,
-                        "name": item.name,
-                        "tags": [tag.value for tag in item.cairn.tags],
-                        "slots": item.cairn.slots,
-                        "weapon_damage_die": item.cairn.weapon_damage_die,
-                        "armor_bonus": item.cairn.armor_bonus,
-                        "uses": item.cairn.uses,
-                        "equipped": item.cairn.equipped,
-                    }
-                    for item in character.inventory[:10]
-                ],
-            },
+            "character": self._compact_actor_json(character),
+            "party_members": [
+                {
+                    "id": member.id,
+                    "kind": member.kind.value,
+                    "npc_id": member.npc_id,
+                    **self._compact_actor_json(member.sheet),
+                }
+                for member in state.party_members
+                if member.active
+            ],
             "encounter": {
                 "active": state.encounter.active,
                 "round_number": state.encounter.round_number,
@@ -347,6 +311,59 @@ class ExplainerEngine:
             ],
         }
         return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+
+    def _compact_actor_json(self, character: CharacterSheet) -> dict[str, object]:
+        cairn = character.cairn
+        return {
+            "name": character.name,
+            "archetype": character.archetype,
+            "drive": self._clip(character.drive, 140),
+            "condition": self._clip(character.condition, 140),
+            "cairn": {
+                "str": [cairn.str_score, cairn.max_str_score],
+                "dex": [cairn.dex_score, cairn.max_dex_score],
+                "wil": [cairn.wil_score, cairn.max_wil_score],
+                "hp": [cairn.hp, cairn.max_hp],
+                "armor": cairn.armor,
+                "fatigue": cairn.fatigue,
+                "burden": [cairn.slots_used, cairn.slots_total],
+                "survival": {
+                    "day": cairn.survival.day_number,
+                    "phase": cairn.survival.day_phase.value,
+                    "watch_index": cairn.survival.watch_index,
+                    "meal_pressure": cairn.survival.watches_since_meal,
+                    "sleep_pressure": cairn.survival.watches_since_sleep,
+                    "food_deprived": cairn.survival.food_deprived,
+                    "sleep_deprived": cairn.survival.sleep_deprived,
+                },
+                "statuses": {
+                    "deprived": cairn.deprived,
+                    "critically_wounded": cairn.critically_wounded,
+                    "doomed": cairn.doomed,
+                    "paralyzed": cairn.paralyzed,
+                    "delirious": cairn.delirious,
+                    "dead": cairn.dead,
+                    "overloaded": cairn.overloaded,
+                },
+                "skills": cairn.skills[:6],
+                "abilities": cairn.abilities[:6],
+                "primary_weapon_item_id": cairn.primary_weapon_item_id,
+            },
+            "inventory": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "tags": [tag.value for tag in item.cairn.tags],
+                    "slots": item.cairn.slots,
+                    "weapon_damage_die": item.cairn.weapon_damage_die,
+                    "armor_bonus": item.cairn.armor_bonus,
+                    "uses": item.cairn.uses,
+                    "equipped": item.cairn.equipped,
+                    "primary_weapon": item.id == cairn.primary_weapon_item_id,
+                }
+                for item in character.inventory[:10]
+            ],
+        }
 
     def _compact_outcome_json(self, outcome: OracleOutcome) -> str:
         payload = {

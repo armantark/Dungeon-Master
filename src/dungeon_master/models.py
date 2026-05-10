@@ -415,6 +415,22 @@ class CairnCharacterState(StrictModel):
         return self
 
 
+class CoordinatedAttackParticipant(StrictModel):
+    actor_id: str | None = None
+    actor_name: str = Field(min_length=1)
+    weapon_item_id: str | None = None
+    weapon_name: str = Field(min_length=1)
+    base_damage: int | None = Field(default=None, ge=0)
+    damage_after_armor: int = Field(default=0, ge=0)
+    target_hp_before: int = Field(default=0, ge=0)
+    target_hp_after: int = Field(default=0, ge=0)
+    target_str_before: int = Field(default=0, ge=0)
+    target_str_after: int = Field(default=0, ge=0)
+    target_defeated: bool = False
+    target_fled: bool = False
+    acted: bool = False
+
+
 class CairnResolution(StrictModel):
     ability: CairnAbility | None = None
     target: int | None = Field(default=None, ge=1, le=20)
@@ -485,6 +501,8 @@ class CairnResolution(StrictModel):
     enemy_damage_source: str | None = None
     morale_target: int | None = Field(default=None, ge=1, le=20)
     morale_success: bool | None = None
+    coordinated_attack: bool = False
+    coordinated_participants: list[CoordinatedAttackParticipant] = Field(default_factory=list)
     defeated_combatant_ids: list[str] = Field(default_factory=list)
     fled_combatant_ids: list[str] = Field(default_factory=list)
     retreat_outcome: RetreatOutcome | None = None

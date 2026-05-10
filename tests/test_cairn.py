@@ -1,7 +1,12 @@
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.cairn import CairnEngine, GeneratedCairnBackfill
+from dungeon_master.cairn import (
+    AttackActor,
+    CairnEngine,
+    GeneratedCairnBackfill,
+    GeneratedCairnItemProfile,
+)
 from dungeon_master.models import (
     AttackStance,
     CairnCharacterState,
@@ -134,6 +139,13 @@ class RecordingAcquisitionCompletion:
         return _stream()  # type: ignore[return-value]
 
 
+class RecordingBackfillCompletion(RecordingAcquisitionCompletion):
+    def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.messages = request.messages
+        del request
+        return ModelResponse(choices=[{"message": {"content": self.payload}}])
+
+
 def _usable_test_config() -> NarrativeConfig:
     return NarrativeConfig(model="test-model", api_key=None, base_url=None)
 
@@ -229,6 +241,66 @@ def test_generated_backfill_defaults_missing_weapon_damage_for_weapons() -> None
     assert generated.inventory[1].weapon_damage_die is None
 
 
+def test_backfill_prompt_preserves_visible_authored_gear() -> None:
+    state = sample_state()
+    authored = state.character.model_copy(
+        update={
+            "name": "Test Companion",
+            "backstory": (
+                "Recent player-visible context for this recruit:\n"
+                "- Narrative response: The companion keeps a rusted wood-axe ready."
+            ),
+        },
+        deep=True,
+    )
+    payload = GeneratedCairnBackfill(
+        skills=["Keep watch"],
+        abilities=["Hold a doorway"],
+        str_score=10,
+        dex_score=11,
+        wil_score=9,
+        max_hp=3,
+        inventory=[
+            GeneratedCairnItemProfile(
+                name="Rusted wood-axe",
+                details="The weapon already surfaced in play.",
+                tags=[CairnItemTag.WEAPON],
+                slots=1,
+                weapon_damage_die=6,
+                armor_bonus=0,
+                uses=None,
+                equipped=True,
+            ),
+            GeneratedCairnItemProfile(
+                name="Threadbare shawl",
+                details="A poor cloak against ash-cold air.",
+                tags=[CairnItemTag.PETTY],
+                slots=0,
+                weapon_damage_die=None,
+                armor_bonus=0,
+                uses=None,
+                equipped=False,
+            ),
+        ],
+    ).model_dump_json()
+    completion = RecordingBackfillCompletion(payload)
+    engine = CairnEngine(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    sheet = engine.backfill_companion_sheet(state, authored)
+
+    assert completion.messages is not None
+    system_prompt = " ".join(completion.messages[0]["content"].split())
+    user_prompt = " ".join(completion.messages[1]["content"].split())
+    assert "concrete visible gear already established in play" in system_prompt
+    assert "Preserve concrete carried gear named in the authored character context" in user_prompt
+    assert "rusted wood-axe" in user_prompt
+    assert sheet.inventory[0].name == "Rusted wood-axe"
+    assert sheet.cairn.primary_weapon_item_id == sheet.inventory[0].id
+
+
 def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:
     state = _ready_state()
     engine = CairnEngine(
@@ -255,6 +327,60 @@ def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:
     assert outcome.cairn.combat_round == 1
     assert outcome.cairn.player_acted is True
     assert outcome.cairn.damage_after_armor == 4
+
+
+def test_attack_rejects_dangling_primary_weapon_instead_of_unarmed_fallback() -> None:
+    state = _ready_state()
+    missing_weapon_id = state.character.inventory[0].id
+    state.character.inventory = state.character.inventory[1:]
+    state.character.cairn.primary_weapon_item_id = missing_weapon_id
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    with pytest.raises(ValueError, match="primary weapon is missing from inventory"):
+        engine.resolve_attack(
+            state,
+            target_name="Abbey ghoul",
+            target_armor=1,
+            weapon_item_id=None,
+            stance=AttackStance.NORMAL,
+        )
+
+
+def test_coordinated_attack_records_each_participant() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    outcome = engine.resolve_coordinated_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=0,
+        participants=(
+            AttackActor(id=None, name=state.character.name, sheet=state.character),
+            AttackActor(id=companion.id, name=companion.sheet.name, sheet=companion.sheet),
+        ),
+    )
+
+    assert outcome.kind == "attack"
+    assert outcome.cairn is not None
+    assert outcome.cairn.coordinated_attack is True
+    assert outcome.cairn.player_acted is True
+    assert len(outcome.cairn.coordinated_participants) == 2
+    assert [participant.actor_name for participant in outcome.cairn.coordinated_participants] == [
+        state.character.name,
+        "Brother Sava",
+    ]
+    assert all(participant.acted for participant in outcome.cairn.coordinated_participants)
+    assert outcome.cairn.damage_after_armor == sum(
+        participant.damage_after_armor
+        for participant in outcome.cairn.coordinated_participants
+    )
 
 
 def test_resolve_attack_against_broad_opening_target_uses_seeded_leader() -> None:

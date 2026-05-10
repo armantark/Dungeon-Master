@@ -122,6 +122,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
   const initiatorLabel = $derived(
     cairn === null ? null : formatCombatInitiator(cairn.combat_initiator),
   );
+  const coordinatedParticipants = $derived(cairn?.coordinated_participants ?? []);
 
   // Survival-clock deltas. The backend stamps `time_advance` on every
   // resolution that billed time and a *_before/*_after snapshot pair
@@ -359,6 +360,21 @@ and add a Cairn-specific dl block with the resolution snapshot.
           {#if cairn.weapon_name !== null}
             <dt>Weapon</dt>
             <dd>{cairn.weapon_name}</dd>
+          {/if}
+          {#if cairn.coordinated_attack === true && coordinatedParticipants.length > 0}
+            <dt>Coordination</dt>
+            <dd class="coordinated-list">
+              {#each coordinatedParticipants as participant (participant.actor_id ?? participant.actor_name)}
+                <span class="coordinated-chip">
+                  <span>{participant.actor_name}</span>
+                  <span class="pixel muted">
+                    {participant.acted
+                      ? `${participant.weapon_name} · ${participant.damage_after_armor} dmg`
+                      : `${participant.weapon_name} · no strike`}
+                  </span>
+                </span>
+              {/each}
+            </dd>
           {/if}
           {#if cairn.target_name !== null}
             <dt>Target</dt>
@@ -635,5 +651,17 @@ and add a Cairn-specific dl block with the resolution snapshot.
   }
   dd {
     margin: 0;
+  }
+  .coordinated-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .coordinated-chip {
+    display: inline-grid;
+    gap: 0.12rem;
+    padding: 0.28rem 0.45rem;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 38%, transparent);
+    background: color-mix(in oklab, var(--ink-black) 82%, transparent);
   }
 </style>

@@ -80,6 +80,33 @@ class RepairingRouterCompletion:
         return _stream("not json")  # type: ignore[return-value]
 
 
+class CombatReviewRouterCompletion:
+    def __init__(self, *, review_allows: bool) -> None:
+        self.review_allows = review_allows
+        self.requests: list[CompletionRequest] = []
+
+    def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.requests.append(request)
+
+        def _stream(content: str) -> list[dict[str, object]]:
+            return [{"choices": [{"delta": {"content": content}}]}]
+
+        if request.trace_route == "turn_router.combat_review":
+            return _stream(
+                '{"allow_combat_mechanics":'
+                f"{str(self.review_allows).lower()},"
+                '"reason":"structured review verdict"}',
+            )  # type: ignore[return-value]
+        return _stream(
+            '{"route":"attack","text":"Let us find a fight.",'
+            '"ops":[{"kind":"attack","text":"Let us find a fight.",'
+            '"likelihood":null,"ability":null,"target_name":"Abbey ghoul",'
+            '"stance":"normal","rest_kind":null,"item_name":null,'
+            '"equipped":null,"harm_amount":null,"harm_source":null,'
+            '"armor_applies":null,"in_combat":null}]}',
+        )  # type: ignore[return-value]
+
+
 def test_preserves_explicit_likelihood_hint_for_classifier() -> None:
     router = TurnRouter(
         classifier=lambda text, likelihood: RoutedTurn(
@@ -129,6 +156,41 @@ def test_unconfigured_router_falls_back_to_player_action() -> None:
 
     assert routed.route == TurnRoute.PLAYER_ACTION
     assert routed.likelihood is None
+
+
+def test_model_can_emit_coordinated_attack_plan() -> None:
+    class CoordinatedAttackCompletion:
+        def __call__(self, request: CompletionRequest) -> ModelResponse:
+            def _stream(content: str) -> list[dict[str, object]]:
+                return [{"choices": [{"delta": {"content": content}}]}]
+
+            if request.trace_route == "turn_router.combat_review":
+                return _stream(
+                    '{"allow_combat_mechanics":true,"reason":"explicit coordinated strike"}',
+                )  # type: ignore[return-value]
+            return _stream(
+                '{"route":"attack","text":"Kaelen strikes the arm while I smash the knee.",'
+                '"ops":[{"kind":"coordinated_attack",'
+                '"text":"Kaelen strikes the arm while I smash the knee.",'
+                '"likelihood":null,"ability":null,"target_name":"Vanguard",'
+                '"stance":"normal","rest_kind":null,"item_name":null,'
+                '"npc_name":null,"actor_name":null,'
+                '"supporting_actor_names":["Kaelen"],'
+                '"source_actor_name":null,"target_actor_name":null,'
+                '"equipped":null,"harm_amount":null,"harm_source":null,'
+                '"armor_applies":null,"in_combat":null}]}',
+            )  # type: ignore[return-value]
+
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=CoordinatedAttackCompletion(),
+    )
+
+    plan = router.plan("Order Kaelen to attack the arm. I smash the knee.")
+
+    assert plan.route == TurnRoute.ATTACK
+    assert plan.ops[0].kind == PlannedTurnOpKind.COORDINATED_ATTACK
+    assert plan.ops[0].supporting_actor_names == ("Kaelen",)
 
 
 def test_router_logs_decision_and_traces_request(caplog: pytest.LogCaptureFixture) -> None:
@@ -196,6 +258,106 @@ def test_classifier_can_return_attack_route() -> None:
     assert routed.route == TurnRoute.ATTACK
     assert routed.target_name == "Abbey ghoul"
     assert routed.stance == AttackStance.NORMAL
+
+
+def test_turn_router_prompt_keeps_broad_combat_intent_out_of_attack() -> None:
+    completion = RecordingRouterCompletion()
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    routed = router.route("Let's find a fight.")
+
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert completion.messages is not None
+    system_prompt = " ".join(completion.messages[0]["content"].split())
+    assert "A broad request to seek, start, or enter danger/combat" in system_prompt
+    assert "concrete attack by itself" in system_prompt
+    assert "spending the player's first combat turn" in system_prompt
+
+
+def test_model_can_request_clarification_for_ambiguous_party_reference() -> None:
+    class ClarifyingRouterCompletion:
+        def __call__(self, request: CompletionRequest) -> ModelResponse:
+            del request
+
+            def _stream() -> list[dict[str, object]]:
+                return [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "content": (
+                                        '{"route":"player_action",'
+                                        '"text":"We retreat from the doorway.",'
+                                        '"ops":[{"kind":"clarify",'
+                                        '"text":"Who is retreating: you alone, or '
+                                        'you and Kaelen together?",'
+                                        '"likelihood":null,"ability":null,"target_name":null,'
+                                        '"stance":null,"rest_kind":null,"item_name":null,'
+                                        '"supporting_actor_names":[],"source_actor_name":null,'
+                                        '"target_actor_name":null,"equipped":null,'
+                                        '"harm_amount":null,"harm_source":null,'
+                                        '"armor_applies":null,"in_combat":null}]}'
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                ]
+
+            return _stream()  # type: ignore[return-value]
+
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=ClarifyingRouterCompletion(),
+    )
+
+    planned = router.plan("We retreat from the doorway.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert planned.ops == (
+        PlannedTurnOp(
+            kind=PlannedTurnOpKind.CLARIFY,
+            text="Who is retreating: you alone, or you and Kaelen together?",
+        ),
+    )
+
+
+def test_model_attack_plan_requires_structured_combat_review_approval() -> None:
+    completion = CombatReviewRouterCompletion(review_allows=False)
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    routed = router.route("Let us find a fight.")
+
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert routed.plan is not None
+    assert [op.kind for op in routed.plan.ops] == [PlannedTurnOpKind.NARRATE]
+    assert [request.trace_route for request in completion.requests] == [
+        "turn_router.plan",
+        "turn_router.combat_review",
+    ]
+
+
+def test_structured_combat_review_can_allow_explicit_attack_plan() -> None:
+    completion = CombatReviewRouterCompletion(review_allows=True)
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    routed = router.route("I swing my cudgel at the abbey ghoul.")
+
+    assert routed.route == TurnRoute.ATTACK
+    assert routed.target_name == "Abbey ghoul"
+    assert [request.trace_route for request in completion.requests] == [
+        "turn_router.plan",
+        "turn_router.combat_review",
+    ]
 
 
 def test_classifier_can_return_recovery_route() -> None:

@@ -4,7 +4,17 @@ import pytest
 from litellm.types.utils import ModelResponse
 
 from dungeon_master.cancel import CancellationRegistry, RequestCancelledError
-from dungeon_master.models import OracleKind, OracleOutcome
+from dungeon_master.models import (
+    CairnCharacterState,
+    CairnItemState,
+    CairnItemTag,
+    CairnMechanicsSource,
+    CampaignStatus,
+    InventoryItem,
+    OracleKind,
+    OracleOutcome,
+    PartyMember,
+)
 from dungeon_master.narrative import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_POLICY,
@@ -237,6 +247,8 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "Use second person (`you`) for the player-character." in system_prompt
     assert "trust the most recent scene transcript and latest turn context" in system_prompt
     assert "Only harden facts that are supported by the supplied outcome/state." in system_prompt
+    assert "follow the structured outcome first" in system_prompt
+    assert "canonical primary/equipped inventory" in system_prompt
     assert "<PLAYER_NOTES>" in system_prompt
     assert '"backstory":' in system_prompt
     assert '"condition":' in system_prompt
@@ -244,6 +256,80 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
         "role": "user",
         "content": "I check my supplies before leaving.",
     }
+
+
+def test_narrative_prompt_uses_terminal_closure_for_ended_campaign() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.campaign_status = CampaignStatus.ENDED
+    outcome = OracleOutcome(
+        kind=OracleKind.RETREAT,
+        summary="The wanderer fell.",
+        chaos_factor=state.chaos_factor,
+    )
+    config = NarrativeConfig(
+        model=DEFAULT_MODEL,
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        reasoning_policy="auto",
+        exclude_reasoning=True,
+    )
+    engine = NarrativeEngine(config=config, completion_function=completion)
+
+    engine.generate(state, outcome, "I try to drag the boy clear.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert "Terminal campaign exception" in system_prompt
+    assert "Do not end with a next-action prompt" in system_prompt
+    assert "write 1-2 compact paragraphs of terminal closure" in system_prompt
+    assert "End with one concrete prompt for action." not in system_prompt
+
+
+def test_narrative_prompt_includes_party_member_primary_weapons() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    weapon = InventoryItem(
+        name="Rusted wood-axe",
+        details="Already surfaced as this companion's weapon.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.WEAPON],
+            weapon_damage_die=6,
+            equipped=True,
+        ),
+    )
+    companion_sheet = state.character.model_copy(
+        update={
+            "name": "Test Companion",
+            "inventory": [weapon],
+            "cairn": CairnCharacterState(
+                source=CairnMechanicsSource.EXPLICIT,
+                hp=3,
+                max_hp=3,
+                primary_weapon_item_id=weapon.id,
+            ),
+        },
+        deep=True,
+    )
+    state.party_members.append(PartyMember(sheet=companion_sheet))
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(model=DEFAULT_MODEL, api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "The companion holds the doorway.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert '"party_members":' in system_prompt
+    assert "Rusted wood-axe" in system_prompt
+    assert '"primary_weapon":true' in system_prompt
 
 
 def test_narrative_prompt_includes_bounded_memory_context() -> None:

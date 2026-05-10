@@ -52,6 +52,7 @@ class PlannedTurnOpKind(StrEnum):
     SCENE_CHECK = "scene_check"
     SAVE = "save"
     ATTACK = "attack"
+    COORDINATED_ATTACK = "coordinated_attack"
     ENEMY_OPENER = "enemy_opener"
     HARM = "harm"
     RECOVERY = "recovery"
@@ -64,6 +65,7 @@ class PlannedTurnOpKind(StrEnum):
     RECRUIT_NPC = "recruit_npc"
     USE_ITEM = "use_item"
     DROP_ITEM = "drop_item"
+    CLARIFY = "clarify"
     NARRATE = "narrate"
 
 
@@ -79,6 +81,7 @@ class PlannedTurnOp:
     item_name: str | None = None
     npc_name: str | None = None
     actor_name: str | None = None
+    supporting_actor_names: tuple[str, ...] = ()
     source_actor_name: str | None = None
     target_actor_name: str | None = None
     equipped: bool | None = None
@@ -109,6 +112,7 @@ class RoutedTurn:
     item_name: str | None = None
     npc_name: str | None = None
     actor_name: str | None = None
+    supporting_actor_names: tuple[str, ...] = ()
     source_actor_name: str | None = None
     target_actor_name: str | None = None
     equipped: bool | None = None
@@ -132,6 +136,7 @@ class GeneratedPlannedTurnOp(StrictModel):
     item_name: str | None = None
     npc_name: str | None = None
     actor_name: str | None = None
+    supporting_actor_names: list[str] = Field(default_factory=list, max_length=3)
     source_actor_name: str | None = None
     target_actor_name: str | None = None
     equipped: bool | None = None
@@ -147,6 +152,11 @@ class GeneratedTurnPlan(StrictModel):
     ops: list[GeneratedPlannedTurnOp] = Field(min_length=1, max_length=3)
     time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
     survival_actions: list[CairnSurvivalAction] = Field(default_factory=list, max_length=2)
+
+
+class GeneratedCombatMechanicsReview(StrictModel):
+    allow_combat_mechanics: bool
+    reason: str = Field(min_length=1)
 
 
 RouterClassifier = Callable[[str, Likelihood | None], RoutedTurn | TurnPlan]
@@ -215,6 +225,8 @@ Allowed op kinds:
 - save: the player is attempting one risky immediate action that should
   resolve as a Cairn-style save
 - attack: the player is attacking or striking a concrete foe right now
+- coordinated_attack: the player and at least one named party member are
+  making one coordinated offensive move against the same concrete foe now
 - enemy_opener: a hostile foe is clearly striking first, springing an ambush,
   or seizing initiative in a way that should start a tracked encounter now
 - harm: the player is explicitly taking damage or a blow should be resolved directly
@@ -237,20 +249,29 @@ Allowed op kinds:
 - use_item: the player is explicitly drinking, lighting, applying,
   consuming, reading, invoking, praying with, or otherwise using a carried item
 - drop_item: the player is explicitly dropping, abandoning, or setting down a carried item
+- clarify: the player intent cannot be safely resolved because actor, target,
+  beneficiary, or party membership is materially ambiguous
 
 Rules:
 - Be conservative. If uncertain, return route `player_action` and a single `narrate` op.
+- If actor/target ambiguity would change who is helped, harmed, moved,
+  rescued, commanded, or committed to danger, return route `player_action`
+  and a single `clarify` op whose text is a concise question to ask the player.
 - Do not invent mechanics not implied by the text.
 - Do not invent items, foes, or scene discoveries that the text does not support.
 - Use any supplied memory context as support, not as permission to invent.
 - Prefer canonical supplied memory over improvising from tone.
 - Preserve the player's meaning; clean wording lightly but do not rewrite
   it into a different action.
+- A broad request to seek, start, or enter danger/combat is not a concrete
+  attack by itself. Unless the player declares a concrete strike, target,
+  weapon use, ambush, or incoming blow, keep it as `narrate` or
+  immediate-situation setup rather than spending the player's first combat turn.
 - You may emit preparatory ops before one primary deterministic op,
   e.g. `equip` then `attack`, or `inspect_inventory` then `scene_check`.
 - Emit at most one primary oracle/mechanical op from this set:
-  `yes_no`, `random_event`, `scene_check`, `save`, `attack`, `enemy_opener`,
-  `harm`, `recovery`.
+  `yes_no`, `random_event`, `scene_check`, `save`, `attack`,
+  `coordinated_attack`, `enemy_opener`, `harm`, `recovery`.
 - If ops contain one of those primary oracle/mechanical ops, `route` must match it.
 - Exception: if the primary op is `enemy_opener`, `route` must be `harm`
   because the stable public outcome kind remains `harm`.
@@ -261,6 +282,14 @@ Rules:
 - Use `save` only when the player is attempting one concrete risky action right now.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
 - If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
+  Use `attack` only when the player declares a concrete offensive action now,
+  not merely when they ask to begin or find a fight.
+- If kind is `coordinated_attack`, include `target_name`; put the main
+  acting character in `actor_name` when named or null for the player, and put
+  named companions/helpers in `supporting_actor_names`. Use this only when the
+  player clearly coordinates an immediate offensive move by the player and at
+  least one party member. Do not use separate `attack` ops to represent one
+  coordinated tactic.
 - If kind is `enemy_opener`, include `harm_source` naming the hostile opener.
 - If kind is `recovery`, choose one `rest_kind`: `breather`, `full_rest`, or `week_recovery`.
 - If kind is `equip`, include `item_name` and whether the player is
@@ -296,6 +325,12 @@ Rules:
 - Do not treat recon questions like "Are there enemies ahead?", "Do I see
   movement on the trail?", or "Can I spot a guard from here?" as committed
   travel or a scene transition by themselves.
+- For ambiguous first-person plural or pronoun references in a party scene
+  (`we`, `us`, `him`, `the boy`, `he`, `they`) where multiple plausible
+  referents exist and the choice affects mechanics, ask a `clarify` question
+  instead of guessing. Example: if "we retreat" could mean player+companion
+  or player+out-of-character speaker/protagonist framing, ask who is
+  retreating before resolving retreat.
 - Use `scene_check` only when the player explicitly commits to moving onward,
   entering, crossing, descending, approaching, traveling, or otherwise
   advancing into a new scene now.
@@ -313,8 +348,9 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "ops": [\n'
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
-    'enemy_opener | harm | recovery | equip | retreat | acquire_item | transfer_item | '
-    'recruit_npc | inspect_inventory | search_scene | use_item | drop_item",\n'
+    'coordinated_attack | enemy_opener | harm | recovery | equip | retreat | '
+    'acquire_item | transfer_item | recruit_npc | inspect_inventory | search_scene | '
+    'use_item | drop_item | clarify",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
     '      "ability": "STR | DEX | WIL | null",\n'
@@ -324,6 +360,7 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '      "item_name": "string or null",\n'
     '      "npc_name": "string or null",\n'
     '      "actor_name": "string or null",\n'
+    '      "supporting_actor_names": ["string", "..."],\n'
     '      "source_actor_name": "string or null",\n'
     '      "target_actor_name": "string or null",\n'
     '      "equipped": "true | false | null",\n'
@@ -351,6 +388,29 @@ If the failed payload cannot be repaired confidently, return a conservative plan
 - route: "player_action"
 - text: the original player turn
 - ops: one op with kind "narrate" and text equal to the original player turn
+"""
+
+COMBAT_MECHANICS_REVIEW_SYSTEM_PROMPT = """You are a strict validator for a solo
+TTRPG backend's proposed combat mechanics.
+
+Return only valid JSON with this shape:
+{
+  "allow_combat_mechanics": true,
+  "reason": "brief explanation"
+}
+
+Decision rule:
+- Return true only if the original player turn itself declares an immediate
+  concrete combat mechanic now: a strike/attack against a target, a named
+  weapon use against a foe, an ambush being executed, an incoming hostile blow
+  that should damage someone now, or another explicit combat resolution now.
+- Return false when the player merely wants to find, start, enter, provoke, or
+  set up danger/combat without declaring the first attack or incoming blow.
+- Return false when the proposed plan spends the player's first combat action
+  by adding a target, weapon, or blow that the original player turn did not
+  actually declare.
+- Judge meaning, not wording. Do not use keyword matching; compare the original
+  player intent to the proposed mechanical plan.
 """
 
 
@@ -431,6 +491,11 @@ class TurnRouter:
                 payload = extract_json_object(content)
                 parsed = GeneratedTurnPlan.model_validate_json(payload)
                 plan = self._normalize_generated_plan(parsed, normalized, likelihood)
+                plan = self._review_combat_mechanics_plan(
+                    plan,
+                    normalized_text=normalized,
+                    cancel_token=cancel_token,
+                )
                 self._log_plan_decision(plan, source="model")
             except (
                 *LITELLM_RETRYABLE_ERRORS,
@@ -453,6 +518,11 @@ class TurnRouter:
             cancel_token=cancel_token,
         )
         if repaired is not None:
+            repaired = self._review_combat_mechanics_plan(
+                repaired,
+                normalized_text=normalized,
+                cancel_token=cancel_token,
+            )
             self._log_plan_decision(repaired, source="repair")
             return repaired
 
@@ -507,6 +577,103 @@ class TurnRouter:
             payload = extract_json_object(completed.content)
             parsed = GeneratedTurnPlan.model_validate_json(payload)
             return self._normalize_generated_plan(parsed, normalized_text, likelihood)
+        except (
+            *LITELLM_RETRYABLE_ERRORS,
+            ValidationError,
+            json.JSONDecodeError,
+            EmptyRouteContentError,
+            ValueError,
+        ):
+            return None
+
+    def _review_combat_mechanics_plan(
+        self,
+        plan: TurnPlan,
+        *,
+        normalized_text: str,
+        cancel_token: CancellationToken | None,
+    ) -> TurnPlan:
+        if not self._requires_combat_mechanics_review(plan):
+            return plan
+        review = self._generate_combat_mechanics_review(
+            plan,
+            normalized_text=normalized_text,
+            cancel_token=cancel_token,
+        )
+        if review is not None and review.allow_combat_mechanics:
+            return plan
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=plan.text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=plan.text),),
+            time_advance=plan.time_advance,
+            survival_actions=plan.survival_actions,
+        )
+
+    def _requires_combat_mechanics_review(self, plan: TurnPlan) -> bool:
+        return any(
+            op.kind
+            in {
+                PlannedTurnOpKind.ATTACK,
+                PlannedTurnOpKind.COORDINATED_ATTACK,
+                PlannedTurnOpKind.ENEMY_OPENER,
+                PlannedTurnOpKind.HARM,
+            }
+            for op in plan.ops
+        )
+
+    def _generate_combat_mechanics_review(
+        self,
+        plan: TurnPlan,
+        *,
+        normalized_text: str,
+        cancel_token: CancellationToken | None,
+    ) -> GeneratedCombatMechanicsReview | None:
+        if self._classifier is not None or not self._config.is_usable():
+            return None
+        profile = self._config.profiles.turn_router
+        payload = {
+            "original_player_turn": normalized_text,
+            "proposed_plan": {
+                "route": plan.route.value,
+                "text": plan.text,
+                "ops": [
+                    {
+                        "kind": op.kind.value,
+                        "text": op.text,
+                        "target_name": op.target_name,
+                        "item_name": op.item_name,
+                        "harm_source": op.harm_source,
+                        "in_combat": op.in_combat,
+                    }
+                    for op in plan.ops
+                ],
+            },
+        }
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": COMBAT_MECHANICS_REVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            temperature=0.0,
+            max_tokens=profile.max_tokens,
+            timeout=self._config.timeout_seconds,
+            stream=True,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+            trace_route="turn_router.combat_review",
+            trace_profile="turn_router",
+        )
+        try:
+            completed = complete_text(request, self._completion)
+            payload_json = extract_json_object(completed.content)
+            return GeneratedCombatMechanicsReview.model_validate_json(payload_json)
         except (
             *LITELLM_RETRYABLE_ERRORS,
             ValidationError,
@@ -594,6 +761,7 @@ class TurnRouter:
                     item_name=op.item_name,
                     npc_name=op.npc_name,
                     actor_name=op.actor_name,
+                    supporting_actor_names=tuple(op.supporting_actor_names),
                     source_actor_name=op.source_actor_name,
                     target_actor_name=op.target_actor_name,
                     equipped=op.equipped,
@@ -655,6 +823,13 @@ class TurnRouter:
         if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is None:
             message = "Attack ops require a target_name."
             raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.COORDINATED_ATTACK:
+            if op.target_name is None:
+                message = "Coordinated attack ops require a target_name."
+                raise ValueError(message)
+            if not op.supporting_actor_names:
+                message = "Coordinated attack ops require at least one supporting actor."
+                raise ValueError(message)
         if op.kind == PlannedTurnOpKind.ENEMY_OPENER:
             if route != TurnRoute.HARM:
                 message = "enemy_opener ops require the legacy route to remain harm."
@@ -689,6 +864,7 @@ class TurnRouter:
             PlannedTurnOpKind.TRANSFER_ITEM,
             PlannedTurnOpKind.RECRUIT_NPC,
             PlannedTurnOpKind.DROP_ITEM,
+            PlannedTurnOpKind.CLARIFY,
             PlannedTurnOpKind.NARRATE,
         ) and route != TurnRoute.PLAYER_ACTION:
             # Preparatory ops are allowed ahead of a primary mechanical op; the
@@ -706,6 +882,7 @@ class TurnRouter:
             item_name=op.item_name,
             npc_name=op.npc_name,
             actor_name=op.actor_name,
+            supporting_actor_names=tuple(dict.fromkeys(op.supporting_actor_names)),
             source_actor_name=op.source_actor_name,
             target_actor_name=op.target_actor_name,
             equipped=op.equipped,
@@ -739,6 +916,7 @@ class TurnRouter:
             item_name=routed.item_name,
             npc_name=routed.npc_name,
             actor_name=routed.actor_name,
+            supporting_actor_names=routed.supporting_actor_names,
             source_actor_name=routed.source_actor_name,
             target_actor_name=routed.target_actor_name,
             equipped=routed.equipped,
@@ -761,6 +939,7 @@ class TurnRouter:
             item_name=primary.item_name,
             npc_name=primary.npc_name,
             actor_name=primary.actor_name,
+            supporting_actor_names=primary.supporting_actor_names,
             source_actor_name=primary.source_actor_name,
             target_actor_name=primary.target_actor_name,
             equipped=primary.equipped,

@@ -34,7 +34,7 @@ from dungeon_master.config import (
 from dungeon_master.config import (
     LLMConfig as NarrativeConfig,
 )
-from dungeon_master.models import GameState, OracleOutcome
+from dungeon_master.models import CampaignStatus, GameState, OracleOutcome, PartyMember
 from dungeon_master.observability import (
     LLMCallRecord,
     log_llm_call,
@@ -90,6 +90,10 @@ Discipline:
 - Treat item descriptions, atmospheric details, and latent threats as flavor,
   not as hardened present-tense facts, unless the oracle outcome or canonical
   state explicitly supports them.
+- If a mechanical outcome names an actor's weapon or item, narrate that exact
+  item and do not substitute a different weapon from older prose. If no weapon
+  is named in the outcome, use the actor's primary/equipped weapon from
+  canonical inventory.
 - Static character facts, injuries, and recurring motifs are reference context,
   not mandatory prose beats; mention them only when they materially affect the
   immediate action or scene.
@@ -113,6 +117,14 @@ concrete, playable, and not novelistic.
 Voice:
 - Address the player-character in second person (`you`), not third person,
   unless directly quoting diegetic speech or text.
+"""
+
+TERMINAL_NARRATION_PROMPT = """Terminal campaign exception:
+- The campaign is already marked ended in canonical state.
+- Do not end with a next-action prompt, menu, or new-character suggestion.
+- Do not ask "what do you do?" or invite the player to continue the ended run.
+- Write closure for the final beat only; the application UI owns archive and
+  new-campaign calls to action.
 """
 
 
@@ -394,6 +406,12 @@ class NarrativeEngine:
         stream: bool,
         cancel_token: CancellationToken | None = None,
     ) -> CompletionRequest:
+        terminal_prompt = state.campaign_status == CampaignStatus.ENDED
+        system_prompt = (
+            SYSTEM_PROMPT
+            if not terminal_prompt
+            else f"{SYSTEM_PROMPT}\n\n{TERMINAL_NARRATION_PROMPT}"
+        )
         runtime_context = self._build_runtime_context(
             state,
             outcome,
@@ -402,7 +420,7 @@ class NarrativeEngine:
             memory_context=memory_context,
         )
         messages: list[ChatMessage] = [
-            {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{runtime_context}"},
+            {"role": "system", "content": f"{system_prompt}\n\n{runtime_context}"},
             *(scene_messages or []),
             {"role": "user", "content": player_input},
         ]
@@ -496,32 +514,63 @@ class NarrativeEngine:
                     "</EXECUTED_BACKEND_STEPS>",
                 ],
             )
+        output_instruction = (
+            (
+                "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
+                "of terminal closure, usually 1. "
+                "Treat the transcript above as resolved history; answer only the "
+                "final user message unless it explicitly reopens an earlier question. "
+                "Use second person (`you`) for the player-character. "
+                "Mirror the player's action before extending the fiction. "
+                "Do not repeatedly restate unchanged character motifs or injuries "
+                "unless they materially affect this beat. "
+                "Do not open by recapping older "
+                "scenes or memories unless the final user message directly asks "
+                "about them or it is materially relevant to the current scene. "
+                "Avoid repeating the same static motif, location, or "
+                "prior event across consecutive responses unless it materially "
+                "changes this beat. "
+                "Use reasoning for continuity and constraint resolution."
+                "When recent scene context and older campaign memory differ, trust the "
+                "most recent scene transcript and latest turn context. "
+                "Only harden facts that are supported by the supplied outcome/state. "
+                "For weapons/items, follow the structured outcome first, then "
+                "the actor's canonical primary/equipped inventory; do not "
+                "substitute conflicting older prose. "
+                "Do not end with a next-action prompt, menu, or new-character suggestion."
+            )
+            if state.campaign_status == CampaignStatus.ENDED
+            else (
+                "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
+                "of playable narration, usually 1. "
+                "Treat the transcript above as resolved history; answer only the "
+                "final user message unless it explicitly reopens an earlier question. "
+                "Use second person (`you`) for the player-character. "
+                "Mirror the player's action before extending the fiction. "
+                "Do not repeatedly restate unchanged character motifs or injuries "
+                "unless they materially affect this beat. "
+                "Do not open by recapping older "
+                "scenes or memories unless the final user message directly asks "
+                "about them or it is materially relevant to the current scene. "
+                "Avoid repeating the same static motif, location, or "
+                "prior event across consecutive responses unless it materially "
+                "changes this beat. "
+                "Use reasoning for continuity and constraint resolution."
+                "When recent scene context and older campaign memory differ, trust the "
+                "most recent scene transcript and latest turn context. "
+                "Only harden facts that are supported by the supplied outcome/state. "
+                "For weapons/items, follow the structured outcome first, then "
+                "the actor's canonical primary/equipped inventory; do not "
+                "substitute conflicting older prose. "
+                "End with one concrete prompt for action."
+            )
+        )
         lines.extend(
             [
                 "</SUPPLEMENTAL_CONTEXT>",
                 "",
                 "<OUTPUT_INSTRUCTIONS>",
-                (
-                    "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
-                    "of playable narration, usually 1. "
-                    "Treat the transcript above as resolved history; answer only the "
-                    "final user message unless it explicitly reopens an earlier question. "
-                    "Use second person (`you`) for the player-character. "
-                    "Mirror the player's action before extending the fiction. "
-                    "Do not repeatedly restate unchanged character motifs or injuries "
-                    "unless they materially affect this beat. "
-                    "Do not open by recapping older "
-                    "scenes or memories unless the final user message directly asks "
-                    "about them or it is materially relevant to the current scene. "
-                    "Avoid repeating the same static motif, location, or "
-                    "prior event across consecutive responses unless it materially "
-                    "changes this beat. "
-                    "Use reasoning for continuity and constraint resolution."
-                    "When recent scene context and older campaign memory differ, trust the "
-                    "most recent scene transcript and latest turn context. "
-                    "Only harden facts that are supported by the supplied outcome/state. "
-                    "End with one concrete prompt for action."
-                ),
+                output_instruction,
                 "</OUTPUT_INSTRUCTIONS>",
             ],
         )
@@ -580,9 +629,11 @@ class NarrativeEngine:
             },
             "inventory": [
                 {
+                    "id": item.id,
                     "name": item.name,
                     "details": self._clip_prompt_text(item.details, 90),
                     "equipped": item.cairn.equipped,
+                    "primary_weapon": item.id == cairn.primary_weapon_item_id,
                     "tags": [tag.value for tag in item.cairn.tags],
                     "uses": item.cairn.uses,
                     "damage_die": item.cairn.weapon_damage_die,
@@ -591,8 +642,45 @@ class NarrativeEngine:
                 }
                 for item in character.inventory[:8]
             ],
+            "party_members": [
+                self._compact_party_member_json(member)
+                for member in state.party_members
+                if member.active
+            ],
         }
         return json.dumps(payload, separators=(",", ":"))
+
+    def _compact_party_member_json(self, member: PartyMember) -> dict[str, object]:
+        sheet = member.sheet
+        cairn = sheet.cairn
+        return {
+            "id": member.id,
+            "name": member.display_label(),
+            "archetype": sheet.archetype,
+            "condition": self._clip_prompt_text(sheet.condition, 120),
+            "cairn": {
+                "hp": [cairn.hp, cairn.max_hp],
+                "str": [cairn.str_score, cairn.max_str_score],
+                "dex": [cairn.dex_score, cairn.max_dex_score],
+                "wil": [cairn.wil_score, cairn.max_wil_score],
+                "armor": cairn.armor,
+                "primary_weapon_item_id": cairn.primary_weapon_item_id,
+            },
+            "inventory": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "details": self._clip_prompt_text(item.details, 80),
+                    "equipped": item.cairn.equipped,
+                    "primary_weapon": item.id == cairn.primary_weapon_item_id,
+                    "tags": [tag.value for tag in item.cairn.tags],
+                    "damage_die": item.cairn.weapon_damage_die,
+                    "armor_bonus": item.cairn.armor_bonus,
+                    "uses": item.cairn.uses,
+                }
+                for item in sheet.inventory[:8]
+            ],
+        }
 
     def _xml_escape(self, text: str) -> str:
         return html.escape(text, quote=False)

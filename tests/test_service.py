@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from dungeon_master.cairn import CairnEngine, SurvivalUpdate
+from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignWorldResult,
     CharacterDraftMode,
@@ -43,6 +43,7 @@ from dungeon_master.models import (
     EncounterState,
     EnemyCombatant,
     EventType,
+    GameEvent,
     GameState,
     GameThread,
     InventoryItem,
@@ -724,6 +725,28 @@ class FakeCairnEngine:
             ),
         )
 
+    def resolve_coordinated_attack(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        participants: tuple[AttackActor, ...],
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        actor_names = ", ".join(participant.name for participant in participants)
+        return OracleOutcome(
+            kind=OracleKind.ATTACK,
+            summary=f"Coordinated attack against {target_name} by {actor_names}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=target_name,
+                target_armor=target_armor,
+                coordinated_attack=True,
+            ),
+        )
+
     def suffer_harm(  # noqa: PLR0913
         self,
         state: GameState,
@@ -1337,6 +1360,43 @@ def test_service_player_turn_routes_attack(tmp_path: Path) -> None:
     assert state.oracle_history[0].cairn.target_name == "Abbey ghoul"
 
 
+def test_service_player_turn_commits_clarification_without_mechanics(tmp_path: Path) -> None:
+    def clarify_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.CLARIFY,
+                    text="Who is retreating: you alone, or you and Kaelen together?",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=clarify_classifier),
+    )
+
+    state = service.submit_player_turn("We retreat from the doorway.")
+
+    assert [event.title for event in state.action_log] == [
+        "Player action",
+        "Clarification needed",
+    ]
+    assert state.action_log[-1].content == (
+        "Who is retreating: you alone, or you and Kaelen together?"
+    )
+    assert state.action_log[-1].event_type == EventType.NARRATIVE
+    assert state.oracle_history == []
+
+
 def test_service_player_turn_routes_enemy_opener_into_tracked_combat(tmp_path: Path) -> None:
     def ambush_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
         del likelihood
@@ -1744,6 +1804,82 @@ def test_service_player_turn_recruits_visible_npc_to_party(tmp_path: Path) -> No
     assert member.sheet.inventory[0].name == "Brother Sava's walking stick"
     assert next_state.npcs[-1].status == NPCStatus.RETIRED
     assert "Recruited Brother Sava into the party." in next_state.action_log[1].content
+
+
+def test_recruitment_backfill_receives_recent_visible_gear_context(tmp_path: Path) -> None:
+    captured_backstory: str | None = None
+
+    def recruit_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECRUIT_NPC,
+                    text=text,
+                    npc_name="Brother Sava",
+                ),
+            ),
+        )
+
+    def companion_backfill(state: GameState) -> CharacterSheet:
+        nonlocal captured_backstory
+        captured_backstory = state.character.backstory
+        sheet = state.character.model_copy(deep=True)
+        sheet.cairn = CairnCharacterState(
+            source=CairnMechanicsSource.EXPLICIT,
+            hp=3,
+            max_hp=3,
+        )
+        sheet.inventory = [
+            InventoryItem(
+                name="Rusted wood-axe",
+                details="The weapon already surfaced in play.",
+                cairn=CairnItemState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    tags=[CairnItemTag.WEAPON],
+                    weapon_damage_die=6,
+                    equipped=True,
+                ),
+            ),
+        ]
+        return sheet
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+            backfill_function=companion_backfill,
+        ),
+        turn_router=TurnRouter(classifier=recruit_classifier),
+    )
+    state = service.load_state()
+    state.action_log.append(
+        GameEvent(
+            event_type=EventType.NARRATIVE,
+            title="Narrative response",
+            content="Brother Sava waits by the fire, keeping a rusted wood-axe ready.",
+        ),
+    )
+    recruitable = NPC(
+        name="Brother Sava",
+        role="Lantern bearer",
+        disposition="wary but willing",
+    )
+    state.npcs.append(recruitable)
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    next_state = service.submit_player_turn("I ask Brother Sava to join us.")
+
+    assert captured_backstory is not None
+    assert "Recent player-visible context for this recruit" in captured_backstory
+    assert "rusted wood-axe ready" in captured_backstory
+    assert next_state.party_members[0].sheet.inventory[0].name == "Rusted wood-axe"
 
 
 def test_service_player_turn_uses_holy_relic_as_structured_outcome(tmp_path: Path) -> None:
@@ -3281,6 +3417,44 @@ def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
     assert by_id["reconciling_continuity"].status == StageStatus.SKIPPED
     assert by_id["reconciling_continuity"].started_at is None
     assert by_id["reconciling_continuity"].completed_at is None
+
+
+def test_streamed_player_turn_commits_clarification_without_mechanics(tmp_path: Path) -> None:
+    def clarify_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.CLARIFY,
+                    text="Who is retreating: you alone, or you and Kaelen together?",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=clarify_classifier),
+    )
+
+    final = _consume_stream(service.stream_submit_player_turn("We retreat from the doorway."))
+    by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
+
+    assert [event.title for event in final.action_log] == [
+        "Player action",
+        "Clarification needed",
+    ]
+    assert final.oracle_history == []
+    assert by_id["planning_turn"].status == StageStatus.DONE
+    assert by_id["resolving_mechanics"].status == StageStatus.SKIPPED
+    assert by_id["preparing_narration"].status == StageStatus.PENDING
+    assert by_id["streaming_narration"].status == StageStatus.PENDING
 
 
 def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(

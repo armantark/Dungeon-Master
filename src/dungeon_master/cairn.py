@@ -26,6 +26,7 @@ from dungeon_master.models import (
     CairnSurvivalAction,
     CairnTimeAdvance,
     CharacterSheet,
+    CoordinatedAttackParticipant,
     EncounterEndReason,
     EncounterInitiator,
     EncounterState,
@@ -75,6 +76,15 @@ LASTING_SCAR_LOCATIONS: tuple[str, ...] = (
     "Legs",
     "Ear",
 )
+
+
+@dataclass(frozen=True)
+class AttackActor:
+    id: str | None
+    name: str
+    sheet: CharacterSheet
+    weapon_item_id: str | None = None
+    stance: AttackStance = AttackStance.NORMAL
 BROKEN_LIMB_PARTS: tuple[str, ...] = (
     "Leg",
     "Leg",
@@ -99,6 +109,10 @@ Rules philosophy:
 - Inventory should be a practical starting bundle appropriate to the
   character's profile. Prefer a weapon, practical clothing/armor, light,
   supplies, tools, and at most one or two signature biography-derived items.
+- If the authored character context names concrete visible gear already
+  established in play, especially carried or wielded weapons, preserve that
+  gear in the structured inventory unless the context says it was lost,
+  traded, or discarded.
 - Keep the inventory lean and believable. Most items should be useful in play,
   not symbolic transcripts of the backstory.
 - Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
@@ -183,6 +197,8 @@ Important instruction:
 - You may replace the existing authored inventory with a better Cairn-style
   practical starting bundle if the authored items are too symbolic or too
   on-the-nose.
+- Preserve concrete carried gear named in the authored character context,
+  especially weapons or tools already surfaced to the player.
 - Preserve at most one or two iconic biography-derived items.
 - Put most biography influence into stats, skills, abilities, condition,
   and notes rather than inventory objects.
@@ -560,6 +576,12 @@ class CairnEngine:
             else self._resolve_opening_attack_target(encounter, target_name)
         )
         weapon = self._resolve_weapon(actor.sheet, weapon_item_id)
+        if weapon is None and actor.sheet.cairn.primary_weapon_item_id is not None:
+            message = (
+                f"{actor.name}'s primary weapon is missing from inventory; "
+                "repair or re-equip before resolving an attack."
+            )
+            raise ValueError(message)
         base_die = self._attack_die(weapon, stance)
         round_before = encounter.round_number
         weapon_name = weapon.name if weapon is not None else "Unarmed strike"
@@ -682,6 +704,213 @@ class CairnEngine:
                 fled_combatant_ids=fled_ids,
                 scar_result=enemy_harm.scar_result,
                 overloaded=actor.sheet.cairn.overloaded,
+            ),
+        )
+
+    def resolve_coordinated_attack(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        participants: tuple[AttackActor, ...],
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        if len(participants) < 2:
+            message = "Coordinated attacks require at least two participants."
+            raise ValueError(message)
+        existing_encounter_active = (
+            state.encounter.active and self._has_active_enemies(state.encounter)
+        )
+        encounter = self._ensure_encounter(
+            state,
+            player_input=f"Coordinated attack {target_name}",
+            target_name=target_name,
+            fallback_target_armor=target_armor,
+            initiator=EncounterInitiator.PLAYER,
+            cancel_token=cancel_token,
+        )
+        target = (
+            self._require_target(encounter, target_name)
+            if existing_encounter_active
+            else self._resolve_opening_attack_target(encounter, target_name)
+        )
+        round_before = encounter.round_number
+        combat_started = encounter.round_number == 1 and encounter.first_round_dex_gate_pending
+        player_acted = True
+        initiative_target: int | None = None
+        rolls: list[Roll] = []
+
+        if encounter.first_round_dex_gate_pending:
+            initiative_target = min(actor.sheet.cairn.dex_score for actor in participants)
+            initiative_roll = self._roll(D20_SIDES, "initiative")
+            rolls.append(initiative_roll)
+            player_acted = self._save_succeeds(initiative_roll.result, initiative_target)
+            encounter.first_round_dex_gate_pending = False
+        encounter.player_disengaged = False
+        encounter.pursuit_active = False
+        encounter.end_reason = None
+
+        participants_out: list[CoordinatedAttackParticipant] = []
+        defeated_ids: list[str] = []
+        fled_ids: list[str] = []
+        morale_target: int | None = None
+        morale_success: bool | None = None
+        total_damage_after_armor = 0
+        base_damage: int | None = None
+        target_hp_before_all = target.hp
+        target_str_before_all = target.str_score
+        target_defeated_before = target.defeated
+        target_defeated = target.defeated
+        lone_zero_triggered = False
+        attack_summaries: list[str] = []
+
+        for participant in participants:
+            weapon = self._resolve_weapon(participant.sheet, participant.weapon_item_id)
+            if weapon is None and participant.sheet.cairn.primary_weapon_item_id is not None:
+                message = (
+                    f"{participant.name}'s primary weapon is missing from inventory; "
+                    "repair or re-equip before resolving an attack."
+                )
+                raise ValueError(message)
+            weapon_name = weapon.name if weapon is not None else "Unarmed strike"
+            before_hp = target.hp
+            before_str = target.str_score
+            participant_base_damage: int | None = None
+            participant_damage = 0
+
+            if player_acted and not target.defeated and not target.fled:
+                damage_roll = self._roll(
+                    self._attack_die(weapon, participant.stance),
+                    f"damage_{participant.id or 'player'}",
+                )
+                rolls.append(damage_roll)
+                participant_base_damage = damage_roll.result
+                if base_damage is None:
+                    base_damage = damage_roll.result
+                participant_damage = max(0, damage_roll.result - target.armor)
+                total_damage_after_armor += participant_damage
+                (
+                    damage_summary,
+                    attack_rolls,
+                    target_defeated,
+                    participant_lone_zero,
+                ) = self._apply_harm_to_combatant(target, participant_damage)
+                if attack_rolls:
+                    rolls.extend(attack_rolls)
+                lone_zero_triggered = lone_zero_triggered or participant_lone_zero
+                attack_summaries.append(
+                    f"{participant.name} attacks {target.name}: {weapon_name}. {damage_summary}",
+                )
+            else:
+                attack_summaries.append(
+                    f"{participant.name} could not land their coordinated strike before {target.name} closed.",
+                )
+
+            participants_out.append(
+                CoordinatedAttackParticipant(
+                    actor_id=participant.id,
+                    actor_name=participant.name,
+                    weapon_item_id=weapon.id if weapon is not None else None,
+                    weapon_name=weapon_name,
+                    base_damage=participant_base_damage,
+                    damage_after_armor=participant_damage,
+                    target_hp_before=before_hp,
+                    target_hp_after=target.hp,
+                    target_str_before=before_str,
+                    target_str_after=target.str_score,
+                    target_defeated=target.defeated,
+                    target_fled=target.fled,
+                    acted=player_acted,
+                ),
+            )
+            if target.defeated or target.fled:
+                break
+
+        if player_acted:
+            if target_defeated and not target_defeated_before:
+                defeated_ids.append(target.id)
+            (
+                _morale_roll,
+                morale_target,
+                morale_success,
+                morale_fled_ids,
+            ) = self._maybe_resolve_enemy_morale(
+                encounter,
+                lone_zero_triggered=lone_zero_triggered,
+            )
+            fled_ids.extend(morale_fled_ids)
+            if target.id in morale_fled_ids:
+                target.defeated = False
+            attack_summary = " ".join(attack_summaries)
+        else:
+            attack_summary = (
+                f"The coordinated attack failed the opening DEX gate; "
+                f"{target.name} closed before Vrtanes or his companions could act."
+            )
+
+        enemy_harm = self._resolve_enemy_turn(state, encounter, defender=state.character)
+        rolls.extend(enemy_harm.rolls)
+        encounter.active = self._has_active_enemies(encounter)
+        if encounter.active:
+            encounter.round_number += 1
+            encounter.end_reason = None
+        elif fled_ids:
+            encounter.end_reason = EncounterEndReason.ENEMY_ROUT
+            encounter.notes = "The remaining enemies broke and fled."
+        else:
+            encounter.end_reason = EncounterEndReason.VICTORY
+            encounter.notes = "No active foes remain."
+
+        lead = participants_out[0]
+        return OracleOutcome(
+            kind=OracleKind.ATTACK,
+            summary=self._attack_summary(
+                attack_summary=attack_summary,
+                enemy_summary=enemy_harm.summary,
+                encounter=encounter,
+            ),
+            rolls=rolls,
+            question=f"Coordinated attack {target.name}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=round_before,
+                combat_started=combat_started,
+                combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
+                player_acted=player_acted,
+                initiative_target=initiative_target,
+                actor_id=lead.actor_id,
+                actor_name=None if lead.actor_id is None else lead.actor_name,
+                weapon_item_id=lead.weapon_item_id,
+                weapon_name=lead.weapon_name,
+                target_combatant_id=target.id,
+                target_name=target.name,
+                target_armor=target.armor,
+                attack_stance=participants[0].stance,
+                base_damage=base_damage,
+                damage_after_armor=total_damage_after_armor,
+                target_hp_before=target_hp_before_all,
+                target_hp_after=target.hp,
+                target_str_before=target_str_before_all,
+                target_str_after=target.str_score,
+                target_defeated=target.defeated,
+                target_fled=target.fled,
+                hp_before=enemy_harm.hp_before,
+                hp_after=enemy_harm.hp_after,
+                str_before=enemy_harm.str_before,
+                str_after=enemy_harm.str_after,
+                enemy_damage=enemy_harm.damage_after_armor,
+                enemy_damage_source=enemy_harm.source if enemy_harm.damage_after_armor else None,
+                morale_target=morale_target,
+                morale_success=morale_success,
+                coordinated_attack=True,
+                coordinated_participants=participants_out,
+                defeated_combatant_ids=defeated_ids,
+                fled_combatant_ids=fled_ids,
+                scar_result=enemy_harm.scar_result,
+                overloaded=state.character.cairn.overloaded,
             ),
         )
 

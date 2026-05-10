@@ -401,8 +401,9 @@ function formatAttackHeadline(outcome: OracleOutcome): string {
   if (cairn === null) return "Attack";
   const target = cairn.target_name ?? "unknown";
   const dmg = cairn.damage_after_armor;
-  if (dmg === null) return `Attack · ${target}`;
-  return `Attack · ${target} · ${dmg} dmg`;
+  const prefix = cairn.coordinated_attack === true ? "Coordinated attack" : "Attack";
+  if (dmg === null) return `${prefix} · ${target}`;
+  return `${prefix} · ${target} · ${dmg} dmg`;
 }
 
 // F-05: a harm outcome that *opened* the fight reads better as
@@ -465,7 +466,7 @@ function formatRetreatHeadline(outcome: OracleOutcome): string {
 // harm, off-combat harm) and for legacy outcomes that pre-date the
 // field.
 const INITIATOR_LABEL: Record<EncounterInitiator, string> = {
-  player: "Player struck first",
+  player: "Player opened the fight",
   enemy: "Foe seized initiative",
 };
 
