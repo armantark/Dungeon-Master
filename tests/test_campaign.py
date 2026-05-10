@@ -13,66 +13,74 @@ def _streamed_chunks(content: str) -> Iterator[dict[str, object]]:
     yield {"choices": [{"delta": {"content": content}}]}
 
 
+def _campaign_payload(*, npc_count: int = 2) -> dict[str, object]:
+    return {
+        "current_scene": "A generated opening scene.",
+        "setting_notes": "Generated setting notes.",
+        "threads": [
+            {"title": "Thread one", "stakes": "Stakes one."},
+            {"title": "Thread two", "stakes": "Stakes two."},
+            {"title": "Thread three", "stakes": "Stakes three."},
+        ],
+        "npcs": [
+            {
+                "name": f"NPC {index}",
+                "role": f"Role {index}",
+                "disposition": "watchful",
+            }
+            for index in range(1, npc_count + 1)
+        ],
+        "oracle_tables": {
+            "event_focus": [
+                "thread pressure",
+                "npc pressure",
+                "location pressure",
+                "hidden cost",
+                "dangerous choice",
+                "new omen",
+            ],
+            "event_actions": [
+                "betray",
+                "conceal",
+                "demand",
+                "forsake",
+                "guard",
+                "pursue",
+                "shatter",
+                "withhold",
+            ],
+            "event_tones": [
+                "bitter",
+                "cold",
+                "desperate",
+                "forbidden",
+                "hollow",
+                "patient",
+                "ruined",
+                "solemn",
+            ],
+            "event_subjects": [
+                "a debt",
+                "a witness",
+                "a gate",
+                "a relic",
+                "a road",
+                "a wound",
+                "an oath",
+                "old blood",
+            ],
+        },
+    }
+
+
 class CampaignCompletion:
-    def __init__(self) -> None:
+    def __init__(self, *, npc_count: int = 2) -> None:
+        self.npc_count = npc_count
         self.request: CompletionRequest | None = None
 
     def __call__(self, request: CompletionRequest) -> ModelResponse:
         self.request = request
-        payload = {
-            "current_scene": "A generated opening scene.",
-            "setting_notes": "Generated setting notes.",
-            "threads": [
-                {"title": "Thread one", "stakes": "Stakes one."},
-                {"title": "Thread two", "stakes": "Stakes two."},
-                {"title": "Thread three", "stakes": "Stakes three."},
-            ],
-            "npcs": [
-                {"name": "NPC One", "role": "Role one", "disposition": "watchful"},
-                {"name": "NPC Two", "role": "Role two", "disposition": "wary"},
-            ],
-            "oracle_tables": {
-                "event_focus": [
-                    "thread pressure",
-                    "npc pressure",
-                    "location pressure",
-                    "hidden cost",
-                    "dangerous choice",
-                    "new omen",
-                ],
-                "event_actions": [
-                    "betray",
-                    "conceal",
-                    "demand",
-                    "forsake",
-                    "guard",
-                    "pursue",
-                    "shatter",
-                    "withhold",
-                ],
-                "event_tones": [
-                    "bitter",
-                    "cold",
-                    "desperate",
-                    "forbidden",
-                    "hollow",
-                    "patient",
-                    "ruined",
-                    "solemn",
-                ],
-                "event_subjects": [
-                    "a debt",
-                    "a witness",
-                    "a gate",
-                    "a relic",
-                    "a road",
-                    "a wound",
-                    "an oath",
-                    "old blood",
-                ],
-            },
-        }
-        body = json.dumps(payload)
+        body = json.dumps(_campaign_payload(npc_count=self.npc_count))
         if request.stream:
             # Mirror the OpenRouter streaming shape so `_iter_stream_response`
             # picks up the content via `choices[0].delta.content`.
@@ -107,3 +115,21 @@ def test_campaign_generator_builds_state_from_model_json() -> None:
     assert completion.request.response_format is None
     assert completion.request.reasoning_effort == "high"
     assert completion.request.stream is True
+
+
+def test_campaign_generator_trims_extra_npcs_from_model_json() -> None:
+    completion = CampaignCompletion(npc_count=4)
+    generator = CampaignGenerator(
+        config=NarrativeConfig(
+            model="openrouter/moonshotai/kimi-k2.6",
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+        ),
+        completion_function=completion,
+    )
+
+    state = generator.generate(sample_state().character)
+
+    assert state.current_scene == "A generated opening scene."
+    assert len(state.hidden_npcs) == 3
+    assert [npc.name for npc in state.hidden_npcs] == ["NPC 1", "NPC 2", "NPC 3"]

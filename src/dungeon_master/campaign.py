@@ -7,7 +7,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from enum import StrEnum
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.models import (
@@ -311,7 +311,8 @@ CAMPAIGN_USER_PROMPT_TEMPLATE = """Create a fresh campaign opening as JSON with 
 The finalized player character is:
 <<CHARACTER_JSON>>
 
-Return 1-3 threads and as many NPCs to fit the story as needed.
+Return 1-3 threads and 0-3 NPCs. If more people matter, fold them into
+`setting_notes` rather than adding extra `npcs` entries.
 """
 
 
@@ -419,9 +420,24 @@ class CampaignWorldResult:
 class GeneratedCampaignWorld(StrictModel):
     current_scene: str = Field(min_length=1)
     setting_notes: str = Field(min_length=1)
-    threads: list[GeneratedThread] = Field(min_length=3, max_length=3)
-    npcs: list[GeneratedNPC] = Field(min_length=2, max_length=2)
+    threads: list[GeneratedThread] = Field(min_length=1, max_length=3)
+    npcs: list[GeneratedNPC] = Field(default_factory=list, max_length=3)
     oracle_tables: OracleTables
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_bounded_lists(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        # Campaign generation is allowed to be a little generous while
+        # brainstorming. Over-counting threads/NPCs should not poison the
+        # whole campaign into a placeholder world; we keep the earliest
+        # entries because the prompt asks the model to order by immediate
+        # usefulness and fold overflow into setting_notes.
+        normalized["threads"] = _truncate_list(normalized.get("threads"), max_items=3)
+        normalized["npcs"] = _truncate_list(normalized.get("npcs"), max_items=3)
+        return normalized
 
     def to_game_state(self, character: CharacterSheet) -> GameState:
         return GameState(
@@ -440,6 +456,12 @@ class GeneratedCampaignWorld(StrictModel):
             ],
             oracle_tables=self.oracle_tables,
         )
+
+
+def _truncate_list(value: object, *, max_items: int) -> object:
+    if isinstance(value, list) and len(value) > max_items:
+        return value[:max_items]
+    return value
 
 
 class CharacterGenerationError(ValueError):

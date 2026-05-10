@@ -59,12 +59,14 @@ from dungeon_master.models import (
     CairnSurvivalAction,
     CairnTimeAdvance,
     CampaignEndReason,
+    CampaignSeed,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterQuizOption,
     CharacterQuizQuestion,
     CharacterSheet,
+    EncounterAdvantagePayoff,
     EncounterInitiator,
     EncounterState,
     EnemyCombatant,
@@ -292,44 +294,63 @@ class BrokenPlannerCompletion:
 
 
 class FakeCampaignGenerator:
-    def generate(self, character: CharacterSheet) -> GameState:
+    def generate(
+        self,
+        character: CharacterSheet,
+        seed: CampaignSeed | None = None,
+    ) -> GameState:
         state = sample_state()
         state.character = character
         state.player_notes = character.backstory
+        if seed is not None:
+            state.campaign_seed = seed
         return state
 
-    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
-        return CampaignWorldResult(state=self.generate(character))
+    def generate_result(
+        self,
+        character: CharacterSheet,
+        seed: CampaignSeed | None = None,
+    ) -> CampaignWorldResult:
+        return CampaignWorldResult(state=self.generate(character, seed=seed))
 
     def iter_generate(
         self,
         character: CharacterSheet,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
         del cancel_token
-        result = self.generate_result(character)
+        result = self.generate_result(character, seed=seed)
         yield CompletionDelta(content=result.state.model_dump_json())
         return result
 
 
 class FakeCharacterGenerator:
-    def setup_state(self) -> GameState:
-        return sample_state()
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
+        state = sample_state()
+        if seed is not None:
+            state.campaign_seed = seed
+        return state
 
-    def generate_templates(self) -> list[CharacterSheet]:
+    def generate_templates(self, seed: CampaignSeed | None = None) -> list[CharacterSheet]:
+        del seed
         return [sample_state().character]
 
-    def generate_templates_result(self) -> CharacterTemplatesResult:
-        return CharacterTemplatesResult(templates=self.generate_templates())
+    def generate_templates_result(
+        self,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterTemplatesResult:
+        return CharacterTemplatesResult(templates=self.generate_templates(seed=seed))
 
     def iter_generate_templates(
         self,
+        seed: CampaignSeed | None = None,
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
         del cancel_token
-        result = self.generate_templates_result()
+        result = self.generate_templates_result(seed=seed)
         yield CompletionDelta(content=result.templates[0].model_dump_json())
         return result
 
@@ -460,8 +481,10 @@ class FakeCharacterGenerator:
 
 
 class SetupCharacterGenerator(FakeCharacterGenerator):
-    def setup_state(self) -> GameState:
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
         state = sample_state()
+        if seed is not None:
+            state.campaign_seed = seed
         state.campaign_status = CampaignStatus.CHARACTER_CREATION
         state.threads = []
         state.npcs = []
@@ -652,6 +675,31 @@ class FakeCairnEngine:
                 success=True,
                 retreat_outcome=RetreatOutcome.ESCAPED,
                 combat_active=False,
+            ),
+        )
+
+    def setup_advantage(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        setup: str,
+        payoff: EncounterAdvantagePayoff,
+        actor_id: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del state, actor_id, cancel_token
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=f"Setup advantage against {target_name}: {setup}",
+            chaos_factor=5,
+            cairn=CairnResolution(
+                target_name=target_name,
+                advantage_setup=setup,
+                advantage_payoff=payoff,
+                advantage_target_name=target_name,
+                advantage_applied=True,
+                advantage_consumed=False,
             ),
         )
 
