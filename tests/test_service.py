@@ -15,7 +15,7 @@ from dungeon_master.campaign import (
 )
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
 from dungeon_master.continuity_classifier import ContinuityUpdateScope
-from dungeon_master.memory import MemoryState
+from dungeon_master.memory import LocationMemory, MemoryState
 from dungeon_master.models import (
     NPC,
     AttackStance,
@@ -569,6 +569,60 @@ class SequencedNarrative:
         return response
 
 
+class CapturingNarrative:
+    _config = NarrativeConfig(model="", api_key=None, base_url=None)
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> str:
+        del state, outcome, cancel_token
+        self.calls.append(
+            {
+                "player_input": player_input,
+                "execution_context": execution_context,
+                "memory_context": memory_context,
+                "scene_messages": [] if scene_messages is None else list(scene_messages),
+            },
+        )
+        return f"CAPTURED: {player_input}"
+
+
+class CapturingStreamingNarrative(CapturingNarrative):
+    def iter_stream(  # noqa: PLR0913
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+        player_input: str,
+        *,
+        execution_context: str | None = None,
+        memory_context: str | None = None,
+        scene_messages: list[dict[str, str]] | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Generator[CompletionDelta, None, str]:
+        del state, outcome, cancel_token
+        self.calls.append(
+            {
+                "player_input": player_input,
+                "execution_context": execution_context,
+                "memory_context": memory_context,
+                "scene_messages": [] if scene_messages is None else list(scene_messages),
+            },
+        )
+        yield CompletionDelta(content=f"STREAMED: {player_input}")
+        return f"STREAMED: {player_input}"
+
+
 class SlowStreamingNarrative(FakeNarrative):
     def iter_stream(  # noqa: PLR0913
         self,
@@ -1072,6 +1126,102 @@ def test_service_persists_memory_sidecar_after_committed_turn(tmp_path: Path) ->
     assert memory.turn_count == 1
     assert memory.recent_turn_summaries[-1].oracle_kind == OracleKind.YES_NO
     assert memory.current_scene_summary
+
+
+def test_narrator_context_rebuilds_from_checkpoints_not_stale_sidecar(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    narrative = CapturingNarrative()
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    first = service.submit_player_action("I leave the chapel behind.")
+    stale = store.load_memory()
+    stale.location_memory = [
+        LocationMemory(
+            location_key=stale.current_scene_key,
+            label=first.current_scene,
+            summary="Player asked: We need to find a quest in the chapel.",
+            last_touched_turn=1,
+            recent_developments=["We need to find a quest in the chapel."],
+        ),
+    ]
+    store.save_memory(stale)
+
+    service.submit_player_action("I ask Kaelen whether he can hold the rear wall.")
+    latest_call = narrative.calls[-1]
+    memory_context = cast("str", latest_call["memory_context"])
+    scene_messages = cast("list[dict[str, str]]", latest_call["scene_messages"])
+
+    assert "We need to find a quest" not in memory_context
+    assert "I leave the chapel behind." in memory_context
+    assert scene_messages == [
+        {
+            "role": "user",
+            "content": "I leave the chapel behind.",
+        },
+        {
+            "role": "assistant",
+            "content": "CAPTURED: I leave the chapel behind.",
+        },
+    ]
+
+
+def test_streamed_narrator_context_uses_deferred_checkpoint_override(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    narrative = CapturingStreamingNarrative()
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    service.submit_player_action("I leave the chapel behind.")
+    stale = store.load_memory()
+    stale.location_memory = [
+        LocationMemory(
+            location_key=stale.current_scene_key,
+            label=stale.active_location_key,
+            summary="Player asked: We need to find a quest in the chapel.",
+            last_touched_turn=1,
+            recent_developments=["We need to find a quest in the chapel."],
+        ),
+    ]
+    store.save_memory(stale)
+
+    stream = service.stream_submit_player_action(
+        "I ask Kaelen whether he can hold the rear wall.",
+    )
+    for _ in stream:
+        pass
+    latest_call = narrative.calls[-1]
+    memory_context = cast("str", latest_call["memory_context"])
+    scene_messages = cast("list[dict[str, str]]", latest_call["scene_messages"])
+
+    assert "We need to find a quest" not in memory_context
+    assert "I ask Kaelen whether he can hold the rear wall." in memory_context
+    assert scene_messages == [
+        {
+            "role": "user",
+            "content": "I leave the chapel behind.",
+        },
+        {
+            "role": "assistant",
+            "content": "CAPTURED: I leave the chapel behind.",
+        },
+    ]
 
 
 def test_service_scene_check_updates_current_scene(tmp_path: Path) -> None:
@@ -2124,6 +2274,53 @@ def test_regenerate_response_reapplies_post_narration_npc_disclosure(tmp_path: P
     assert all(npc.name != "The Hierophant" for npc in repaired.hidden_npcs)
 
 
+def test_regenerate_response_rebuilds_scene_history_from_checkpoint(tmp_path: Path) -> None:
+    narrative = CapturingNarrative()
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    first = service.ask_oracle("Is the abbey gate watched?", Likelihood.LIKELY)
+    first_event_id = first.action_log[-1].id
+
+    repaired = service.regenerate_response(first_event_id)
+    scene_messages = cast("list[dict[str, str]]", narrative.calls[-1]["scene_messages"])
+
+    assert repaired.action_log[-1].content == (
+        "CAPTURED: Oracle question: Is the abbey gate watched?"
+    )
+    assert scene_messages == []
+
+
+def test_regenerate_response_preserves_later_directive_edits(tmp_path: Path) -> None:
+    narrative = CountingNarrative()
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+
+    first = service.ask_oracle("Is the abbey gate watched?", Likelihood.LIKELY)
+    first_event_id = first.action_log[-1].id
+    service.update_directives(
+        world_guidance="Keep miracles subtle and costly.",
+        play_guidance="The hierophant cannot speak first.",
+    )
+
+    repaired = service.regenerate_response(first_event_id)
+
+    assert repaired.directives.world_guidance == "Keep miracles subtle and costly."
+    assert repaired.directives.play_guidance == "The hierophant cannot speak first."
+
+
 def test_memory_sidecar_preserves_explicit_input_and_execution_context(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
     service = GameService(
@@ -2706,6 +2903,73 @@ def test_service_promotes_visible_descriptor_npc_when_true_name_is_narrated(
     assert updated.oracle_history[-1].referenced_npc_ids == [updated.npcs[0].id]
 
 
+def test_service_syncs_recruited_party_member_when_true_name_is_narrated(
+    tmp_path: Path,
+) -> None:
+    class NameGrantingNarrative(FakeNarrative):
+        def generate(  # noqa: PLR0913
+            self,
+            state: GameState,
+            outcome: OracleOutcome,
+            player_input: str,
+            *,
+            execution_context: str | None = None,
+            memory_context: str | None = None,
+            scene_messages: list[dict[str, str]] | None = None,
+            cancel_token: CancellationToken | None = None,
+        ) -> str:
+            del (
+                state,
+                outcome,
+                player_input,
+                execution_context,
+                memory_context,
+                scene_messages,
+                cancel_token,
+            )
+            return "The shivering youth lowers his hood. His name is Kaelen."
+
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=NameGrantingNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    state = service.load_state()
+    npc = NPC(
+        name="Kaelen",
+        role="Fugitive guide from Oakhaven",
+        disposition="steady after revealing himself",
+        player_label="Shivering Youth",
+        player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+    )
+    state.npcs = [npc]
+    state.party_members.append(
+        PartyMember(
+            sheet=CharacterSheet(
+                name="Shivering Youth",
+                archetype="Fugitive guide",
+                epithet="grimly cooperative",
+            ),
+            npc_id=npc.id,
+            loyalty="grimly cooperative",
+        ),
+    )
+    store.save(state, create_checkpoint=False)
+
+    updated = service.submit_player_action("I ask the youth for his name.")
+
+    assert updated.npcs[0].player_label == "Kaelen"
+    assert updated.npcs[0].player_label_kind == NPCPlayerLabelKind.PROPER_NAME
+    assert updated.party_members[0].sheet.name == "Kaelen"
+    assert updated.party_members[0].sheet.archetype == "Fugitive guide from Oakhaven"
+    assert updated.party_members[0].sheet.epithet == "steady after revealing himself"
+    assert updated.party_members[0].loyalty == "steady after revealing himself"
+
+
 def test_service_only_persists_visible_npc_ids_on_outcomes(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
 
@@ -2944,7 +3208,7 @@ def test_streamed_player_action_reuses_memory_sidecar_load_before_narration(
     for _ in stream:
         pass
 
-    assert load_calls == 3
+    assert load_calls == 1
 
 
 # --- StageTiming persistence ----------------------------------------------

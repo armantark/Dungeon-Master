@@ -29,6 +29,11 @@ MAX_OPEN_LOOPS: Final[int] = 10
 MAX_CALLBACKS: Final[int] = 8
 SALIENT_CALLBACK_THRESHOLD: Final[int] = 4
 CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 3
+# Keep only a very short native scene window for the narrator. In the common
+# pre-narration path that means roughly the last five chat messages:
+# two completed user/assistant turn-pairs plus the final pending user turn.
+MAX_NATIVE_SCENE_TURNS: Final[int] = 2
+TIMELINE_SUMMARY_BLOCK_TURNS: Final[int] = 5
 
 
 class TurnMemory(StrictModel):
@@ -288,9 +293,9 @@ class NarrativeMemoryContext(StrictModel):
             )
         if self.recent_turns:
             sections.append(
-                '<OLDER_SCENE_TURN_SUMMARIES REFERENCE_ONLY="true">\n'
+                '<OLDER_TIMELINE_SUMMARIES REFERENCE_ONLY="true">\n'
                 + "\n".join(f"- {item}" for item in self.recent_turns)
-                + "\n</OLDER_SCENE_TURN_SUMMARIES>",
+                + "\n</OLDER_TIMELINE_SUMMARIES>",
             )
         if self.open_loops:
             sections.append(
@@ -385,15 +390,20 @@ class MemoryManager:
         outcome: OracleOutcome,
     ) -> NarrativeMemoryContext:
         query = player_input.lower()
-        scene_recent_turns = [] if memory.current_scene_turns else memory.recent_turn_summaries[-3:]
-        recent_turns = [
-            self._render_narrative_recent_turn(turn)
-            for turn in reversed(scene_recent_turns)
-        ]
+        completed_scene_turns = memory.current_scene_turns
+        if completed_scene_turns and not completed_scene_turns[-1].narrative_excerpt.strip():
+            completed_scene_turns = completed_scene_turns[:-1]
+        if completed_scene_turns:
+            transcript_turns = completed_scene_turns[-MAX_NATIVE_SCENE_TURNS:]
+            older_timeline_turns = completed_scene_turns[:-MAX_NATIVE_SCENE_TURNS]
+        else:
+            transcript_turns = []
+            older_timeline_turns = memory.recent_turn_summaries[-3:]
+        recent_turns = self._narrative_timeline_lines(older_timeline_turns)
         return NarrativeMemoryContext(
             scene_summary=memory.current_scene_summary,
             active_encounter_summary=memory.active_encounter_summary,
-            scene_messages=self._scene_transcript_messages(memory.current_scene_turns),
+            scene_messages=self._scene_transcript_messages(transcript_turns),
             recent_turns=recent_turns,
             campaign_chronicle=self._campaign_chronicle_lines(memory),
             open_loops=[loop.text for loop in memory.open_loops[:4]],
@@ -768,7 +778,14 @@ class MemoryManager:
 
     def _sync_location_cards(self, memory: MemoryState, state: GameState) -> None:
         current_scene_key = _scene_key(state.scene_number)
-        if any(card.location_key == current_scene_key for card in memory.location_memory):
+        existing = next(
+            (card for card in memory.location_memory if card.location_key == current_scene_key),
+            None,
+        )
+        if existing is not None:
+            existing.label = state.current_scene
+            if not existing.recent_developments:
+                existing.summary = state.current_scene
             return
         memory.location_memory.append(
             LocationMemory(
@@ -789,7 +806,23 @@ class MemoryManager:
             if memory.active_encounter_summary:
                 return _clip(f"{base} {memory.active_encounter_summary}", 420)
             return base
-        parts = [f"{scene.scene_label} ({scene.status.value}).", scene.summary]
+        scene_label = state.current_scene or scene.scene_label
+        scene_status = state.scene_status
+        active_turns = [
+            turn
+            for turn in memory.current_scene_turns
+            if turn.scene_key == current_scene_key
+        ]
+        active_developments = [
+            self._render_turn(turn)
+            for turn in active_turns[-MAX_RECENT_DEVELOPMENTS:]
+        ]
+        summary = self._scene_compaction(
+            scene_label=scene_label,
+            scene_status=scene_status,
+            developments=active_developments,
+        )
+        parts = [f"{scene_label} ({scene_status.value}).", summary]
         if memory.active_encounter_summary:
             parts.append(memory.active_encounter_summary)
         return _clip(" ".join(part for part in parts if part), 420)
@@ -1255,6 +1288,51 @@ class MemoryManager:
         if turn.narrative_excerpt.strip():
             parts.append(f"Narration: {turn.narrative_excerpt.strip()}")
         return _clip(" | ".join(parts), 320)
+
+    def _narrative_timeline_lines(self, turns: list[TurnMemory]) -> list[str]:
+        if not turns:
+            return []
+        lines = [
+            self._render_narrative_timeline_block(
+                turns[index : index + TIMELINE_SUMMARY_BLOCK_TURNS],
+            )
+            for index in range(0, len(turns), TIMELINE_SUMMARY_BLOCK_TURNS)
+        ]
+        return [line for line in lines if line]
+
+    def _render_narrative_timeline_block(self, turns: list[TurnMemory]) -> str:
+        if not turns:
+            return ""
+        if len(turns) == 1:
+            turn = turns[0]
+            return _clip(
+                (
+                    f"Turn {turn.turn_index}: {turn.player_input} -> "
+                    f"{self._timeline_oracle_summary(turn)}"
+                ),
+                320,
+            )
+        first = turns[0]
+        latest = turns[-1]
+        return _clip(
+            (
+                f"Turns {first.turn_index}-{latest.turn_index}: "
+                f"{first.player_input} -> {self._timeline_oracle_summary(first)}. "
+                f"Latest: {latest.player_input} -> "
+                f"{self._timeline_oracle_summary(latest)}."
+            ),
+            320,
+        )
+
+    def _timeline_oracle_summary(self, turn: TurnMemory) -> str:
+        summary = turn.oracle_summary.strip()
+        if turn.oracle_kind != OracleKind.SCENE_CHECK:
+            return summary
+        lowered = summary.lower()
+        for prefix in ("expected: ", "altered: ", "interrupted before: "):
+            if lowered.startswith(prefix):
+                return f"Scene check resolved: {summary[len(prefix):]}"
+        return f"Scene check resolved: {summary}"
 
     def _planner_inventory_summary(self, state: GameState, query: str) -> str:
         items = state.character.inventory

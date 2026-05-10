@@ -110,6 +110,21 @@ readout is purely read-only here; no buttons mutate state from this rail.
   });
 
   const character = $derived(selectedActor.sheet);
+  const normalizedText = (value: string | undefined): string =>
+    (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const partyNote = $derived.by<string>(() => {
+    const note = selectedActor.member?.loyalty || selectedActor.member?.notes || "";
+    const normalizedNote = normalizedText(note);
+    if (normalizedNote === "") return "";
+
+    const duplicateSheetText = [
+      character.epithet,
+      character.backstory,
+      character.drive,
+      character.condition,
+    ].some((value) => normalizedText(value) === normalizedNote);
+    return duplicateSheetText ? "" : note;
+  });
 
   const inventory = $derived.by<InventoryItem[]>(() => {
     if (character.inventory.length > 0) return character.inventory;
@@ -172,9 +187,9 @@ readout is purely read-only here; no buttons mutate state from this rail.
       <span class="kicker">{roleLabel(selectedActor.role)} · {character.archetype}</span>
       <h2>{character.name}</h2>
       <p class="epithet">{character.epithet || character.backstory || gs.player_notes}</p>
-      {#if selectedActor.member?.loyalty || selectedActor.member?.notes}
+      {#if partyNote !== ""}
         <p class="party-note">
-          {selectedActor.member.loyalty || selectedActor.member.notes}
+          {partyNote}
         </p>
       {/if}
     </div>

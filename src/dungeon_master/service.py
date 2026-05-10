@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
@@ -674,11 +674,13 @@ class GameService:
             cancel_token=cancel_token,
         )
         terminal_state_synced = self._sync_terminal_state_on_load(working)
+        party_members_synced = self._sync_party_members_from_visible_npcs(working)
         schema_defaults_persisted = self._ensure_current_save_schema(working)
         state_changed = (
             character_backfilled
             or npc_roster_repaired
             or terminal_state_synced
+            or party_members_synced
             or schema_defaults_persisted
         )
 
@@ -729,6 +731,7 @@ class GameService:
             state,
             cancel_token=cancel_token,
         ) or changed
+        changed = self._sync_party_members_from_visible_npcs(state) or changed
         changed = self._sync_terminal_state_on_load(state) or changed
         if changed:
             self._store.save(state, create_checkpoint=False)
@@ -750,6 +753,7 @@ class GameService:
             state,
             cancel_token=cancel_token,
         )
+        self._sync_party_members_from_visible_npcs(state)
         self._sync_terminal_state_on_load(state)
         return state
 
@@ -1336,14 +1340,15 @@ class GameService:
 
         checkpoint = self._store.load_turn_checkpoint(latest_narrative.oracle_outcome_id)
         restored_state = checkpoint.state.model_copy(deep=True)
+        self._preserve_out_of_band_state(current_state=state, restored_state=restored_state)
 
         # Preserve prior repair audit messages for the same turn so repeated
         # regenerate requests leave a visible trace rather than rewriting history.
         prefix_len = len(restored_state.action_log)
         repair_events = [
-            event
-            for event in state.action_log[prefix_len:-1]
-            if event.event_type == EventType.SYSTEM and event.title == "Narrative regenerated"
+            event.model_copy(deep=True)
+            for event in state.action_log[prefix_len:]
+            if event.event_type == EventType.SYSTEM
         ]
         restored_state.action_log.extend(repair_events)
 
@@ -1367,7 +1372,7 @@ class GameService:
                 content="Repaired the latest DM response after a retry request.",
             ),
         )
-        working_memory = self._load_turn_memory_state(restored_state)
+        working_memory = self._memory_for_state(restored_state, force_rebuild=True)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
@@ -1526,11 +1531,12 @@ class GameService:
 
         checkpoint = self._store.load_turn_checkpoint(latest_narrative.oracle_outcome_id)
         restored_state = checkpoint.state.model_copy(deep=True)
+        self._preserve_out_of_band_state(current_state=state, restored_state=restored_state)
         prefix_len = len(restored_state.action_log)
         repair_events = [
-            event
-            for event in state.action_log[prefix_len:-1]
-            if event.event_type == EventType.SYSTEM and event.title == "Narrative regenerated"
+            event.model_copy(deep=True)
+            for event in state.action_log[prefix_len:]
+            if event.event_type == EventType.SYSTEM
         ]
         restored_state.action_log.extend(repair_events)
         queued_events: list[GameEvent] = []
@@ -1558,7 +1564,7 @@ class GameService:
         )
         self._raise_if_cancelled(cancel_token)
         yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE, tracker=tracker)
-        working_memory = self._load_turn_memory_state(restored_state)
+        working_memory = self._memory_for_state(restored_state, force_rebuild=True)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
@@ -2137,7 +2143,7 @@ class GameService:
             state,
             player_input=player_input,
             outcome=outcome,
-            working_memory=working_memory,
+            force_rebuild=True,
         )
         narration = self._generate_narrative(
             state,
@@ -2159,6 +2165,7 @@ class GameService:
         )
         revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
         if revealed_npc_ids:
+            self._sync_party_members_from_visible_npcs(state, npc_ids=revealed_npc_ids)
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
             outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
@@ -2236,7 +2243,8 @@ class GameService:
             state,
             player_input=player_input,
             outcome=outcome,
-            working_memory=working_memory,
+            checkpoint_overrides={outcome.id: turn_checkpoint},
+            force_rebuild=True,
         )
         yield self._stage_delta("preparing_narration", StreamStageStatus.DONE, tracker=tracker)
         yield self._stage_delta("streaming_narration", StreamStageStatus.ACTIVE, tracker=tracker)
@@ -2252,6 +2260,7 @@ class GameService:
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
         revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
         if revealed_npc_ids:
+            self._sync_party_members_from_visible_npcs(state, npc_ids=revealed_npc_ids)
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
             outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
@@ -2641,15 +2650,24 @@ class GameService:
         self._raise_if_cancelled(cancel_token)
         return state, (context or None)
 
-    def _memory_context_for_narrator(
+    def _memory_context_for_narrator(  # noqa: PLR0913
         self,
         state: GameState,
         *,
         player_input: str,
         outcome: OracleOutcome,
         working_memory: MemoryState | None = None,
+        checkpoint_overrides: Mapping[str, TurnCheckpointRecord] | None = None,
+        force_rebuild: bool = False,
     ) -> tuple[str | None, list[dict[str, str]], MemoryState]:
-        memory = self._context_memory_for_state(state, working_memory)
+        if force_rebuild:
+            memory = self._memory_for_state(
+                state,
+                force_rebuild=True,
+                checkpoint_overrides=checkpoint_overrides,
+            )
+        else:
+            memory = self._context_memory_for_state(state, working_memory)
         context = self._memory.retrieve_for_narrator(
             state,
             memory,
@@ -2701,6 +2719,20 @@ class GameService:
             state,
             existing_memory=self._store.load_memory_or_none(),
         )
+
+    def _preserve_out_of_band_state(
+        self,
+        *,
+        current_state: GameState,
+        restored_state: GameState,
+    ) -> None:
+        # Regenerate should repair only the prose for the latest oracle outcome.
+        # Durable OOC steering and campaign notes may have changed after the
+        # turn checkpoint was written; keep those newer edits instead of
+        # silently rolling them back with the restored checkpoint snapshot.
+        restored_state.directives = current_state.directives.model_copy(deep=True)
+        restored_state.setting_notes = current_state.setting_notes
+        restored_state.player_notes = current_state.player_notes
 
     def _context_memory_for_state(
         self,
@@ -3172,6 +3204,38 @@ class GameService:
         outcome.referenced_npc_ids = merged
         outcome.referenced_npc_id = merged[0] if merged else None
 
+    def _sync_party_members_from_visible_npcs(
+        self,
+        state: GameState,
+        *,
+        npc_ids: tuple[str, ...] | None = None,
+    ) -> bool:
+        visible_by_id = {npc.id: npc for npc in state.npcs}
+        allowed_ids = None if npc_ids is None else set(npc_ids)
+        changed = False
+        for member in state.party_members:
+            if member.npc_id is None or not member.active:
+                continue
+            if allowed_ids is not None and member.npc_id not in allowed_ids:
+                continue
+            npc = visible_by_id.get(member.npc_id)
+            if npc is None:
+                continue
+            label = npc.display_label().strip()
+            if label and member.sheet.name != label:
+                member.sheet.name = label
+                changed = True
+            if npc.role and member.sheet.archetype != npc.role:
+                member.sheet.archetype = npc.role
+                changed = True
+            if npc.disposition and member.sheet.epithet != npc.disposition:
+                member.sheet.epithet = npc.disposition
+                changed = True
+            if npc.disposition and member.loyalty != npc.disposition:
+                member.loyalty = npc.disposition
+                changed = True
+        return changed
+
     def _repair_npc_roster_on_load(
         self,
         state: GameState,
@@ -3319,10 +3383,22 @@ class GameService:
         *,
         existing_memory: MemoryState | None = None,
         force_rebuild: bool = False,
+        checkpoint_overrides: Mapping[str, TurnCheckpointRecord] | None = None,
     ) -> MemoryState:
+        if force_rebuild:
+            return self._memory.bootstrap_from_turns(
+                state,
+                self._committed_turns_for_state(
+                    state,
+                    checkpoint_overrides=checkpoint_overrides,
+                ),
+            )
         memory = self._store.load_memory_or_none() if existing_memory is None else existing_memory
-        if force_rebuild or self._memory_needs_rebuild(state, memory):
-            return self._memory.bootstrap_from_turns(state, self._committed_turns_for_state(state))
+        if self._memory_needs_rebuild(state, memory):
+            return self._memory.bootstrap_from_turns(
+                state,
+                self._committed_turns_for_state(state),
+            )
         return self._memory.sync_from_state(state, memory)
 
     def _memory_needs_rebuild(self, state: GameState, memory: MemoryState | None) -> bool:
@@ -3334,10 +3410,16 @@ class GameService:
             or memory.schema_version != CURRENT_MEMORY_SCHEMA_VERSION
         )
 
-    def _committed_turns_for_state(self, state: GameState) -> list[CommittedTurnMemory]:
+    def _committed_turns_for_state(
+        self,
+        state: GameState,
+        *,
+        checkpoint_overrides: Mapping[str, TurnCheckpointRecord] | None = None,
+    ) -> list[CommittedTurnMemory]:
         player_events = [
             event for event in state.action_log if event.event_type == EventType.PLAYER
         ]
+        overrides = {} if checkpoint_overrides is None else checkpoint_overrides
         player_event_index = 0
         latest_narrative_by_outcome_id = {
             event.oracle_outcome_id: event
@@ -3346,7 +3428,9 @@ class GameService:
         }
         turns: list[CommittedTurnMemory] = []
         for outcome in state.oracle_history:
-            checkpoint = self._store.load_turn_checkpoint_or_none(outcome.id)
+            checkpoint = overrides.get(outcome.id)
+            if checkpoint is None:
+                checkpoint = self._store.load_turn_checkpoint_or_none(outcome.id)
             if checkpoint is not None:
                 player_input = checkpoint.player_input
                 execution_context = checkpoint.execution_context or ""

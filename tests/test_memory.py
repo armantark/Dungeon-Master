@@ -402,7 +402,7 @@ def test_narrator_memory_uses_native_scene_transcript_without_duplicate_summarie
     assert all("Resolved outcome:" not in message.content for message in narrator.scene_messages)
 
 
-def test_narrator_memory_keeps_full_native_scene_transcript() -> None:
+def test_narrator_memory_compacts_older_scene_turns_into_timeline() -> None:
     state = sample_state()
     manager = MemoryManager()
     memory = None
@@ -422,6 +422,14 @@ def test_narrator_memory_keeps_full_native_scene_transcript() -> None:
         (
             "I study the bootprints in the ash.",
             "Fresh prints run ahead of you toward the vale.",
+        ),
+        (
+            "I keep walking toward the spires.",
+            "The wind carries soot and distant bells from the vale.",
+        ),
+        (
+            "I pause to listen for pursuit.",
+            "No fresh pursuit reaches you yet.",
         ),
     ]
     latest_outcome: OracleOutcome | None = None
@@ -449,7 +457,7 @@ def test_narrator_memory_keeps_full_native_scene_transcript() -> None:
     narrator = manager.retrieve_for_narrator(
         state,
         memory,
-        "I keep walking toward the spires.",
+        "I head down the road toward the vale.",
         latest_outcome,
     )
 
@@ -458,14 +466,16 @@ def test_narrator_memory_keeps_full_native_scene_transcript() -> None:
         "assistant",
         "user",
         "assistant",
-        "user",
-        "assistant",
-        "user",
-        "assistant",
     ]
-    assert narrator.scene_messages[0].content == "Has this chapel been my dwelling place?"
-    assert narrator.scene_messages[-2].content == "I study the bootprints in the ash."
-    assert narrator.recent_turns == []
+    assert narrator.scene_messages[0].content == "I keep walking toward the spires."
+    assert narrator.scene_messages[-2].content == "I pause to listen for pursuit."
+    assert narrator.recent_turns == [
+        (
+            "Turns 1-4: Has this chapel been my dwelling place? -> This chapel was a shelter, "
+            "not a home.. Latest: I study the bootprints in the ash. -> Fresh prints run ahead "
+            "of you toward the vale.."
+        )
+    ]
 
 
 def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:
