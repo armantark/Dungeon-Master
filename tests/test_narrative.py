@@ -10,6 +10,9 @@ from dungeon_master.models import (
     CairnItemTag,
     CairnMechanicsSource,
     CampaignStatus,
+    EncounterState,
+    EncounterThreatLevel,
+    EnemyCombatant,
     InventoryItem,
     OracleKind,
     OracleOutcome,
@@ -363,6 +366,55 @@ def test_narrative_prompt_includes_bounded_memory_context() -> None:
     assert "<BOUNDED_MEMORY_CONTEXT>" in system_prompt
     assert "The abbey yard is wet with ash." in system_prompt
     assert completion.messages[1] == {"role": "user", "content": "I press into the abbey yard."}
+
+
+def test_narrative_prompt_includes_diegetic_threat_appraisal_for_overtuned_fight() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.character.cairn = CairnCharacterState(
+        source=CairnMechanicsSource.EXPLICIT,
+        hp=4,
+        max_hp=4,
+        str_score=9,
+        max_str_score=9,
+        armor=1,
+    )
+    state.encounter = EncounterState(
+        active=True,
+        round_number=1,
+        combatants=[
+            EnemyCombatant(
+                name="Flesh-Bound Mass",
+                hp=10,
+                max_hp=10,
+                str_score=14,
+                armor=1,
+                weapon_name="crushing bulk",
+                weapon_damage_die=8,
+                threat_level=EncounterThreatLevel.SERIOUS,
+                weakness="calcified core exposed when it overextends",
+            ),
+        ],
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The creature blocks the way.",
+        chaos_factor=state.chaos_factor,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(model=DEFAULT_MODEL, api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "I size it up.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert "<DIEGETIC_THREAT_APPRAISAL>" in system_prompt
+    assert "Outmatched in a direct fight" in system_prompt
+    assert "Flesh-Bound Mass: serious" in system_prompt
+    assert "calcified core exposed" in system_prompt
+    assert "never as explicit game-balance advice" in system_prompt
 
 
 def test_narrative_prompt_includes_campaign_directives_when_present() -> None:

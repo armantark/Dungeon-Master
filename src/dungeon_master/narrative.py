@@ -34,7 +34,15 @@ from dungeon_master.config import (
 from dungeon_master.config import (
     LLMConfig as NarrativeConfig,
 )
-from dungeon_master.models import CampaignStatus, GameState, OracleOutcome, PartyMember
+from dungeon_master.models import (
+    CairnCharacterState,
+    CampaignStatus,
+    EncounterThreatLevel,
+    EnemyCombatant,
+    GameState,
+    OracleOutcome,
+    PartyMember,
+)
 from dungeon_master.observability import (
     LLMCallRecord,
     log_llm_call,
@@ -45,6 +53,10 @@ if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
 
 type ChatMessage = dict[str, str]
+
+OUTMATCHED_THREAT_MARGIN = 10
+TACTICALLY_DANGEROUS_THREAT_MARGIN = 5
+PARTY_ADVANTAGE_THREAT_MARGIN = -6
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -106,6 +118,12 @@ Discipline:
   across consecutive responses unless it materially changes this beat.
 - Do not manufacture urgency, consequences, or forced-choice branches unless
   the supplied outcome/state actually licenses them.
+- When the supplied threat appraisal says the active danger is beyond the
+  party's direct-fight footing, telegraph that **inside the fiction**: weight,
+  footing, exhaustion, impossible reach, companions hesitating, the foe's mass
+  or weapon eclipsing theirs, and obvious prep/escape vectors. Do not say
+  "your level is too low", "not intended", "mechanically too hard", or any
+  other out-of-character warning.
 - End on one concrete prompt for the next action; prefer a tight follow-up
   question over a menu of dramatic options.
 
@@ -486,6 +504,9 @@ class NarrativeEngine:
             "<ORACLE_OUTCOME_JSON>",
             self._xml_escape(self._compact_outcome_json(outcome)),
             "</ORACLE_OUTCOME_JSON>",
+            "<DIEGETIC_THREAT_APPRAISAL>",
+            self._xml_escape(self._threat_appraisal(state)),
+            "</DIEGETIC_THREAT_APPRAISAL>",
             "</AUTHORITATIVE_RUNTIME_STATE>",
         ]
         if state.directives.has_content():
@@ -589,6 +610,98 @@ class NarrativeEngine:
                 + self._clip_prompt_text(state.directives.play_guidance, 350),
             )
         return "\n".join(lines) or "(none)"
+
+    def _threat_appraisal(self, state: GameState) -> str:
+        if not state.encounter.active:
+            return "No active combat threat is currently being appraised."
+        active_foes = [
+            foe
+            for foe in state.encounter.combatants
+            if not foe.defeated and not foe.fled
+        ]
+        if not active_foes:
+            return "The immediate combat threat has broken or been neutralized."
+
+        party = [
+            state.character,
+            *(member.sheet for member in state.party_members if member.active),
+        ]
+        party_score = sum(self._combatant_capacity(sheet.cairn) for sheet in party)
+        threat_score = sum(self._foe_pressure(foe) for foe in active_foes)
+        margin = threat_score - party_score
+        if margin >= OUTMATCHED_THREAT_MARGIN:
+            verdict = (
+                "Outmatched in a direct fight. The prose should make this feel like a "
+                "danger to escape, delay, trap, weaken, or return to with allies/tools, "
+                "unless the player has already earned a decisive fictional advantage."
+            )
+        elif margin >= TACTICALLY_DANGEROUS_THREAT_MARGIN:
+            verdict = (
+                "Dangerous but possible only with strong positioning, preparation, "
+                "morale pressure, direct weakness exploitation, or retreat discipline."
+            )
+        elif margin <= PARTY_ADVANTAGE_THREAT_MARGIN:
+            verdict = "The party appears to have the upper hand if they act decisively."
+        else:
+            verdict = "A fair but dangerous fight; keep risk present without over-warning."
+
+        foe_lines = [
+            (
+                f"- {foe.name}: {foe.threat_level.value}, "
+                f"HP {foe.hp}/{foe.max_hp}, STR {foe.str_score}, armor {foe.armor}, "
+                f"damage d{foe.weapon_damage_die}"
+                + (f", weakness: {foe.weakness}" if foe.weakness.strip() else "")
+            )
+            for foe in active_foes[:4]
+        ]
+        party_lines = [
+            (
+                f"- {sheet.name or 'Unnamed actor'}: HP {sheet.cairn.hp}/{sheet.cairn.max_hp}, "
+                f"STR {sheet.cairn.str_score}/{sheet.cairn.max_str_score}, "
+                f"armor {sheet.cairn.armor}"
+            )
+            for sheet in party[:4]
+        ]
+        return "\n".join(
+            [
+                verdict,
+                f"Pressure score: foes {threat_score} vs party {party_score}.",
+                "Active foes:",
+                *foe_lines,
+                "Party footing:",
+                *party_lines,
+                (
+                    "Instruction: weave this appraisal into sensory, tactical narration only; "
+                    "never as explicit game-balance advice."
+                ),
+            ],
+        )
+
+    def _combatant_capacity(self, cairn: CairnCharacterState) -> int:
+        score = cairn.hp + max(0, cairn.str_score // 2) + cairn.armor * 2
+        if cairn.deprived:
+            score -= 2
+        if cairn.critically_wounded or cairn.doomed:
+            score -= 3
+        if cairn.paralyzed or cairn.delirious:
+            score -= 4
+        if cairn.dead:
+            return 0
+        return max(0, score)
+
+    def _foe_pressure(self, foe: EnemyCombatant) -> int:
+        threat_bonus = {
+            EncounterThreatLevel.ORDINARY: 0,
+            EncounterThreatLevel.HARDIER: 3,
+            EncounterThreatLevel.SERIOUS: 7,
+        }.get(foe.threat_level, 0)
+        return (
+            foe.hp
+            + max(0, foe.str_score // 3)
+            + foe.armor * 2
+            + max(0, (foe.weapon_damage_die - 4) // 2)
+            + threat_bonus
+        )
 
     def _compact_character_json(self, state: GameState) -> str:
         character = state.character
