@@ -99,6 +99,81 @@ class CampaignStatus(StrEnum):
     ENDED = "ended"
 
 
+class CampaignTimePeriod(StrEnum):
+    BRONZE_AGE = "bronze_age"
+    CLASSICAL_ANTIQUITY = "classical_antiquity"
+    EARLY_MEDIEVAL = "early_medieval"
+    HIGH_MEDIEVAL = "high_medieval"
+    RENAISSANCE = "renaissance"
+    EARLY_MODERN = "early_modern"
+    INDUSTRIAL = "industrial"
+    MODERN = "modern"
+    NEAR_FUTURE = "near_future"
+    FAR_FUTURE = "far_future"
+    POST_APOCALYPTIC = "post_apocalyptic"
+    MYTHIC_TIMELESS = "mythic_timeless"
+
+
+class CampaignToneGrimNoble(StrEnum):
+    GRIM = "grim"
+    MIXED = "mixed"
+    NOBLE = "noble"
+
+
+class CampaignToneDarkBright(StrEnum):
+    DARK = "dark"
+    MIXED = "mixed"
+    BRIGHT = "bright"
+
+
+class CampaignDangerProfile(StrEnum):
+    STORY = "story"
+    STANDARD = "standard"
+    HARSH = "harsh"
+    LETHAL = "lethal"
+
+
+class CampaignGenre(StrEnum):
+    HIGH_FANTASY = "high_fantasy"
+    LOW_FANTASY = "low_fantasy"
+    SWORD_AND_SORCERY = "sword_and_sorcery"
+    DARK_FANTASY = "dark_fantasy"
+    GOTHIC_HORROR = "gothic_horror"
+    COSMIC_HORROR = "cosmic_horror"
+    WEIRD_FICTION = "weird_fiction"
+    FAIRY_TALE = "fairy_tale"
+    MYTHIC = "mythic"
+    POST_APOCALYPTIC = "post_apocalyptic"
+    SCIENCE_FANTASY = "science_fantasy"
+    HISTORICAL_FANTASY = "historical_fantasy"
+    URBAN_FANTASY = "urban_fantasy"
+    HEARTH_AND_HOMESTEAD = "hearth_and_homestead"
+
+
+class CampaignMagicLevel(StrEnum):
+    NONE = "none"
+    RARE_NUMINOUS = "rare_numinous"
+    COMMON = "common"
+    UBIQUITOUS = "ubiquitous"
+
+
+class CampaignTechLevel(StrEnum):
+    STONE = "stone"
+    IRON = "iron"
+    MEDIEVAL = "medieval"
+    RENAISSANCE = "renaissance"
+    INDUSTRIAL = "industrial"
+    MODERN = "modern"
+    SPACEFARING = "spacefaring"
+
+
+class CampaignStakesScale(StrEnum):
+    PERSONAL_LOCAL = "personal_local"
+    REGIONAL = "regional"
+    CIVILIZATIONAL = "civilizational"
+    COSMIC = "cosmic"
+
+
 class CairnMechanicsSource(StrEnum):
     UNSET = "unset"
     NARRATIVE_BACKFILL = "narrative_backfill"
@@ -132,6 +207,22 @@ class EncounterEndReason(StrEnum):
 class EncounterInitiator(StrEnum):
     PLAYER = "player"
     ENEMY = "enemy"
+
+
+class EncounterThreatLevel(StrEnum):
+    ORDINARY = "ordinary"
+    HARDIER = "hardier"
+    SERIOUS = "serious"
+
+
+class EncounterAdvantagePayoff(StrEnum):
+    ENHANCED_ATTACK = "enhanced_attack"
+    DIRECT_STR_DAMAGE = "direct_str_damage"
+    SKIP_DEX_GATE = "skip_dex_gate"
+    DENY_ENEMY_ACTION = "deny_enemy_action"
+    IMPAIR_ENEMY = "impair_enemy"
+    FORCE_MORALE = "force_morale"
+    EXPOSE_WEAKNESS = "expose_weakness"
 
 
 class CampaignEndReason(StrEnum):
@@ -295,6 +386,9 @@ class EnemyCombatant(StrictModel):
     armor: int = Field(default=0, ge=0, le=3)
     weapon_name: str = "Weapon"
     weapon_damage_die: int = Field(default=6, ge=4, le=12)
+    threat_level: EncounterThreatLevel = EncounterThreatLevel.ORDINARY
+    weakness: str = ""
+    tactics: str = ""
     leader: bool = False
     critically_wounded: bool = False
     defeated: bool = False
@@ -305,6 +399,17 @@ class EnemyCombatant(StrictModel):
     def normalize_current_values(self) -> EnemyCombatant:
         object.__setattr__(self, "hp", min(self.hp, self.max_hp))
         return self
+
+
+class PendingEncounterAdvantage(StrictModel):
+    id: str = Field(default_factory=lambda: new_id("adv"))
+    actor_id: str | None = None
+    actor_name: str | None = None
+    target_combatant_id: str | None = None
+    target_name: str = Field(min_length=1)
+    setup: str = Field(min_length=1)
+    payoff: EncounterAdvantagePayoff
+    weakness: str = ""
 
 
 class EncounterState(StrictModel):
@@ -318,6 +423,7 @@ class EncounterState(StrictModel):
     pursuit_active: bool = False
     end_reason: EncounterEndReason | None = None
     combatants: list[EnemyCombatant] = Field(default_factory=list)
+    pending_advantages: list[PendingEncounterAdvantage] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -499,6 +605,13 @@ class CairnResolution(StrictModel):
     target_fled: bool | None = None
     enemy_damage: int | None = Field(default=None, ge=0)
     enemy_damage_source: str | None = None
+    advantage_id: str | None = None
+    advantage_setup: str | None = None
+    advantage_payoff: EncounterAdvantagePayoff | None = None
+    advantage_target_name: str | None = None
+    advantage_applied: bool | None = None
+    advantage_consumed: bool | None = None
+    weakness: str | None = None
     morale_target: int | None = Field(default=None, ge=1, le=20)
     morale_success: bool | None = None
     coordinated_attack: bool = False
@@ -556,6 +669,29 @@ class CampaignDirectives(StrictModel):
 
     def has_content(self) -> bool:
         return bool(self.world_guidance.strip() or self.play_guidance.strip())
+
+
+class CampaignSeed(StrictModel):
+    preset: str = "Oppressive Dark Fantasy"
+    time_period: CampaignTimePeriod = CampaignTimePeriod.HIGH_MEDIEVAL
+    tone_grim_noble: CampaignToneGrimNoble = CampaignToneGrimNoble.GRIM
+    tone_dark_bright: CampaignToneDarkBright = CampaignToneDarkBright.DARK
+    danger_profile: CampaignDangerProfile = CampaignDangerProfile.STANDARD
+    genres: list[CampaignGenre] = Field(
+        default_factory=lambda: [CampaignGenre.DARK_FANTASY],
+        max_length=3,
+    )
+    magic_level: CampaignMagicLevel = CampaignMagicLevel.RARE_NUMINOUS
+    tech_level: CampaignTechLevel = CampaignTechLevel.MEDIEVAL
+    stakes_scale: CampaignStakesScale = CampaignStakesScale.REGIONAL
+    inspirations: str = "Berserk + Dark Souls + Fear & Hunger"
+    restrictions: str = "No modern slang. No copied characters, locations, factions, or lore."
+
+    @model_validator(mode="after")
+    def require_at_least_one_genre(self) -> CampaignSeed:
+        if not self.genres:
+            object.__setattr__(self, "genres", [CampaignGenre.DARK_FANTASY])
+        return self
 
 
 class CharacterQuizOption(StrictModel):
@@ -677,6 +813,7 @@ class GameState(StrictModel):
     character: CharacterSheet = Field(default_factory=CharacterSheet)
     setting_notes: str = Field(min_length=1)
     player_notes: str = Field(min_length=1)
+    campaign_seed: CampaignSeed = Field(default_factory=CampaignSeed)
     directives: CampaignDirectives = Field(default_factory=CampaignDirectives)
     threads: list[GameThread] = Field(default_factory=list)
     npcs: list[NPC] = Field(default_factory=list)

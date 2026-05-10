@@ -12,6 +12,9 @@ from pydantic import Field, ValidationError
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.models import (
     NPC,
+    CampaignDangerProfile,
+    CampaignGenre,
+    CampaignSeed,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
@@ -42,6 +45,75 @@ logger = logging.getLogger(__name__)
 SETTING_DIRECTION = """Oppressive medieval dark fantasy, adjacent to Berserk, Dark Souls,
 and Fear & Hunger. No copied characters, locations, factions, or lore.
 Avoid heroic power fantasy, modern slang, cozy safety, and generic tavern openings."""
+
+
+GENRE_LABELS: dict[CampaignGenre, str] = {
+    CampaignGenre.HIGH_FANTASY: "high fantasy",
+    CampaignGenre.LOW_FANTASY: "low fantasy",
+    CampaignGenre.SWORD_AND_SORCERY: "sword and sorcery",
+    CampaignGenre.DARK_FANTASY: "dark fantasy",
+    CampaignGenre.GOTHIC_HORROR: "gothic horror",
+    CampaignGenre.COSMIC_HORROR: "cosmic horror",
+    CampaignGenre.WEIRD_FICTION: "weird fiction",
+    CampaignGenre.FAIRY_TALE: "fairy tale",
+    CampaignGenre.MYTHIC: "mythic fantasy",
+    CampaignGenre.POST_APOCALYPTIC: "post-apocalyptic",
+    CampaignGenre.SCIENCE_FANTASY: "science fantasy",
+    CampaignGenre.HISTORICAL_FANTASY: "historical fantasy",
+    CampaignGenre.URBAN_FANTASY: "urban fantasy",
+    CampaignGenre.HEARTH_AND_HOMESTEAD: "hearth and homestead",
+}
+
+
+def render_creative_direction(seed: CampaignSeed) -> str:
+    genres = ", ".join(GENRE_LABELS[genre] for genre in seed.genres)
+    era = seed.time_period.value.replace("_", " ")
+    tech = seed.tech_level.value.replace("_", " ")
+    magic = seed.magic_level.value.replace("_", " ")
+    stakes = seed.stakes_scale.value.replace("_", " ")
+    lines = [
+        f"Preset: {seed.preset}.",
+        f"Era/technology: {era} with {tech} technology.",
+        (
+            f"Tone: {seed.tone_grim_noble.value} on the grim/noble axis and "
+            f"{seed.tone_dark_bright.value} on the dark/bright axis."
+        ),
+        f"Genre: {genres}. Magic: {magic}. Stakes: {stakes}.",
+    ]
+    if seed.inspirations.strip():
+        lines.append(f"Inspirations for flavor only: {seed.inspirations.strip()}.")
+    if seed.restrictions.strip():
+        lines.append(f"Restrictions: {seed.restrictions.strip()}.")
+    lines.append("Do not copy named characters, locations, factions, or lore from inspirations.")
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def render_danger_guidance(danger_profile: CampaignDangerProfile) -> str:
+    shared = (
+        "Cairn combat uses automatic damage, armor 0-3, HP before STR overflow, "
+        "Critical Damage, morale, retreat, and fictional preparation."
+    )
+    if danger_profile == CampaignDangerProfile.STORY:
+        detail = (
+            "Keep fights survivable: ordinary foes, low counts, quick morale, "
+            "and strong telegraphing."
+        )
+    elif danger_profile == CampaignDangerProfile.HARSH:
+        detail = (
+            "Use hardier foes and resource pressure more often, but keep retreat "
+            "and preparation viable."
+        )
+    elif danger_profile == CampaignDangerProfile.LETHAL:
+        detail = (
+            "Allow serious threats and punishing abilities when clearly telegraphed; "
+            "poor preparation can be fatal."
+        )
+    else:
+        detail = (
+            "Use default Cairn scale: average foes around 3 HP, hardier foes "
+            "around 6 HP, serious threats only when telegraphed."
+        )
+    return f"{shared} {detail}"
 
 CHARACTER_SYSTEM_PROMPT = f"""You generate player-character drafts for a solo dark-fantasy TTRPG.
 
@@ -691,7 +763,7 @@ def _fallback_quizzed_draft(
     )
 
 
-def _setup_state(*, configured: bool) -> GameState:
+def _setup_state(*, configured: bool, seed: CampaignSeed) -> GameState:
     setting = (
         "Choose who enters the world before the world is generated."
         if configured
@@ -704,6 +776,7 @@ def _setup_state(*, configured: bool) -> GameState:
         current_scene="Character creation stands before the first scene.",
         setting_notes=setting,
         player_notes="No finalized character yet.",
+        campaign_seed=seed,
         npc_roster_version=2,
         campaign_status=CampaignStatus.CHARACTER_CREATION,
         character=CharacterSheet(
@@ -729,13 +802,17 @@ class CharacterGenerator:
     def from_env(cls) -> CharacterGenerator:
         return cls(config=NarrativeConfig.from_env())
 
-    def setup_state(self) -> GameState:
-        return _setup_state(configured=self.config.is_usable())
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
+        return _setup_state(configured=self.config.is_usable(), seed=seed or CampaignSeed())
 
-    def generate_templates(self) -> list[CharacterSheet]:
-        return self.generate_templates_result().templates
+    def generate_templates(self, seed: CampaignSeed | None = None) -> list[CharacterSheet]:
+        return self.generate_templates_result(seed=seed).templates
 
-    def generate_templates_result(self) -> CharacterTemplatesResult:
+    def generate_templates_result(
+        self,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterTemplatesResult:
+        campaign_seed = seed or CampaignSeed()
         if not self.config.is_usable():
             return CharacterTemplatesResult(templates=_fallback_templates())
 
@@ -754,7 +831,10 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": self._character_system_prompt(campaign_seed),
+                },
                 {"role": "user", "content": CHARACTER_TEMPLATES_USER_PROMPT},
             ],
             temperature=templates_profile.temperature,
@@ -785,8 +865,10 @@ class CharacterGenerator:
     def iter_generate_templates(
         self,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
+        campaign_seed = seed or CampaignSeed()
         if not self.config.is_usable():
             fallback = CharacterTemplatesResult(templates=_fallback_templates())
             yield CompletionDelta(
@@ -800,7 +882,10 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": self._character_system_prompt(campaign_seed),
+                },
                 {"role": "user", "content": CHARACTER_TEMPLATES_USER_PROMPT},
             ],
             temperature=templates_profile.temperature,
@@ -834,6 +919,12 @@ class CharacterGenerator:
                 ),
             )
             return fallback
+
+    def _character_system_prompt(self, seed: CampaignSeed) -> str:
+        return CHARACTER_SYSTEM_PROMPT.replace(
+            f"- {SETTING_DIRECTION}",
+            render_creative_direction(seed),
+        )
 
     def generate_quiz(self, concept: str) -> CharacterQuiz:
         return self.generate_quiz_result(concept).quiz
@@ -1294,25 +1385,36 @@ class CampaignGenerator:
     def from_env(cls) -> CampaignGenerator:
         return cls(config=NarrativeConfig.from_env())
 
-    def generate(self, character: CharacterSheet) -> GameState:
-        return self.generate_result(character).state
+    def generate(self, character: CharacterSheet, seed: CampaignSeed | None = None) -> GameState:
+        return self.generate_result(character, seed=seed).state
 
-    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
+    def generate_result(
+        self,
+        character: CharacterSheet,
+        seed: CampaignSeed | None = None,
+    ) -> CampaignWorldResult:
+        campaign_seed = seed or CampaignSeed()
         if not self.config.is_usable():
-            return CampaignWorldResult(state=self._configuration_required_state(character))
+            return CampaignWorldResult(
+                state=self._configuration_required_state(character, seed=campaign_seed),
+            )
 
         campaign_profile = self.config.profiles.campaign_world
+        user_prompt = (
+            CAMPAIGN_USER_PROMPT_TEMPLATE.replace(
+                "<<CHARACTER_JSON>>",
+                character.model_dump_json(indent=2),
+            )
+            + "\n\nCreative direction:\n"
+            + render_creative_direction(campaign_seed)
+            + "\n\nDanger guidance:\n"
+            + render_danger_guidance(campaign_seed.danger_profile)
+        )
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CAMPAIGN_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": CAMPAIGN_USER_PROMPT_TEMPLATE.replace(
-                        "<<CHARACTER_JSON>>",
-                        character.model_dump_json(indent=2),
-                    ),
-                },
+                {"role": "user", "content": user_prompt},
             ],
             # Same Kimi K2.6 Thinking budget rationale as the character
             # generators above: this model always burns ~2-3k tokens
@@ -1343,8 +1445,10 @@ class CampaignGenerator:
                     raise CampaignGenerationError
                 payload_json = extract_json_object(completed.content)
                 generated = GeneratedCampaignWorld.model_validate_json(payload_json)
+                state = generated.to_game_state(character)
+                state.campaign_seed = campaign_seed
                 return CampaignWorldResult(
-                    state=generated.to_game_state(character),
+                    state=state,
                     thinking=completed.thinking,
                 )
             except GENERATION_ERRORS as exc:
@@ -1353,32 +1457,40 @@ class CampaignGenerator:
                     time.sleep(0.4 * (attempt + 1))
 
         return CampaignWorldResult(
-            state=self._configuration_required_state(character, last_error),
+            state=self._configuration_required_state(character, last_error, seed=campaign_seed),
         )
 
     def iter_generate(
         self,
         character: CharacterSheet,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
+        campaign_seed = seed or CampaignSeed()
         if not self.config.is_usable():
-            fallback = CampaignWorldResult(state=self._configuration_required_state(character))
+            fallback = CampaignWorldResult(
+                state=self._configuration_required_state(character, seed=campaign_seed),
+            )
             yield CompletionDelta(content=json.dumps(fallback.state.model_dump(mode="json")))
             return fallback
 
         campaign_profile = self.config.profiles.campaign_world
+        user_prompt = (
+            CAMPAIGN_USER_PROMPT_TEMPLATE.replace(
+                "<<CHARACTER_JSON>>",
+                character.model_dump_json(indent=2),
+            )
+            + "\n\nCreative direction:\n"
+            + render_creative_direction(campaign_seed)
+            + "\n\nDanger guidance:\n"
+            + render_danger_guidance(campaign_seed.danger_profile)
+        )
         request = CompletionRequest(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": CAMPAIGN_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": CAMPAIGN_USER_PROMPT_TEMPLATE.replace(
-                        "<<CHARACTER_JSON>>",
-                        character.model_dump_json(indent=2),
-                    ),
-                },
+                {"role": "user", "content": user_prompt},
             ],
             temperature=campaign_profile.temperature,
             max_tokens=campaign_profile.max_tokens,
@@ -1410,8 +1522,10 @@ class CampaignGenerator:
                 if not content:
                     raise CampaignGenerationError
                 generated = GeneratedCampaignWorld.model_validate_json(extract_json_object(content))
+                state = generated.to_game_state(character)
+                state.campaign_seed = campaign_seed
                 return CampaignWorldResult(
-                    state=generated.to_game_state(character),
+                    state=state,
                     thinking="".join(thinking_parts).strip(),
                 )
             except GENERATION_ERRORS as exc:
@@ -1420,7 +1534,7 @@ class CampaignGenerator:
                     time.sleep(0.4 * (attempt + 1))
 
         fallback = CampaignWorldResult(
-            state=self._configuration_required_state(character, last_error),
+            state=self._configuration_required_state(character, last_error, seed=campaign_seed),
         )
         yield CompletionDelta(content=json.dumps(fallback.state.model_dump(mode="json")))
         return fallback
@@ -1439,7 +1553,10 @@ class CampaignGenerator:
         self,
         character: CharacterSheet,
         error: Exception | None = None,
+        *,
+        seed: CampaignSeed | None = None,
     ) -> GameState:
+        campaign_seed = seed or CampaignSeed()
         note = (
             "No campaign fiction has been generated yet. Add a Gemini or OpenRouter "
             "API key in the app settings or .env, then try again."
@@ -1453,6 +1570,7 @@ class CampaignGenerator:
             current_scene="The world has not finished taking shape around the chosen character.",
             setting_notes=note,
             player_notes=character.backstory,
+            campaign_seed=campaign_seed,
             npc_roster_version=2,
             character=character,
             campaign_status=CampaignStatus.ACTIVE,

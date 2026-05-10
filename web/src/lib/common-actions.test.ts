@@ -25,6 +25,7 @@ function makeEncounter(
     morale_triggered: false,
     initiator: null,
     combatants: [],
+    pending_advantages: [],
     summary: null,
     ...overrides,
   };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  advantagesForCombatant,
   combatFromState,
   combatantHpTier,
   combatantStatusLabel,
@@ -8,10 +9,12 @@ import {
   encounterHeadline,
   firstRoundActionGated,
   sortCombatants,
+  unattachedAdvantages,
   type CombatantState,
   type CombatantStatus,
   type CombatEncounterState,
 } from "./combat";
+import type { PendingEncounterAdvantage } from "./types";
 
 // We intentionally test the helpers as pure functions; there's no
 // rendering test here because the Svelte component is structural and
@@ -34,6 +37,9 @@ function makeFoe(overrides: Partial<CombatantState> = {}): CombatantState {
     morale: null,
     morale_broken: false,
     status: "active",
+    threat_level: "ordinary",
+    weakness: "",
+    tactics: "",
     ...overrides,
   };
 }
@@ -48,6 +54,7 @@ function makeEncounter(
     morale_triggered: false,
     initiator: null,
     combatants: [],
+    pending_advantages: [],
     summary: null,
     ...overrides,
   };
@@ -398,5 +405,128 @@ describe("combatFromState", () => {
       },
     });
     expect(adapted?.initiator).toBeNull();
+  });
+
+  it("defaults missing F-19 threat fields to ordinary tier and empty hint strings", () => {
+    // Pre-F-19 state blobs don't include `threat_level` /
+    // `weakness` / `tactics`. Adapting them should produce an
+    // ordinary-tier foe with no advisory text — the tracker
+    // degrades gracefully back to the pre-scaling render.
+    const adapted = combatFromState({
+      encounter: backendEncounter({
+        active: true,
+        round_number: 1,
+        combatants: [backendFoe()],
+      }),
+    });
+    const foe = adapted?.combatants[0]!;
+    expect(foe.threat_level).toBe("ordinary");
+    expect(foe.weakness).toBe("");
+    expect(foe.tactics).toBe("");
+  });
+
+  it("threads through F-19 threat fields when the backend supplies them", () => {
+    const adapted = combatFromState({
+      encounter: backendEncounter({
+        active: true,
+        round_number: 1,
+        combatants: [
+          backendFoe({
+            threat_level: "serious",
+            weakness: "Vulnerable to silver in the eye-socket.",
+            tactics: "Fights from cover; breaks at half HP.",
+          }),
+        ],
+      }),
+    });
+    const foe = adapted?.combatants[0]!;
+    expect(foe.threat_level).toBe("serious");
+    expect(foe.weakness).toContain("silver");
+    expect(foe.tactics).toContain("cover");
+  });
+
+  it("threads through F-18 pending advantages, defaulting missing wire to []", () => {
+    // Older saves that pre-date pending_advantages still adapt:
+    // missing field collapses to an empty list so the tracker
+    // never crashes on a legacy encounter blob.
+    const legacy = combatFromState({
+      encounter: backendEncounter({ active: true, combatants: [backendFoe()] }),
+    });
+    expect(legacy?.pending_advantages).toEqual([]);
+
+    const live = combatFromState({
+      encounter: {
+        ...backendEncounter({ active: true, combatants: [backendFoe()] }),
+        pending_advantages: [
+          {
+            id: "adv_1",
+            actor_id: null,
+            actor_name: "Vrtanes",
+            target_combatant_id: "foe_1",
+            target_name: "Halfwit Marauder",
+            setup: "I throw ash into his eyes.",
+            payoff: "enhanced_attack",
+            weakness: "",
+          },
+        ],
+      } as object,
+    });
+    expect(live?.pending_advantages).toHaveLength(1);
+    expect(live?.pending_advantages[0]?.payoff).toBe("enhanced_attack");
+    expect(live?.pending_advantages[0]?.target_combatant_id).toBe("foe_1");
+  });
+});
+
+// --- Advantage helpers --------------------------------------------------
+
+describe("advantagesForCombatant / unattachedAdvantages", () => {
+  function makeAdv(
+    overrides: Partial<PendingEncounterAdvantage> = {},
+  ): PendingEncounterAdvantage {
+    return {
+      id: "adv_1",
+      actor_id: null,
+      actor_name: "Player",
+      target_combatant_id: null,
+      target_name: "Halfwit Marauder",
+      setup: "I dazzle them with the lantern.",
+      payoff: "enhanced_attack",
+      weakness: "",
+      ...overrides,
+    };
+  }
+
+  function withAdvantages(
+    advs: PendingEncounterAdvantage[],
+  ): CombatEncounterState {
+    return {
+      active: true,
+      round: 1,
+      player_ready: true,
+      morale_triggered: false,
+      initiator: null,
+      combatants: [],
+      pending_advantages: advs,
+      summary: null,
+    };
+  }
+
+  it("returns empty arrays when the encounter is null", () => {
+    expect(advantagesForCombatant(null, "foe_1")).toEqual([]);
+    expect(unattachedAdvantages(null)).toEqual([]);
+  });
+
+  it("returns only the setups pinned to the requested combatant", () => {
+    // The split is contractual: the tracker pins setups under
+    // their owning foe, while loose ones float to a separate
+    // strip. Mixing them up would mean the player never sees
+    // the loose strip when there are also pinned setups.
+    const a = makeAdv({ id: "a", target_combatant_id: "foe_1" });
+    const b = makeAdv({ id: "b", target_combatant_id: "foe_2" });
+    const c = makeAdv({ id: "c", target_combatant_id: null });
+    const enc = withAdvantages([a, b, c]);
+    expect(advantagesForCombatant(enc, "foe_1").map((x) => x.id)).toEqual(["a"]);
+    expect(advantagesForCombatant(enc, "foe_2").map((x) => x.id)).toEqual(["b"]);
+    expect(unattachedAdvantages(enc).map((x) => x.id)).toEqual(["c"]);
   });
 });

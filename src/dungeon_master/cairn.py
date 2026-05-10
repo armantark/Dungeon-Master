@@ -25,16 +25,20 @@ from dungeon_master.models import (
     CairnRestKind,
     CairnSurvivalAction,
     CairnTimeAdvance,
+    CampaignDangerProfile,
     CharacterSheet,
     CoordinatedAttackParticipant,
+    EncounterAdvantagePayoff,
     EncounterEndReason,
     EncounterInitiator,
     EncounterState,
+    EncounterThreatLevel,
     EnemyCombatant,
     GameState,
     InventoryItem,
     OracleKind,
     OracleOutcome,
+    PendingEncounterAdvantage,
     RetreatOutcome,
     Roll,
     StrictModel,
@@ -67,6 +71,7 @@ FOOD_WARNING_WATCHES = 2
 FOOD_DEPRIVED_WATCHES = 3
 SLEEP_WARNING_WATCHES = 4
 SLEEP_DEPRIVED_WATCHES = 6
+ALLOWED_WEAPON_DICE: tuple[int, ...] = (D4_SIDES, D6_SIDES, D8_SIDES, D10_SIDES, D12_SIDES)
 
 LASTING_SCAR_LOCATIONS: tuple[str, ...] = (
     "Neck",
@@ -85,6 +90,78 @@ class AttackActor:
     sheet: CharacterSheet
     weapon_item_id: str | None = None
     stance: AttackStance = AttackStance.NORMAL
+
+
+@dataclass(frozen=True)
+class EncounterScalingPolicy:
+    danger_profile: CampaignDangerProfile
+    max_combatants: int
+    ordinary_hp_max: int
+    hardier_hp_max: int
+    serious_hp_max: int
+    ordinary_armor_max: int
+    hardier_armor_max: int
+    serious_armor_max: int
+
+    def hp_cap_for(self, threat_level: EncounterThreatLevel) -> int:
+        if threat_level == EncounterThreatLevel.SERIOUS:
+            return self.serious_hp_max
+        if threat_level == EncounterThreatLevel.HARDIER:
+            return self.hardier_hp_max
+        return self.ordinary_hp_max
+
+    def armor_cap_for(self, threat_level: EncounterThreatLevel) -> int:
+        if threat_level == EncounterThreatLevel.SERIOUS:
+            return self.serious_armor_max
+        if threat_level == EncounterThreatLevel.HARDIER:
+            return self.hardier_armor_max
+        return self.ordinary_armor_max
+
+    @classmethod
+    def for_danger(cls, danger_profile: CampaignDangerProfile) -> EncounterScalingPolicy:
+        if danger_profile == CampaignDangerProfile.STORY:
+            return cls(
+                danger_profile=danger_profile,
+                max_combatants=2,
+                ordinary_hp_max=3,
+                hardier_hp_max=5,
+                serious_hp_max=8,
+                ordinary_armor_max=1,
+                hardier_armor_max=2,
+                serious_armor_max=3,
+            )
+        if danger_profile == CampaignDangerProfile.HARSH:
+            return cls(
+                danger_profile=danger_profile,
+                max_combatants=4,
+                ordinary_hp_max=4,
+                hardier_hp_max=7,
+                serious_hp_max=12,
+                ordinary_armor_max=2,
+                hardier_armor_max=3,
+                serious_armor_max=3,
+            )
+        if danger_profile == CampaignDangerProfile.LETHAL:
+            return cls(
+                danger_profile=danger_profile,
+                max_combatants=4,
+                ordinary_hp_max=5,
+                hardier_hp_max=8,
+                serious_hp_max=12,
+                ordinary_armor_max=2,
+                hardier_armor_max=3,
+                serious_armor_max=3,
+            )
+        return cls(
+            danger_profile=danger_profile,
+            max_combatants=4,
+            ordinary_hp_max=3,
+            hardier_hp_max=6,
+            serious_hp_max=12,
+            ordinary_armor_max=1,
+            hardier_armor_max=2,
+            serious_armor_max=3,
+        )
 BROKEN_LIMB_PARTS: tuple[str, ...] = (
     "Leg",
     "Leg",
@@ -214,10 +291,13 @@ Rules:
   the supplied scene + player action.
 - Prefer 1-4 foes.
 - Use Cairn-scale stats: HP, STR, DEX, WIL, armor, and a weapon damage die.
-- Keep ordinary human enemies around HP 1-6 unless the fiction clearly
-  supports a stronger elite or monster.
+- Use threat levels explicitly: `ordinary` foes are typical humans/minor
+  creatures around 3 HP; `hardier` foes are elites or tougher creatures around
+  6 HP; `serious` foes are clearly telegraphed monsters or major threats at
+  10+ HP.
 - Armor must be 0-3.
 - Weapon damage dice must be 4, 6, 8, 10, or 12.
+- Add `weakness` or `tactics` only when the immediate fiction makes them clear.
 - If multiple combatants appear, mark at most one as `leader`.
 - Keep the encounter grounded and playable; do not invent a boss fight out
   of a minor scuffle.
@@ -237,6 +317,9 @@ CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "armor": 1,
       "weapon_name": "hatchet",
       "weapon_damage_die": 6,
+      "threat_level": "ordinary",
+      "weakness": "optional fiction-grounded vulnerability",
+      "tactics": "optional immediate combat tactic",
       "leader": false,
       "notes": "optional short note"
     }
@@ -401,8 +484,19 @@ class GeneratedEncounterCombatant(StrictModel):
     armor: int = Field(default=0, ge=0, le=3)
     weapon_name: str = Field(min_length=1)
     weapon_damage_die: int = Field(ge=4, le=12)
+    threat_level: EncounterThreatLevel = EncounterThreatLevel.ORDINARY
+    weakness: str = ""
+    tactics: str = ""
     leader: bool = False
     notes: str = ""
+
+    @model_validator(mode="after")
+    def normalize_weapon_die(self) -> GeneratedEncounterCombatant:
+        if self.weapon_damage_die in ALLOWED_WEAPON_DICE:
+            return self
+        nearest = min(ALLOWED_WEAPON_DICE, key=lambda side: abs(side - self.weapon_damage_die))
+        object.__setattr__(self, "weapon_damage_die", nearest)
+        return self
 
 
 class GeneratedEncounterSeed(StrictModel):
@@ -575,6 +669,7 @@ class CairnEngine:
             if existing_encounter_active
             else self._resolve_opening_attack_target(encounter, target_name)
         )
+        pending_advantage = self._consume_pending_advantage(encounter, actor, target)
         weapon = self._resolve_weapon(actor.sheet, weapon_item_id)
         if weapon is None and actor.sheet.cairn.primary_weapon_item_id is not None:
             message = (
@@ -582,7 +677,13 @@ class CairnEngine:
                 "repair or re-equip before resolving an attack."
             )
             raise ValueError(message)
-        base_die = self._attack_die(weapon, stance)
+        effective_stance = (
+            AttackStance.ENHANCED
+            if pending_advantage is not None
+            and pending_advantage.payoff == EncounterAdvantagePayoff.ENHANCED_ATTACK
+            else stance
+        )
+        base_die = self._attack_die(weapon, effective_stance)
         round_before = encounter.round_number
         weapon_name = weapon.name if weapon is not None else "Unarmed strike"
         rolls: list[Roll] = []
@@ -609,16 +710,35 @@ class CairnEngine:
         morale_success: bool | None = None
         defeated_ids: list[str] = []
         fled_ids: list[str] = []
+        attack_rolls: list[Roll] = []
 
         if player_acted:
             rolls.append(damage_roll)
             damage_after_armor = max(0, damage_roll.result - target.armor)
-            (
-                damage_summary,
-                attack_rolls,
-                target_defeated,
-                lone_zero_triggered,
-            ) = self._apply_harm_to_combatant(target, damage_after_armor)
+            if (
+                pending_advantage is not None
+                and pending_advantage.payoff == EncounterAdvantagePayoff.DIRECT_STR_DAMAGE
+            ):
+                target_str_before = target.str_score
+                target.str_score = max(0, target.str_score - damage_after_armor)
+                save_roll = self._roll(D20_SIDES, "enemy_critical_damage")
+                rolls.append(save_roll)
+                target_defeated = not self._save_succeeds(save_roll.result, target.str_score)
+                if target_defeated or target.str_score == 0:
+                    target.defeated = True
+                lone_zero_triggered = False
+                damage_summary = (
+                    f"{target.name} takes {damage_after_armor} direct STR damage"
+                    f"{' and collapses' if target.defeated else ''}."
+                )
+                attack_rolls = []
+            else:
+                (
+                    damage_summary,
+                    attack_rolls,
+                    target_defeated,
+                    lone_zero_triggered,
+                ) = self._apply_harm_to_combatant(target, damage_after_armor)
             if attack_rolls:
                 rolls.extend(attack_rolls)
             if target_defeated and not target_defeated_before:
@@ -635,6 +755,17 @@ class CairnEngine:
             fled_ids.extend(morale_fled_ids)
             if target.id in morale_fled_ids:
                 target.defeated = False
+            if (
+                pending_advantage is not None
+                and pending_advantage.payoff == EncounterAdvantagePayoff.FORCE_MORALE
+            ):
+                (
+                    _morale_roll,
+                    morale_target,
+                    morale_success,
+                    morale_fled_ids,
+                ) = self._resolve_enemy_morale(encounter)
+                fled_ids.extend(morale_fled_ids)
             actor_prefix = "" if actor.is_player else f"{actor.name} "
             attack_summary = (
                 f"{actor_prefix}attacks {target.name}: {weapon_name}. {damage_summary}"
@@ -646,7 +777,17 @@ class CairnEngine:
                 f"{actor_prefix} lost the first round and failed to act before {target.name} could close."
             )
 
-        enemy_harm = self._resolve_enemy_turn(state, encounter, defender=actor.sheet)
+        if (
+            pending_advantage is not None
+            and pending_advantage.payoff == EncounterAdvantagePayoff.DENY_ENEMY_ACTION
+        ):
+            enemy_harm = self._empty_harm_application(
+                state,
+                source="Enemy action denied by advantage",
+                defender=actor.sheet,
+            )
+        else:
+            enemy_harm = self._resolve_enemy_turn(state, encounter, defender=actor.sheet)
         rolls.extend(enemy_harm.rolls)
         encounter.active = self._has_active_enemies(encounter)
         if encounter.active:
@@ -676,6 +817,17 @@ class CairnEngine:
                 combat_initiator=encounter.initiator,
                 player_acted=player_acted,
                 initiative_target=initiative_target,
+                advantage_id=None if pending_advantage is None else pending_advantage.id,
+                advantage_setup=None if pending_advantage is None else pending_advantage.setup,
+                advantage_payoff=None if pending_advantage is None else pending_advantage.payoff,
+                advantage_target_name=None if pending_advantage is None else pending_advantage.target_name,
+                advantage_applied=pending_advantage is not None,
+                advantage_consumed=pending_advantage is not None,
+                weakness=(
+                    None
+                    if pending_advantage is None or pending_advantage.weakness == ""
+                    else pending_advantage.weakness
+                ),
                 actor_id=None if actor.is_player else actor.id,
                 actor_name=None if actor.is_player else actor.name,
                 weapon_item_id=weapon.id if weapon is not None else None,
@@ -683,7 +835,7 @@ class CairnEngine:
                 target_combatant_id=target.id,
                 target_name=target.name,
                 target_armor=target.armor,
-                attack_stance=stance,
+                attack_stance=effective_stance,
                 base_damage=damage_roll.result if player_acted else None,
                 damage_after_armor=damage_after_armor,
                 target_hp_before=target_hp_before,
@@ -911,6 +1063,68 @@ class CairnEngine:
                 fled_combatant_ids=fled_ids,
                 scar_result=enemy_harm.scar_result,
                 overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
+    def setup_advantage(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        setup: str,
+        payoff: EncounterAdvantagePayoff,
+        actor_id: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        actor = self._resolve_actor(state, actor_id)
+        encounter = self._ensure_encounter(
+            state,
+            player_input=setup,
+            target_name=target_name,
+            fallback_target_armor=0,
+            initiator=EncounterInitiator.PLAYER,
+            cancel_token=cancel_token,
+        )
+        target = self._resolve_opening_attack_target(encounter, target_name)
+        advantage = PendingEncounterAdvantage(
+            actor_id=None if actor.is_player else actor.id,
+            actor_name=None if actor.is_player else actor.name,
+            target_combatant_id=target.id,
+            target_name=target.name,
+            setup=setup,
+            payoff=payoff,
+            weakness=target.weakness,
+        )
+        encounter.pending_advantages.append(advantage)
+        if payoff == EncounterAdvantagePayoff.SKIP_DEX_GATE:
+            encounter.first_round_dex_gate_pending = False
+        summary = (
+            f"Advantage set against {target.name}: {setup}. "
+            f"Payoff: {payoff.value.replace('_', ' ')}."
+        )
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=summary,
+            rolls=[],
+            question=setup,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                actor_id=None if actor.is_player else actor.id,
+                actor_name=None if actor.is_player else actor.name,
+                target_combatant_id=target.id,
+                target_name=target.name,
+                advantage_id=advantage.id,
+                advantage_setup=setup,
+                advantage_payoff=payoff,
+                advantage_target_name=target.name,
+                advantage_applied=True,
+                advantage_consumed=False,
+                weakness=advantage.weakness or None,
+                combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
+                combat_round=encounter.round_number,
+                overloaded=actor.sheet.cairn.overloaded,
             ),
         )
 
@@ -2070,11 +2284,13 @@ class CairnEngine:
             except ValueError:
                 generated = None
 
+        policy = EncounterScalingPolicy.for_danger(state.campaign_seed.danger_profile)
         if generated is None:
             generated = self._fallback_encounter_seed(
                 target_name=target_name,
                 target_armor=fallback_target_armor,
             )
+        generated = self._scaled_encounter_seed(generated, policy)
 
         return EncounterState(
             active=True,
@@ -2093,6 +2309,9 @@ class CairnEngine:
                     armor=combatant.armor,
                     weapon_name=combatant.weapon_name,
                     weapon_damage_die=combatant.weapon_damage_die,
+                    threat_level=combatant.threat_level,
+                    weakness=combatant.weakness,
+                    tactics=combatant.tactics,
                     leader=combatant.leader,
                     notes=combatant.notes,
                 )
@@ -2144,17 +2363,51 @@ class CairnEngine:
                 GeneratedEncounterCombatant(
                     name=target_name.strip() or "Hostile foe",
                     description="A hostile figure drawn into the fight by the current scene.",
-                    hp=6,
-                    str_score=12,
+                    hp=3,
+                    str_score=10,
                     dex_score=10,
                     wil_score=8,
                     armor=target_armor,
                     weapon_name="Weathered weapon",
                     weapon_damage_die=6,
+                    threat_level=EncounterThreatLevel.ORDINARY,
                     leader=True,
                     notes="Fallback combatant.",
                 ),
             ],
+        )
+
+    def _scaled_encounter_seed(
+        self,
+        seed: GeneratedEncounterSeed,
+        policy: EncounterScalingPolicy,
+    ) -> GeneratedEncounterSeed:
+        combatants = [
+            self._scaled_combatant(combatant, policy)
+            for combatant in seed.combatants[: policy.max_combatants]
+        ]
+        if not any(combatant.leader for combatant in combatants):
+            first = combatants[0]
+            combatants[0] = first.model_copy(update={"leader": True})
+        return GeneratedEncounterSeed(notes=seed.notes, combatants=combatants)
+
+    def _scaled_combatant(
+        self,
+        combatant: GeneratedEncounterCombatant,
+        policy: EncounterScalingPolicy,
+    ) -> GeneratedEncounterCombatant:
+        threat_level = combatant.threat_level
+        hp = max(1, min(combatant.hp, policy.hp_cap_for(threat_level)))
+        armor = max(0, min(combatant.armor, policy.armor_cap_for(threat_level)))
+        die = combatant.weapon_damage_die
+        if die not in ALLOWED_WEAPON_DICE:
+            die = min(ALLOWED_WEAPON_DICE, key=lambda side: abs(side - die))
+        return combatant.model_copy(
+            update={
+                "hp": hp,
+                "armor": armor,
+                "weapon_damage_die": die,
+            },
         )
 
     def _require_target(self, encounter: EncounterState, target_name: str) -> EnemyCombatant:
@@ -2192,6 +2445,22 @@ class CairnEngine:
 
     def _has_active_enemies(self, encounter: EncounterState) -> bool:
         return any(not combatant.defeated and not combatant.fled for combatant in encounter.combatants)
+
+    def _consume_pending_advantage(
+        self,
+        encounter: EncounterState,
+        actor: ResolvedActor,
+        target: EnemyCombatant,
+    ) -> PendingEncounterAdvantage | None:
+        for index, advantage in enumerate(encounter.pending_advantages):
+            actor_matches = advantage.actor_id == (None if actor.is_player else actor.id)
+            target_matches = (
+                advantage.target_combatant_id == target.id
+                or advantage.target_name.lower() == target.name.lower()
+            )
+            if actor_matches and target_matches:
+                return encounter.pending_advantages.pop(index)
+        return None
 
     def _save_succeeds(self, result: int, target: int) -> bool:
         return result == 1 or (result != D20_SIDES and result <= target)
@@ -2443,6 +2712,34 @@ class CairnEngine:
         if success:
             return (roll, target, True, [])
 
+        fled_ids: list[str] = []
+        for combatant in active:
+            combatant.fled = True
+            fled_ids.append(combatant.id)
+        encounter.active = False
+        encounter.end_reason = EncounterEndReason.ENEMY_ROUT
+        encounter.notes = "The remaining enemies broke and fled."
+        return (roll, target, False, fled_ids)
+
+    def _resolve_enemy_morale(
+        self,
+        encounter: EncounterState,
+    ) -> tuple[Roll | None, int | None, bool | None, list[str]]:
+        active = [
+            combatant
+            for combatant in encounter.combatants
+            if not combatant.defeated and not combatant.fled
+        ]
+        if not active:
+            encounter.active = False
+            encounter.end_reason = EncounterEndReason.VICTORY
+            return (None, None, None, [])
+        leader = next((combatant for combatant in active if combatant.leader), active[0])
+        target = leader.wil_score
+        roll = self._roll(D20_SIDES, "morale")
+        success = self._save_succeeds(roll.result, target)
+        if success:
+            return (roll, target, True, [])
         fled_ids: list[str] = []
         for combatant in active:
             combatant.fled = True

@@ -14,7 +14,12 @@
 // All formatting helpers in this module are strictly presentational.
 // They never infer state, never mutate state, and never roll dice.
 
-import type { EncounterInitiator } from "./types";
+import type {
+  EncounterAdvantagePayoff,
+  EncounterInitiator,
+  EncounterThreatLevel,
+  PendingEncounterAdvantage,
+} from "./types";
 
 // `dead` and `fled` exist as separate flags because Cairn distinguishes
 // "removed from the encounter by lethal damage" from "broke and ran on
@@ -51,6 +56,24 @@ export interface CombatantState {
   morale: number | null;
   morale_broken: boolean;
   status: CombatantStatus;
+  // F-19: scaling tier the backend assigned this foe. The combat
+  // tracker uses this to color the foe card edge and surface a
+  // tier label so the player can read "Hardier" / "Serious" before
+  // committing to a swing. Generated foes are always normalized
+  // through `EncounterScalingPolicy`, so the tier here is the same
+  // tier the policy clamped HP/armor against.
+  threat_level: EncounterThreatLevel;
+  // F-19: per-foe weakness the LLM authored when generating this
+  // encounter. Empty string when no weakness is published. The
+  // tracker renders it as a "Weakness" line on the foe card to
+  // hint where a fictional setup (F-18) would actually pay off.
+  weakness: string;
+  // F-19: combat tactics / behavior hint the LLM published with the
+  // foe. Free text (e.g. "fights from cover, breaks at half HP").
+  // We surface it as a tooltip on the foe card; the chat narration
+  // is the canonical surface, but a quick read in the rail helps
+  // the player plan their next swing.
+  tactics: string;
 }
 
 // Round metadata. `round` is 1-indexed; `0` means "encounter declared
@@ -76,6 +99,12 @@ export interface CombatEncounterState {
   // backend should not also publish a flat `combatants` field on
   // GameState. Empty when the encounter is brewing or already cleared.
   combatants: CombatantState[];
+  // F-18: advantages the player has set up but not yet consumed. The
+  // tracker uses this to render "live setups against this foe" so
+  // the player can see which foe their next swing should target if
+  // they want the payoff to land. Empty in the normal "no setups
+  // pending" case.
+  pending_advantages: PendingEncounterAdvantage[];
   // Optional readable summary the backend can author for the inspector
   // strip. Null when the encounter has no summary yet.
   summary: string | null;
@@ -106,11 +135,32 @@ interface BackendEnemyCombatant {
   armor: number;
   weapon_name: string;
   weapon_damage_die: number;
+  // F-19 fields. Optional on the wire to keep older saves loading —
+  // the backend defaults missing values to ordinary / "" when it
+  // migrates an old encounter forward.
+  threat_level?: EncounterThreatLevel;
+  weakness?: string;
+  tactics?: string;
   leader: boolean;
   critically_wounded: boolean;
   defeated: boolean;
   fled: boolean;
   notes: string;
+}
+
+// F-18 wire shape for `EncounterState.pending_advantages`. Mirrors
+// `PendingEncounterAdvantage` exactly; we re-import the canonical
+// type instead of redeclaring fields so a backend rename surfaces
+// here as a TS error.
+interface BackendPendingAdvantage {
+  id: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  target_combatant_id: string | null;
+  target_name: string;
+  setup: string;
+  payoff: EncounterAdvantagePayoff;
+  weakness: string;
 }
 
 interface BackendEncounterState {
@@ -125,6 +175,8 @@ interface BackendEncounterState {
   casualty_morale_checked: boolean;
   half_force_morale_checked: boolean;
   combatants: BackendEnemyCombatant[];
+  // F-18 player-set advantages, optional for legacy compatibility.
+  pending_advantages?: BackendPendingAdvantage[];
   notes: string;
 }
 
@@ -155,6 +207,19 @@ export function combatFromState(state: object): CombatStateSlot {
   // (a foe specifically broken by a successful morale roll); for now
   // we leave it false everywhere and surface the encounter-level flag
   // via `morale_triggered` instead.
+  const pending: PendingEncounterAdvantage[] = (candidate.pending_advantages ?? []).map(
+    (a) => ({
+      id: a.id,
+      actor_id: a.actor_id,
+      actor_name: a.actor_name,
+      target_combatant_id: a.target_combatant_id,
+      target_name: a.target_name,
+      setup: a.setup,
+      payoff: a.payoff,
+      weakness: a.weakness,
+    }),
+  );
+
   return {
     active: candidate.active,
     round: candidate.round_number,
@@ -166,6 +231,7 @@ export function combatFromState(state: object): CombatStateSlot {
     // and treats null as "no signal".
     initiator: candidate.initiator ?? null,
     combatants,
+    pending_advantages: pending,
     summary: candidate.notes && candidate.notes.trim() !== "" ? candidate.notes : null,
   };
 }
@@ -192,7 +258,39 @@ function adaptCombatant(foe: BackendEnemyCombatant): CombatantState {
     morale: null,
     morale_broken: false,
     status: deriveCombatantStatus(foe),
+    // F-19 defaults — older state blobs that pre-date the threat /
+    // weakness / tactics fields still adapt cleanly: ordinary tier
+    // and empty hint strings reproduce the pre-F-19 rendering.
+    threat_level: foe.threat_level ?? "ordinary",
+    weakness: foe.weakness ?? "",
+    tactics: foe.tactics ?? "",
   };
+}
+
+// True when an advantage targets a specific combatant. The tracker
+// uses this to decide whether to render the setup pill on a foe
+// card vs. on the encounter-wide "loose setups" rail.
+export function advantagesForCombatant(
+  encounter: CombatStateSlot,
+  combatantId: string,
+): PendingEncounterAdvantage[] {
+  if (encounter === null) return [];
+  return encounter.pending_advantages.filter(
+    (a) => a.target_combatant_id === combatantId,
+  );
+}
+
+// Setups whose `target_combatant_id` is null (e.g. the foe wasn't yet
+// pinned to a specific combatant id when the setup landed). The
+// tracker surfaces these in a dedicated "Pending setups" strip so
+// they don't get lost.
+export function unattachedAdvantages(
+  encounter: CombatStateSlot,
+): PendingEncounterAdvantage[] {
+  if (encounter === null) return [];
+  return encounter.pending_advantages.filter(
+    (a) => a.target_combatant_id === null,
+  );
 }
 
 // Status precedence: dead > fled > incapacitated > active. We choose

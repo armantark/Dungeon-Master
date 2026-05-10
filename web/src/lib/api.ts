@@ -14,6 +14,7 @@ import {
 import type { StreamEvent } from "./streaming-types";
 import type {
   CampaignEndReason,
+  CampaignSeed,
   CharacterDraftResponse,
   CharacterQuizAnswer,
   CharacterQuizResponse,
@@ -258,6 +259,23 @@ export const api = {
       method: "POST",
       signal,
       json: { world_guidance, play_guidance },
+    }),
+
+  // F-15 campaign-seed update. The backend's `update_campaign_seed`
+  // rejects with 409 once the campaign has already started — the
+  // seed is meant to be authored before generation runs and locked
+  // afterwards so the generated world stays coherent with the seed
+  // it was given. We surface 409s through the normal `state.error`
+  // sink so the editor can roll the picker back without a special
+  // error type.
+  updateCampaignSeed: (
+    campaign_seed: CampaignSeed,
+    signal?: AbortSignal,
+  ): Promise<GameState> =>
+    request("/state/campaign-seed", {
+      method: "POST",
+      signal,
+      json: { campaign_seed },
     }),
 
   askYesNo: (

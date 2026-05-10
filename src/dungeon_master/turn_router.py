@@ -16,6 +16,7 @@ from dungeon_master.models import (
     CairnRestKind,
     CairnSurvivalAction,
     CairnTimeAdvance,
+    EncounterAdvantagePayoff,
     Likelihood,
     StrictModel,
 )
@@ -56,6 +57,7 @@ class PlannedTurnOpKind(StrEnum):
     ENEMY_OPENER = "enemy_opener"
     HARM = "harm"
     RECOVERY = "recovery"
+    SETUP_ADVANTAGE = "setup_advantage"
     EQUIP = "equip"
     RETREAT = "retreat"
     INSPECT_INVENTORY = "inspect_inventory"
@@ -89,6 +91,7 @@ class PlannedTurnOp:
     harm_source: str | None = None
     armor_applies: bool | None = None
     in_combat: bool | None = None
+    advantage_payoff: EncounterAdvantagePayoff | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,7 @@ class RoutedTurn:
     harm_source: str | None = None
     armor_applies: bool | None = None
     in_combat: bool | None = None
+    advantage_payoff: EncounterAdvantagePayoff | None = None
     time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
     survival_actions: tuple[CairnSurvivalAction, ...] = ()
     plan: TurnPlan | None = None
@@ -144,6 +148,7 @@ class GeneratedPlannedTurnOp(StrictModel):
     harm_source: str | None = None
     armor_applies: bool | None = None
     in_combat: bool | None = None
+    advantage_payoff: EncounterAdvantagePayoff | None = None
 
 
 class GeneratedTurnPlan(StrictModel):
@@ -210,6 +215,7 @@ Return only valid JSON.
 - attack
 - harm
 - recovery
+- setup_advantage
 - equip
 - retreat
 
@@ -231,6 +237,10 @@ Allowed op kinds:
   or seizing initiative in a way that should start a tracked encounter now
 - harm: the player is explicitly taking damage or a blow should be resolved directly
 - recovery: the player is explicitly resting, catching breath, or recovering
+- setup_advantage: the player is changing the combat situation to earn a
+  fiction-first advantage before or during a fight (blinding, pinning,
+  hamstringing, luring under a hazard, exposing a weak spot, waiting for a
+  clean shot) without simply making a normal attack right now
 - equip: the player is explicitly readying, drawing, donning, stowing,
   equipping, or unequipping gear
 - retreat: the player is explicitly disengaging, falling back, fleeing,
@@ -271,10 +281,13 @@ Rules:
   e.g. `equip` then `attack`, or `inspect_inventory` then `scene_check`.
 - Emit at most one primary oracle/mechanical op from this set:
   `yes_no`, `random_event`, `scene_check`, `save`, `attack`,
-  `coordinated_attack`, `enemy_opener`, `harm`, `recovery`.
+  `coordinated_attack`, `enemy_opener`, `harm`, `recovery`, `setup_advantage`.
 - If ops contain one of those primary oracle/mechanical ops, `route` must match it.
 - Exception: if the primary op is `enemy_opener`, `route` must be `harm`
   because the stable public outcome kind remains `harm`.
+- Exception: if the primary op is `setup_advantage`, `route` must be
+  `player_action` because the stable public outcome kind remains a Cairn-tagged
+  player action.
 - If ops contain only `equip`, `route` may be `equip`.
 - If ops contain only `inspect_inventory`, `search_scene`, `acquire_item`, `use_item`,
   `transfer_item`, `recruit_npc`, `drop_item`, or `narrate`, route must be
@@ -292,6 +305,10 @@ Rules:
   coordinated tactic.
 - If kind is `enemy_opener`, include `harm_source` naming the hostile opener.
 - If kind is `recovery`, choose one `rest_kind`: `breather`, `full_rest`, or `week_recovery`.
+- If kind is `setup_advantage`, include `target_name` and one
+  `advantage_payoff`: `enhanced_attack`, `direct_str_damage`, `skip_dex_gate`,
+  `deny_enemy_action`, `impair_enemy`, `force_morale`, or `expose_weakness`.
+  Use this only for fiction-first setup, not as a universal called-shot button.
 - If kind is `equip`, include `item_name` and whether the player is
   equipping (`true`) or unequipping (`false`).
 - If kind is `retreat`, use it only for an explicit attempt to break contact or flee.
@@ -349,7 +366,8 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
     'coordinated_attack | enemy_opener | harm | recovery | equip | retreat | '
-    'acquire_item | transfer_item | recruit_npc | inspect_inventory | search_scene | '
+    'setup_advantage | acquire_item | transfer_item | recruit_npc | '
+    'inspect_inventory | search_scene | '
     'use_item | drop_item | clarify",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
@@ -367,7 +385,9 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '      "harm_amount": "integer or null",\n'
     '      "harm_source": "string or null",\n'
     '      "armor_applies": "true | false | null",\n'
-    '      "in_combat": "true | false | null"\n'
+    '      "in_combat": "true | false | null",\n'
+    '      "advantage_payoff": "enhanced_attack | direct_str_damage | skip_dex_gate | '
+    'deny_enemy_action | impair_enemy | force_morale | expose_weakness | null"\n'
     "    }\n"
     "  ]\n"
     "}\n\n"
@@ -403,7 +423,8 @@ Decision rule:
 - Return true only if the original player turn itself declares an immediate
   concrete combat mechanic now: a strike/attack against a target, a named
   weapon use against a foe, an ambush being executed, an incoming hostile blow
-  that should damage someone now, or another explicit combat resolution now.
+  that should damage someone now, or a concrete setup maneuver that changes the
+  immediate combat situation now.
 - Return false when the player merely wants to find, start, enter, provoke, or
   set up danger/combat without declaring the first attack or incoming blow.
 - Return false when the proposed plan spends the player's first combat action
@@ -618,6 +639,7 @@ class TurnRouter:
                 PlannedTurnOpKind.COORDINATED_ATTACK,
                 PlannedTurnOpKind.ENEMY_OPENER,
                 PlannedTurnOpKind.HARM,
+                PlannedTurnOpKind.SETUP_ADVANTAGE,
             }
             for op in plan.ops
         )
@@ -645,6 +667,9 @@ class TurnRouter:
                         "item_name": op.item_name,
                         "harm_source": op.harm_source,
                         "in_combat": op.in_combat,
+                        "advantage_payoff": (
+                            None if op.advantage_payoff is None else op.advantage_payoff.value
+                        ),
                     }
                     for op in plan.ops
                 ],
@@ -769,6 +794,7 @@ class TurnRouter:
                     harm_source=op.harm_source,
                     armor_applies=op.armor_applies,
                     in_combat=op.in_combat,
+                    advantage_payoff=op.advantage_payoff,
                 )
                 for op in parsed.ops
             ),
@@ -802,7 +828,7 @@ class TurnRouter:
             survival_actions=tuple(dict.fromkeys(plan.survival_actions)),
         )
 
-    def _normalize_op(  # noqa: C901, PLR0912
+    def _normalize_op(  # noqa: C901, PLR0912, PLR0915
         self,
         op: PlannedTurnOp,
         *,
@@ -840,6 +866,16 @@ class TurnRouter:
         if op.kind == PlannedTurnOpKind.RECOVERY and op.rest_kind is None:
             message = "Recovery ops require a rest_kind."
             raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.SETUP_ADVANTAGE:
+            if route != TurnRoute.PLAYER_ACTION:
+                message = "setup_advantage ops require the legacy route to remain player_action."
+                raise ValueError(message)
+            if op.target_name is None:
+                message = "setup_advantage ops require a target_name."
+                raise ValueError(message)
+            if op.advantage_payoff is None:
+                message = "setup_advantage ops require an advantage_payoff."
+                raise ValueError(message)
         if op.kind in (
             PlannedTurnOpKind.EQUIP,
             PlannedTurnOpKind.USE_ITEM,
@@ -864,6 +900,7 @@ class TurnRouter:
             PlannedTurnOpKind.TRANSFER_ITEM,
             PlannedTurnOpKind.RECRUIT_NPC,
             PlannedTurnOpKind.DROP_ITEM,
+            PlannedTurnOpKind.SETUP_ADVANTAGE,
             PlannedTurnOpKind.CLARIFY,
             PlannedTurnOpKind.NARRATE,
         ) and route != TurnRoute.PLAYER_ACTION:
@@ -890,6 +927,7 @@ class TurnRouter:
             harm_source=op.harm_source or op.target_name,
             armor_applies=op.armor_applies,
             in_combat=op.in_combat,
+            advantage_payoff=op.advantage_payoff,
         )
 
     def _planned_op_from_routed_turn(self, routed: RoutedTurn) -> PlannedTurnOp:
@@ -924,6 +962,7 @@ class TurnRouter:
             harm_source=routed.harm_source,
             armor_applies=routed.armor_applies,
             in_combat=routed.in_combat,
+            advantage_payoff=routed.advantage_payoff,
         )
 
     def _routed_turn_from_plan(self, plan: TurnPlan) -> RoutedTurn:
@@ -947,6 +986,7 @@ class TurnRouter:
             harm_source=primary.harm_source,
             armor_applies=primary.armor_applies,
             in_combat=primary.in_combat,
+            advantage_payoff=primary.advantage_payoff,
             time_advance=plan.time_advance,
             survival_actions=plan.survival_actions,
             plan=plan,

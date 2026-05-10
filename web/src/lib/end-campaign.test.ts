@@ -7,6 +7,7 @@ import {
   formatEndedAt,
   isCampaignEnded,
 } from "./end-campaign";
+import { defaultCampaignSeed } from "./campaign-seed";
 import type { CampaignEndReason, GameState } from "./types";
 
 function emptyOracleTables(): GameState["oracle_tables"] {
@@ -47,6 +48,7 @@ function endedState(overrides: Partial<GameState>): GameState {
     oracle_tables: emptyOracleTables(),
     oracle_history: [],
     action_log: [],
+    campaign_seed: defaultCampaignSeed(),
     ...overrides,
   };
 }

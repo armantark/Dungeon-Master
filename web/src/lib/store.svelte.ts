@@ -21,6 +21,7 @@ import type { StreamHandlers, StreamResult } from "./streaming";
 import type { StreamRoute, StreamStageStatus } from "./streaming-types";
 import type {
   CampaignEndReason,
+  CampaignSeed,
   CharacterQuiz,
   CharacterQuizAnswer,
   CharacterSheet,
@@ -729,6 +730,28 @@ class GameStore {
     await this.#run((signal) =>
       api.updateDirectives(worldGuidance, playGuidance, signal),
     );
+  }
+
+  /**
+   * F-15 persist a new campaign seed.
+   *
+   * Routed through the same `#run` plumbing as every other state
+   * mutation so the loading shimmer behaves consistently. The
+   * backend rejects this with 409 once the campaign has actually
+   * started — that's by design (the world was generated against
+   * the previous seed and changing it now would desync the
+   * fiction). The 409 detail surfaces on `state.error` like any
+   * other backend conflict.
+   *
+   * Why we don't local-cache the seed before the round-trip: the
+   * editor already mirrors the in-flight value in its own local
+   * state and rebases off `game.state.campaign_seed` when the
+   * call succeeds. Optimistic local updates would just create a
+   * "save failed but the picker still shows the new value" foot
+   * gun for very little speed gain.
+   */
+  async updateCampaignSeed(seed: CampaignSeed): Promise<void> {
+    await this.#run((signal) => api.updateCampaignSeed(seed, signal));
   }
 
   async askYesNo(question: string, likelihood: Likelihood): Promise<void> {

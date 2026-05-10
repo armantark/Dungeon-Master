@@ -214,6 +214,8 @@ class ExplainerEngine:
         lines = [
             f"Player question: {question}",
             IMPLEMENTED_MECHANICS_SUMMARY,
+            "Campaign seed JSON:",
+            state.campaign_seed.model_dump_json(),
             "Current state JSON:",
             self._compact_state_json(state),
         ]
@@ -294,11 +296,22 @@ class ExplainerEngine:
                         "armor": foe.armor,
                         "weapon_name": foe.weapon_name,
                         "weapon_damage_die": foe.weapon_damage_die,
+                        "threat_level": foe.threat_level.value,
+                        "weakness": self._clip(foe.weakness, 140),
+                        "tactics": self._clip(foe.tactics, 140),
                         "critically_wounded": foe.critically_wounded,
                         "defeated": foe.defeated,
                         "fled": foe.fled,
                     }
                     for foe in state.encounter.combatants[:6]
+                ],
+                "pending_advantages": [
+                    {
+                        "target": advantage.target_name,
+                        "setup": self._clip(advantage.setup, 160),
+                        "payoff": advantage.payoff.value,
+                    }
+                    for advantage in state.encounter.pending_advantages[:4]
                 ],
             },
             "recent_action_log": [

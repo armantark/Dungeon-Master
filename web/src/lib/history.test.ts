@@ -6,6 +6,7 @@ import {
   findNarrativeEventForOracle,
   searchTranscript,
 } from "./history";
+import { defaultCampaignSeed } from "./campaign-seed";
 import type { ClientNote } from "./store.svelte";
 import type {
   CairnResolution,
@@ -85,6 +86,7 @@ function state(overrides: Partial<GameState> = {}): GameState {
     oracle_tables: overrides.oracle_tables ?? emptyOracleTables(),
     oracle_history: overrides.oracle_history ?? [],
     action_log: overrides.action_log ?? [],
+    campaign_seed: overrides.campaign_seed ?? defaultCampaignSeed(),
   };
 }
 

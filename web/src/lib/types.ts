@@ -121,6 +121,50 @@ export type EncounterEndReason =
   | "enemy_rout"
   | "player_escaped";
 
+// F-19: Cairn 2e stat-band classification for generated foes.
+// Mirrors backend `EncounterThreatLevel`. The backend's
+// `EncounterScalingPolicy` clamps generated HP / armor / weapon dice
+// against the active `CampaignDangerProfile` for each tier:
+//   - `ordinary` ≈ 3 HP rabble (the default Cairn scale)
+//   - `hardier`  ≈ 6 HP veterans / hardened threats
+//   - `serious`  ≥ 10 HP set-piece threats; only legal when
+//                 telegraphed and (typically) gated by the danger
+//                 profile being at least `harsh` / `lethal`.
+// The frontend uses this to color the foe rail and decide whether to
+// surface a "Serious threat" warning chip — never to recompute the
+// stats themselves, which the backend has already clamped.
+export type EncounterThreatLevel = "ordinary" | "hardier" | "serious";
+
+// F-18: Mechanical payoff a player-created advantage will resolve into
+// when consumed. Mirrors backend `EncounterAdvantagePayoff`. This is
+// the same enum the planner / combat-mechanics review use so the wire
+// stays a single source of truth — receipts and the seed-up UI both
+// read these strings directly.
+export type EncounterAdvantagePayoff =
+  | "enhanced_attack"
+  | "direct_str_damage"
+  | "skip_dex_gate"
+  | "deny_enemy_action"
+  | "impair_enemy"
+  | "force_morale"
+  | "expose_weakness";
+
+// Mirrors backend `PendingEncounterAdvantage`. The advantage lives on
+// `EncounterState.pending_advantages` until a follow-up attack consumes
+// it (or the encounter ends). The frontend reads this list to render
+// "live setups against this foe" on the combat tracker so the player
+// can see what they've stacked before swinging.
+export interface PendingEncounterAdvantage {
+  id: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  target_combatant_id: string | null;
+  target_name: string;
+  setup: string;
+  payoff: EncounterAdvantagePayoff;
+  weakness: string;
+}
+
 // Mirrors backend `EncounterInitiator`. Tells the UI who started the
 // fight so the combat tracker / receipt can label an enemy-opened fight
 // as an ambush instead of a normal player-initiated swing. F-05 only
@@ -445,6 +489,25 @@ export interface CairnResolution {
   // counterattack landed in the same turn.
   enemy_damage?: number | null;
   enemy_damage_source?: string | null;
+  // F-18 Fictional advantage. `advantage_setup` / `advantage_payoff`
+  // are populated on the resolution that *creates* the advantage
+  // (the SETUP_ADVANTAGE planner op). On the follow-up attack that
+  // consumes it, the same fields are echoed alongside `advantage_id`
+  // and `advantage_consumed=true` so the receipt can label the swing
+  // as "powered by your earlier setup". `advantage_target_name`
+  // mirrors the foe the setup pinned; `advantage_applied` is the
+  // boolean "did this turn actually attach a setup" used by the
+  // setup-side receipt to render success/no-op explicitly. The
+  // `weakness` field carries any per-foe weakness the LLM authored
+  // when it generated this encounter (F-19) — used by the inspector
+  // to surface "this foe has a weakness you can target" hints.
+  advantage_id?: string | null;
+  advantage_setup?: string | null;
+  advantage_payoff?: EncounterAdvantagePayoff | null;
+  advantage_target_name?: string | null;
+  advantage_applied?: boolean | null;
+  advantage_consumed?: boolean | null;
+  weakness?: string | null;
   morale_target?: number | null;
   morale_success?: boolean | null;
   coordinated_attack?: boolean;
@@ -535,6 +598,13 @@ export interface SaveSummary {
   state_summary: string;
   campaign_status: SaveCampaignStatus;
   campaign_end_reason: CampaignEndReason | null;
+  // F-15 / F-19: surfaced so the save card can render a "preset · danger"
+  // badge without having to load the full GameState. `campaign_preset`
+  // is a free-text label set by the seed editor (defaults to the
+  // built-in "Oppressive Dark Fantasy"); `danger_profile` is the
+  // canonical lowercase enum value (`story | standard | harsh | lethal`).
+  campaign_preset: string;
+  danger_profile: CampaignDangerProfile;
   updated_at: string;
   created_at: string;
 }
@@ -699,6 +769,88 @@ export interface GameEvent {
   thinking?: string;
 }
 
+// F-15 Campaign seed enums. Hand-mirrored from the backend StrEnums in
+// `dungeon_master/models.py`. The setup UI renders friendly labels via
+// the dictionaries in `lib/campaign-seed.ts`; the wire format is always
+// the lowercase enum value.
+export type CampaignTimePeriod =
+  | "bronze_age"
+  | "classical_antiquity"
+  | "early_medieval"
+  | "high_medieval"
+  | "renaissance"
+  | "early_modern"
+  | "industrial"
+  | "modern"
+  | "near_future"
+  | "far_future"
+  | "post_apocalyptic"
+  | "mythic_timeless";
+
+export type CampaignToneGrimNoble = "grim" | "mixed" | "noble";
+export type CampaignToneDarkBright = "dark" | "mixed" | "bright";
+
+// F-15 + F-19: difficulty surface. The backend's
+// `EncounterScalingPolicy.for_danger` translates this into the HP /
+// armor / damage caps that govern generated encounters.
+export type CampaignDangerProfile = "story" | "standard" | "harsh" | "lethal";
+
+export type CampaignGenre =
+  | "high_fantasy"
+  | "low_fantasy"
+  | "sword_and_sorcery"
+  | "dark_fantasy"
+  | "gothic_horror"
+  | "cosmic_horror"
+  | "weird_fiction"
+  | "fairy_tale"
+  | "mythic"
+  | "post_apocalyptic"
+  | "science_fantasy"
+  | "historical_fantasy"
+  | "urban_fantasy"
+  | "hearth_and_homestead";
+
+export type CampaignMagicLevel = "none" | "rare_numinous" | "common" | "ubiquitous";
+
+export type CampaignTechLevel =
+  | "stone"
+  | "iron"
+  | "medieval"
+  | "renaissance"
+  | "industrial"
+  | "modern"
+  | "spacefaring";
+
+export type CampaignStakesScale =
+  | "personal_local"
+  | "regional"
+  | "civilizational"
+  | "cosmic";
+
+// Mirrors backend `CampaignSeed`. Lives on `GameState.campaign_seed`
+// once a seed has been authored; the backend defaults every new state
+// to a "Oppressive Dark Fantasy" preset so this field is never
+// undefined on the wire. The setup screen lets the player tweak the
+// seed before campaign generation runs; the inspector lets them read
+// (but not mutate) the seed mid-campaign.
+export interface CampaignSeed {
+  preset: string;
+  time_period: CampaignTimePeriod;
+  tone_grim_noble: CampaignToneGrimNoble;
+  tone_dark_bright: CampaignToneDarkBright;
+  danger_profile: CampaignDangerProfile;
+  // The backend caps this list at 3 entries (`max_length=3`) and
+  // guarantees at least one — we mirror it as a plain array and let
+  // the seed editor enforce the cap on the input side.
+  genres: CampaignGenre[];
+  magic_level: CampaignMagicLevel;
+  tech_level: CampaignTechLevel;
+  stakes_scale: CampaignStakesScale;
+  inspirations: string;
+  restrictions: string;
+}
+
 // B-02 Campaign directives — the persistent OOC steering surface.
 //
 // We deliberately keep this separate from `setting_notes` /
@@ -777,4 +929,9 @@ export interface GameState {
   oracle_tables: OracleTables;
   oracle_history: OracleOutcome[];
   action_log: GameEvent[];
+  // F-15: persistent campaign-setup record. Mutable while the campaign
+  // is still in `character_creation`; locked once the campaign starts.
+  // The backend always emits this field — older saves are migrated to
+  // a default seed at load time so the wire never carries `undefined`.
+  campaign_seed: CampaignSeed;
 }

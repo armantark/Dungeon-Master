@@ -33,6 +33,8 @@ class SaveSummary(StrictModel):
     character_epithet: str
     identifying_line: str
     state_summary: str
+    campaign_preset: str
+    danger_profile: str
     campaign_status: CampaignStatus
     campaign_end_reason: CampaignEndReason | None = None
     updated_at: str
@@ -158,6 +160,8 @@ class SaveLibrary:
                     character_epithet=state.character.epithet.strip(),
                     identifying_line=_identifying_line(state),
                     state_summary=_state_summary(state),
+                    campaign_preset=state.campaign_seed.preset,
+                    danger_profile=state.campaign_seed.danger_profile.value,
                     campaign_status=state.campaign_status,
                     campaign_end_reason=state.campaign_end_reason,
                     updated_at=state.updated_at.isoformat(),

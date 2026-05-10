@@ -6,6 +6,7 @@ import {
   referencedThreadsForOutcome,
   sortThreadsForDisplay,
 } from "./threads";
+import { defaultCampaignSeed } from "./campaign-seed";
 import type {
   GameState,
   GameThread,
@@ -75,6 +76,7 @@ function state(overrides: Partial<GameState>): GameState {
     oracle_tables: overrides.oracle_tables ?? emptyOracleTables(),
     oracle_history: overrides.oracle_history ?? [],
     action_log: overrides.action_log ?? [],
+    campaign_seed: overrides.campaign_seed ?? defaultCampaignSeed(),
   };
 }
 

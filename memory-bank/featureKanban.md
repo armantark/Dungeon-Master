@@ -10,11 +10,12 @@
 ## Ready Next
 
 ### F-01 Retreat / Disengage
+
 - Status: `done`
 - Priority: `high`
 - Goal: Add a canonical retreat / disengage action so combat has a real exit path.
 - Why:
-  Combat now has attack/harm/recover/equip *and* a canonical flee/withdraw mechanic that runs through the same chat pipeline.
+Combat now has attack/harm/recover/equip *and* a canonical flee/withdraw mechanic that runs through the same chat pipeline.
 - Final state:
   - Backend: routed `retreat` action, deterministic resolution in `cairn.py` with DEX save + pursuit roll, explicit `/api/cairn/retreat` endpoint, pursuit/disengage/escape outcomes, and tests across `test_cairn.py`, `test_service.py`, `test_api.py`, `test_turn_router.py`.
   - Frontend: `/retreat` slash command (with `/flee` and `/disengage` aliases) translates to a free-text turn through the existing planner pipeline so narration, memory, and receipts all run uniformly. Composer surfaces a slash suggestion menu (Up/Down + Tab/Enter completion, Esc dismiss). CombatTracker carries a read-only retreat hint when an encounter is active. Tests cover parser, suggestion filtering, and store dispatch (`web/src/lib/slash.test.ts`, `web/src/lib/store.test.ts`).
@@ -23,11 +24,12 @@
   - The CombatTracker stays a read-only trust surface — no retreat button — but it surfaces a single italicized `/retreat` hint so the affordance is discoverable in context without dragging the player into `/help`.
 
 ### F-02 Inventory Progression
+
 - Status: `done`
 - Priority: `high`
 - Goal: Let the game canonically add loot / found items / purchases / transfers during active play.
 - Why:
-  Existing inventory could be used, dropped, and equipped, but active-play acquisition was a hole.
+Existing inventory could be used, dropped, and equipped, but active-play acquisition was a hole.
 - Final state:
   - Backend: planner can emit an `acquire_item` op; `CairnEngine.acquire_items` runs a focused structured-generation prompt that produces validated `InventoryItem`s with full Cairn semantics (tags, slots, weapon die, armor bonus, uses, equipped) and recomputes burden / primary-weapon state in Python. `GameService` executes the op inside the normal narrate-and-checkpoint pipeline and exposes `POST /api/cairn/acquire` as a deterministic-only fallback. Tests across `test_turn_router.py`, `test_cairn.py`, `test_service.py`, and `test_api.py`.
   - Frontend: four acquisition slash commands surface the affordance — `/acquire <description>` (with `/gain`), `/loot <description>`, `/take <description>`, and `/buy <description>` (with `/purchase`). Each translates to a first-person free-text turn (`I {verb} {body}.`) so the planner classifies it as `ACQUIRE_ITEM` and we get unified narration / memory / receipts. The existing slash suggestion menu surfaces all four canonical verbs as separate descriptors (their fictional flavor differs — looting, taking, buying, generic acquiring — and the narrator picks that flavor up from the verb). Empty-body errors name the verb the player typed. The composer's placeholder rotation now also includes `/loot` and `/buy` examples for organic discovery. Tests cover parser routing for every verb + alias, suggestion filtering, and store dispatch (verb preservation, terminator handling, error path).
@@ -37,13 +39,14 @@
   - No separate currency ledger landed in this ticket. Coin, if it appears, is represented as ordinary inventory canon. We can revisit that later if currency becomes mechanically interesting in its own right.
 
 ### F-03 Dynamic Thread Updates
+
 - Status: `done`
 - Priority: `high`
 - Goal: Threads should be canonically created/updated/resolved by the game loop, not remain read-only references.
 - Why:
-  Long-running solo play needs thread state to evolve continuously.
+Long-running solo play needs thread state to evolve continuously.
 - Constraint:
-  User-facing manual editing is **not** the preferred solution.
+User-facing manual editing is **not** the preferred solution.
 - Final state:
   - Backend: a dedicated `ThreadUpdater` module runs after a turn's deterministic outcome exists but before checkpointing/narration, asks the model for a bounded structured op batch (`create | update | resolve`, max 2 ops), validates it, and mutates canonical `state.threads` in Python. Outcomes now persist plural `referenced_thread_ids` plus the legacy primary `referenced_thread_id`, and `MemoryManager` uses those plural links when rebuilding thread cards, open loops, callbacks, and the dedicated thread-updater memory context. The API still returns the whole `GameState`, so no new HTTP route was needed.
   - Frontend: `web/src/lib/types.ts` mirrors `OracleOutcome.referenced_thread_ids: string[]`. New pure helpers in `web/src/lib/threads.ts` (`recentlyTouchedThreadIds`, `sortThreadsForDisplay`) derive the latest-turn touched set and a stable display order — active before resolved, recently-touched first within each status group, original order preserved within ties. `ThreadsPanel.svelte` consumes the touched set: just-touched cards float to the top of their status group, get a brighter gold rail, run a one-shot non-looping pulse animation (suppressed under `prefers-reduced-motion`), and show a small `advanced` / `just resolved` Alagard pip beside the existing status pip. `Inspector.svelte` is the single source for the touched set so the rest of the app stays prop-drilled-free.
@@ -54,13 +57,14 @@
   - Plural `referenced_thread_ids` is now the primary linkage on the frontend, but the helpers still honor a non-empty singular `referenced_thread_id` so older state blobs and the `/api/cairn/*` deterministic routes stay aligned.
 
 ### F-04 Dynamic NPC Updates
+
 - Status: `done`
 - Priority: `high`
 - Goal: NPCs should be canonically created/updated/promoted/retired by the game loop rather than staying static opener artifacts.
 - Why:
-  Recurring cast continuity is central to long-running play.
+Recurring cast continuity is central to long-running play.
 - Constraint:
-  User-facing manual editing is **not** the preferred solution.
+User-facing manual editing is **not** the preferred solution.
 - Final state:
   - Backend: `src/dungeon_master/models.py` adds `NPCStatus` (`active | retired`) plus plural `OracleOutcome.referenced_npc_ids` alongside the legacy singular `referenced_npc_id`. A new `src/dungeon_master/npc_updater.py` mirrors the thread-updater pattern — after a deterministic outcome exists but before checkpointing/narration, the model can propose a bounded `create | update | retire` batch (max 2 ops), Python validates/applies it to `state.npcs`, and the touched ids are merged back onto the outcome. `MemoryManager` carries plural NPC linkage, status-aware `NPCMemory`, and a dedicated NPC-updater retrieval context so recurring-cast memory stays coherent across rebuilds and streamed/unary turns. `GameService` runs the NPC updater in both unary and streaming commit paths beside the thread updater, with the same discard-on-cancel semantics.
   - Frontend: `web/src/lib/types.ts` mirrors `NPCStatus`, `NPC.status`, and `OracleOutcome.referenced_npc_ids`. New pure helpers in `web/src/lib/npcs.ts` (`recentlyTouchedNpcIds`, `sortNpcsForDisplay`) match the `threads.ts` shape — last-turn touched set + stable display sort (active before retired, recently-touched first within each status group, original order preserved within ties). `NPCsPanel.svelte` consumes the touched set: just-touched cards float to the top of their status group, get a brighter gold rail, run a one-shot non-looping pulse animation (suppressed under `prefers-reduced-motion`), and show an Alagard pip — `advanced` for active changes, `newly retired` for retirements. Retired NPCs sink with verdigris styling and reduced opacity instead of disappearing, matching the resolved-thread visual language. `Inspector.svelte` is the single source for the touched set.
@@ -72,11 +76,12 @@
   - Retired-and-just-touched cards still sink below active NPCs but keep the gold rail + `newly retired` pip — same layered cue strategy as threads (sort + rail + pulse + pip). The pulse itself is suppressed on retired cards because a pulse on a muted card reads as noise rather than a signal; the pip + rail carry the recency.
 
 ### F-05 Enemy-First / Ambush Combat
+
 - Status: `done`
 - Priority: `high`
 - Goal: Support enemy-initiated combat as a fully tracked encounter, not just a harm resolution.
 - Why:
-  Ambushes and foe-first turns should seed/advance encounter state just as cleanly as player-initiated attacks.
+Ambushes and foe-first turns should seed/advance encounter state just as cleanly as player-initiated attacks.
 - Final state:
   - Backend: `src/dungeon_master/models.py` adds minimal encounter-opener metadata (`EncounterInitiator` on `EncounterState`, mirrored onto `CairnResolution.combat_initiator`) so canonical combat can remember who seized the first blow without inventing a larger half-round state machine. `src/dungeon_master/cairn.py` now exposes `resolve_enemy_opener(...)`, a dedicated enemy-first path that seeds an encounter via the existing encounter-generation machinery, applies the opener's deterministic harm immediately, clears the first-round DEX gate, and leaves the encounter active in round 2 for the player's follow-up turn. Generic `suffer_harm()` remains generic and does **not** auto-seed encounters, so falling masonry / traps / curses still work outside combat. The encounter-seeding prompt was widened from player-led escalation to a general combat trigger with an explicit initiator field.
   - Planner / service: `src/dungeon_master/turn_router.py` gains an internal-only `enemy_opener` op kind. The legacy route stays `harm`, so the public outcome surface remains conservative, but `GameService._execute_turn_plan(...)` now dispatches that internal op to `CairnEngine.resolve_enemy_opener(...)` instead of to plain `suffer_harm()`. This keeps the product chat-first and inference-first while letting prose like "the ghoul drops from the rafters and claws me before I can raise my cudgel" create a real tracked encounter through `/api/turn`.
@@ -93,11 +98,12 @@
 ## Backlog
 
 ### F-06 Campaign End / Death / Retirement Flow
+
 - Status: `done`
 - Priority: `high`
 - Goal: Add terminal/late-campaign flow so runs can meaningfully end rather than only being reset.
 - Why:
-  The user wants a long-running game, but one that eventually reaches endgame.
+The user wants a long-running game, but one that eventually reaches endgame.
 - Final state:
   - Backend: `src/dungeon_master/models.py` adds `CampaignStatus.ENDED`, a new `CampaignEndReason` enum (`death | retirement | victory`), and terminal metadata on `GameState` (`campaign_end_reason`, `campaign_ended_at`, `campaign_end_summary`). `src/dungeon_master/service.py` carries a single `end_campaign(...)` path for explicit retirement/victory, auto-finalizes the campaign into `ended + death` when a committed turn leaves the character dead, blocks further mutating play/regenerate/update routes once ended, and syncs a legacy `active + dead` save into canonical `ended + death` on load. The final death turn is still narrated and checkpointed normally before the terminal system event is appended. `src/dungeon_master/api.py` exposes `POST /api/campaign/end`. All existing mutating endpoints naturally return `409` once ended because `GameService._ensure_active(...)` emits a reason-aware conflict message.
   - Frontend: `web/src/lib/types.ts` mirrors the new `CampaignStatus` (`ended` added) and `CampaignEndReason` union, plus the three terminal metadata fields on `GameState`. `web/src/lib/api.ts` adds `endCampaign(reason, summary, signal?)` against `POST /campaign/end`; the store (`web/src/lib/store.svelte.ts`) wraps it as `endCampaign(reason, summary)` and routes the new `/retire` / `/victory` slash commands directly to it (bypassing the planner because terminal close is a lifecycle op, not an in-fiction action). Empty summaries are serialized as `null` so the backend's deterministic-default branch fires. `web/src/lib/slash.ts` adds the two terminal-close descriptors and a new `{ kind: "end", reason, summary }` parsed-turn variant. `web/src/lib/end-campaign.ts` hosts the pure presentation helpers (`endKicker`, `endHeadline`, `endSummary`, `formatEndedAt`, `isCampaignEnded`) so the per-reason copy and timestamp formatting are testable without DOM. `web/src/components/EndBanner.svelte` is the read-only sticky-bottom replacement for the Composer when the campaign is ended — it carries the kicker, headline, canonical or fallback summary, optional close timestamp, and a two-step "Begin a new campaign" CTA. `web/src/App.svelte` collapses its play-time conditional into an exhaustive `loading | setup | active | ended` switch and mounts EndBanner instead of Composer in the ended branch (chat feed and inspector remain mounted as a read-only archive). `web/src/components/Inspector.svelte` carries an `archived` flag that disables chaos commit, swaps the notes editor for static archive prose, and rephrases the reset button copy as "Replace archive" with a clarifying confirm prompt. The `app__main--ended` modifier slightly desaturates the play surface so the lifecycle shift reads even before the player notices the banner.
@@ -112,15 +118,16 @@
   - Multi-save selection (F-12) remains a real follow-up. Under the current single-save architecture an ended campaign can only be browsed until the player chooses to start over; the End-Banner's CTA copy and the Inspector's "Replace archive" rephrase deliberately call out that risk so the player isn't surprised.
 
 ### F-07 Common Actions Tray
+
 - Status: `done`
 - Priority: `medium`
 - Goal: Add clickable common actions in the UI for discoverability and speed.
 - Why:
-  Chat-first remains primary, but a tray for common verbs would help usability.
+Chat-first remains primary, but a tray for common verbs would help usability.
 - Final state:
   - Frontend-only ticket: no backend / API additions. The tray click never fires a request directly — it edits the Composer buffer and the player still hits Send. This was the user's explicit pick over auto-submit and over a hybrid; it preserves the chat-first invariant and keeps every action observable as a real player turn in the action log.
   - `web/src/lib/common-actions.ts` is a new pure module with `deriveCommonActions(state, combat)` and `applyCommonAction(buffer, action)`. The visibility / ordering / replacement rules live there so they're testable without a DOM.
-  - Always-on actions (left → right): `Ask oracle` (`/ask `), `Random event` (`/event`), `Scene check` (`/scene `), `Check gear` (prose `I take stock of what I'm carrying.`). Combat-only actions (appended only when `state.encounter.active`): `Attack` (prose `I attack `), `Recover` (prose `I take a short breather to recover.`), `Retreat` (`/retreat `).
+  - Always-on actions (left → right): `Ask oracle` (`/ask` ), `Random event` (`/event`), `Scene check` (`/scene` ), `Check gear` (prose `I take stock of what I'm carrying.`). Combat-only actions (appended only when `state.encounter.active`): `Attack` (prose `I attack` ), `Recover` (prose `I take a short breather to recover.`), `Retreat` (`/retreat` ).
   - `web/src/components/Composer.svelte` renders the tray as a horizontal strip of pixel pills between the textarea and the send-row. Click → `applyCommonAction` → set `value` → focus textarea + `setSelectionRange` to end-of-inserted-text inside a microtask (so the bound write has propagated). Empty / whitespace-only buffers are replaced wholesale; non-empty buffers preserve typed prose and append the prefill on a fresh line so the player sees what was added. Tray pills are `disabled` while `game.isLoading`, and the toolbar carries `aria-disabled` so screen readers pick up the lockout.
   - Tray is structurally hidden on the setup and ended layouts because the Composer itself is unmounted there (the ended layout swaps in `EndBanner.svelte`). No archived-state special-casing was needed.
   - Tests: new `web/src/lib/common-actions.test.ts` (12 cases) covers null-state empty list, baseline ordering, inactive-encounter equality with no-encounter, combat-active append order, the prefill-only intent invariant, slash-vs-prose routing for known parser entries, and the four buffer-replacement branches (empty, whitespace-only, append-with-prose, trailing-whitespace collapse). `npm run check`, the full vitest suite (164 cases), and `npm run build` all green.
@@ -133,25 +140,27 @@
 - Manual smoke checklist (active campaign, browser):
   - Outside combat: tray shows exactly `Ask oracle / Random event / Scene check / Check gear`. Click each — Composer prefills with the expected text and the caret lands at the end of the inserted string. Sending each runs the corresponding turn (oracle/event/scene/`inspect_inventory` narration).
   - In combat: tray now also shows `Attack / Recover / Retreat` after the four baseline pills. `Retreat` resolves through the existing `/retreat` slash path; `Attack` and `Recover` route through the planner.
-  - Append behavior: type `Then I` in the Composer, click `Attack` — the buffer becomes `Then I\nI attack ` (visible second line, caret at end).
+  - Append behavior: type `Then I` in the Composer, click `Attack` — the buffer becomes `Then I\nI attack`  (visible second line, caret at end).
   - Lockout: while a request is in flight (`game.isLoading`), every tray pill is disabled and the toolbar is announced as `aria-disabled="true"`.
   - Ended campaign: `/retire` or `/victory`, then confirm the Composer (and the whole tray with it) is unmounted in favor of `EndBanner`.
 
 ### F-08 Slash Suggestion Menu
+
 - Status: `done`
 - Priority: `medium`
 - Goal: When the player types `/`, show suggested commands inline.
 - Why:
-  Slash commands are acceptable as optional affordances, but they need to be discoverable.
+Slash commands are acceptable as optional affordances, but they need to be discoverable.
 - Final state:
-  Landed alongside the F-01 frontend pass and now extended by F-02. `web/src/lib/slash.ts` exposes a single `SLASH_COMMANDS` descriptor list (canonical name + aliases + summary + usage) shared by `/help` and the menu, plus `suggestSlashCommands(input)` for prefix matching against canonical names *and* aliases. `web/src/components/Composer.svelte` renders the dropdown above the textarea with Up/Down navigation, Tab/Enter completion, Esc dismissal, and accessibility wiring (`role="listbox"`, `aria-controls`, `aria-selected`). The menu auto-suppresses once an argument is being typed so it doesn't fight the player. F-02 added the four acquisition verbs as separate descriptors so each surfaces with its own fictional flavor.
+Landed alongside the F-01 frontend pass and now extended by F-02. `web/src/lib/slash.ts` exposes a single `SLASH_COMMANDS` descriptor list (canonical name + aliases + summary + usage) shared by `/help` and the menu, plus `suggestSlashCommands(input)` for prefix matching against canonical names *and* aliases. `web/src/components/Composer.svelte` renders the dropdown above the textarea with Up/Down navigation, Tab/Enter completion, Esc dismissal, and accessibility wiring (`role="listbox"`, `aria-controls`, `aria-selected`). The menu auto-suppresses once an argument is being typed so it doesn't fight the player. F-02 added the four acquisition verbs as separate descriptors so each surfaces with its own fictional flavor.
 
 ### F-09 History Browsing
+
 - Status: `done`
 - Priority: `medium`
 - Goal: Add a more usable long-session history browser.
 - Why:
-  The user wants this, but it is likely a larger feature and not the first thing to tackle.
+The user wants this, but it is likely a larger feature and not the first thing to tackle.
 - Final state:
   - Frontend-only ticket: no backend / API additions. The full transcript already lived in `GameState.action_log` + `GameState.oracle_history` and the API already returned the whole thing per turn, so this pass turned the existing payload into a navigable surface rather than introducing a paginated history endpoint. Save-slot–aware history (cross-campaign browsing) stays an F-12 follow-up.
   - `web/src/lib/history.ts` is a new pure helper module. `deriveTranscriptRows(state, notes)` mirrors the ChatFeed dedup rules (oracle events fold into receipts; narrative+player+system render as their own rows; opening DM beat synthesized when there are no narrative events yet; client notes interleaved by timestamp). `searchTranscript(rows, query, options)` is token-AND substring search across row text *and* outcome summaries (so "three of them" matches a receipt even when the prose doesn't say it), with a chronological order and a `limit` cap (default 50). `findNarrativeEventForOracle(state, outcomeId)` returns the most recent narrative event tied to an outcome (null when nothing committed yet, e.g. regenerate-cancel). `filterOracleHistory(history, filters)` AND-combines a free-text query (over summary, event-flavor fields, answer, scene status, and the Cairn target/weapon/scar text) with an `OracleKind` whitelist. Snippet building centers on the first matched token and emits explicit highlight offsets so the renderer doesn't re-search.
@@ -174,14 +183,15 @@
   - **Ended campaign:** end the campaign via `/retire`. The Inspector remains read-only (chaos / notes locked), but the Transcript and Oracle-history surfaces still search and jump correctly through the now-immutable archive.
 
 ### B-01 Inspector UI Layout & Truncation Cleanup
+
 - Status: `done`
 - Priority: `medium`
 - Goal: Fix aggressive text truncation, horizontal bleeding, and nested scrollbar crowding in the Inspector.
 - Why:
-  The drawer layout currently line-clamps long descriptions too aggressively and allows text to bleed into/under the scrollbars.
+The drawer layout currently line-clamps long descriptions too aggressively and allows text to bleed into/under the scrollbars.
 - Final state:
   - Drawer (`web/src/components/Drawer.svelte`): pinned `flex-shrink: 0` on `.drawer` to stop drawers from being vertically squashed below the flap's `min-height` inside the inspector's flex column (this was silently clipping flap labels behind the next flap when 7+ drawers stacked). Added `scrollbar-gutter: stable` and bumped `.body` right padding from `0.75rem` → `0.85rem` so inner-scrolled drawers no longer crowd prose against the scrollbar. `overflow-wrap: anywhere` is a defensive fallback against unbreakable tokens (long ids, URLs in notes) forcing horizontal overflow.
-  - Inspector (`web/src/components/Inspector.svelte`): mirrored the scrollbar-gutter fix on the outer `.body`. **Lifted `.end` (footer with "Open save library" / "Reset this save") out of `.body`** and made it a flex sibling of the body inside `.inspector`. The previous design glued the footer to `.body` via `position: sticky; bottom: 0` and faded the bottom drawer behind a gradient — that always clipped the last drawer's flap or content under the buttons. The new layout has the body own the scroll surface exclusively while the footer sits beneath it as a visible band, matching the inspector's `display: flex; flex-direction: column` shell.
+  - Inspector (`web/src/components/Inspector.svelte`): mirrored the scrollbar-gutter fix on the outer `.body`. **Lifted `.end` (footer with "Open save library" / "Reset this save") out of `.body*`* and made it a flex sibling of the body inside `.inspector`. The previous design glued the footer to `.body` via `position: sticky; bottom: 0` and faded the bottom drawer behind a gradient — that always clipped the last drawer's flap or content under the buttons. The new layout has the body own the scroll surface exclusively while the footer sits beneath it as a visible band, matching the inspector's `display: flex; flex-direction: column` shell.
   - NPCs panel (`web/src/components/NPCsPanel.svelte`): split the disposition out of the role's flex row and placed it in its own paragraph (`.disposition`) below the role chip. The `-webkit-line-clamp: 2` on `.muted` is gone so dispositions wrap freely; the long Theuas / Osyth dispositions now read end-to-end without forcing the player to hover for the title-tooltip, and the role chip line stays compact. The `<span class="dot">•</span>` is dropped because the disposition no longer shares a flow with role.
   - Threads panel (`web/src/components/ThreadsPanel.svelte`): removed `-webkit-line-clamp: 3` on the stakes paragraph; same `overflow-wrap: anywhere` defensive rule. `title` attribute is preserved so AT users still get the full string on focus.
   - Notes editor (`web/src/components/NotesEditor.svelte`): removed `-webkit-line-clamp: 4` on the preview paragraphs; added `white-space: pre-wrap` so player-typed paragraph breaks survive into the readonly preview. The drawer's own `overflow-y: auto` plus stable scrollbar gutter handles unusually long notes without truncation.
@@ -195,11 +205,12 @@
   - Footer: confirmed "Open save library" + "Reset this save" sit as a fixed band beneath the scrollable body and never overlap drawer content regardless of which drawers are open.
 
 ### F-10 Out-of-Character Rules Explainer
+
 - Status: `done`
 - Priority: `medium`
 - Goal: Add an out-of-character (OOC) rules explainer so the player can ask about mechanics or recent events.
 - Why:
-  Active play assumes implicit knowledge of the app's specific Cairn-inspired mechanics. The player needs a way to ask "how does attack work here?" or "why did that say ambush?" without breaking the in-fiction narrative flow.
+Active play assumes implicit knowledge of the app's specific Cairn-inspired mechanics. The player needs a way to ask "how does attack work here?" or "why did that say ambush?" without breaking the in-fiction narrative flow.
 - Final state:
   - Backend: `src/dungeon_master/explainer.py` is a dedicated OOC engine with its own system prompt and an `IMPLEMENTED_MECHANICS_SUMMARY` so explanations are grounded in *this app's* Cairn-inspired rules instead of generic D&D. `GameService.explain(...)` / `stream_explain(...)` use a new `_load_state_readonly` path that performs in-memory migrations/backfills without ever writing to disk. `POST /api/explain` and `/api/explain/stream` are wired up; the streaming variant emits `final_payload` with `kind="explanation"` carrying `{answer}`, mirroring the quiz/draft setup channel rather than `final_state`. Tests (`tests/test_api.py`) cover unary, streamed, and an explicit no-mutation assertion that compares `game_state.json` and `memory.json` mtimes/contents before and after an `/api/explain` call.
   - Frontend: `/explain <question>` slash command (no aliases) with empty-body parser-level rejection; the suggestion menu surfaces it as a discoverable descriptor distinct from `/help`. `web/src/lib/api.ts` exposes `streamExplain` and a unary `explain` fallback (the latter runs only when streaming 404s during the backend transition window). Store wires `/explain` to `#runStreamingPayload<string>` with `finalKind: "explanation"`, persists the answer + the player's verbatim question as a single `ClientNote` of kind `"explanation"`, and routes the streamed deltas through the existing `streaming.{content,thinking}` buffer so the chat surface gets live tokens. `ChatMessage.svelte` adds an `ooc` speaker variant ("OOC · Archivist") with a verdigris rail and an optional `Q:` row above the answer body; `ChatFeed.svelte` branches the provisional bubble on `streaming.route === "explanation"` to render the OOC styling instead of the default DM bubble. `history.ts` folds question+answer into a single searchable transcript row (kind `system`, `isNote: true`) so OOC traffic is searchable but stays flagged as ephemeral.
@@ -212,21 +223,23 @@
 ## Later
 
 ### F-11 Optional Explicit Cairn Commands / Controls
+
 - Status: `skipped`
 - Priority: `low`
 - Goal: Surface attack/harm/recover/equip as optional slash commands or UI controls.
 - Why:
-  Useful as backup/discoverability, but not required as the main intended mechanism.
+Useful as backup/discoverability, but not required as the main intended mechanism.
 - Note:
-  This is now explicitly skipped. The project direction favors chat-first affordances that preserve player authorship and let the planner/router interpret intent, rather than adding a parallel explicit-controls layer for core Cairn actions.
-  If we revisit this area, it should be by re-framing the ticket into a chat-native aid (similar to how F-10 evolved into the OOC rules explainer), not by adding attack/harm/recover/equip buttons or slash verbs.
+This is now explicitly skipped. The project direction favors chat-first affordances that preserve player authorship and let the planner/router interpret intent, rather than adding a parallel explicit-controls layer for core Cairn actions.
+If we revisit this area, it should be by re-framing the ticket into a chat-native aid (similar to how F-10 evolved into the OOC rules explainer), not by adding attack/harm/recover/equip buttons or slash verbs.
 
 ### F-12 Save Slots / Multiple Campaigns
+
 - Status: `done`
 - Priority: `low`
 - Goal: Support multiple campaigns / characters without manual file handling.
 - Why:
-  Resolves the F-06 archive-loss risk: ended campaigns now live on a real shelf rather than being overwritten by the next "reset". Also lets the player run multiple wanderers in parallel.
+Resolves the F-06 archive-loss risk: ended campaigns now live on a real shelf rather than being overwritten by the next "reset". Also lets the player run multiple wanderers in parallel.
 - Final state:
   - **Backend** (already landed): `src/dungeon_master/save_library.py` introduces a `SaveLibrary` that manages a `data/library.json` manifest plus per-save directories under `data/saves/<save_id>/`, each preserving the existing `StateStore` layout (`game_state.json`, `events.jsonl`, `memory.json`, `checkpoints/`, `turn-checkpoints/`). App startup auto-migrates the legacy flat `data/` layout into the first save slot, derives character-facing card summaries (`name`, `epithet`, identifying line, hover summary) from the real `GameState`, and exposes `GET /api/library/bootstrap`, `POST /api/library/saves`, `POST /api/library/select`. Backend stays single-active-save for v1: gameplay routes operate on one bound `GameService` and `service.bind_store` rebinds the active store on selection. Switching is blocked while any streamed request is registered in the cancellation registry so discard-only cancel semantics stay intact. Tests in `tests/test_save_library.py` and the integration tests in `tests/test_api.py`.
   - **Frontend**: `web/src/lib/store.svelte.ts` now drives a `LibraryStatus` union (`loading | empty | selecting | ready`) plus `library: SaveSummary[]`, `activeSaveId`, `libraryError`, with `bootstrap()` / `createSave()` / `selectSave()` / `openLibrary()` / `closeLibrary()` methods and a `#resetEphemera()` helper that wipes per-save client buffers (notes, scroll request, provisional streaming, dice phase) on every switch. `web/src/lib/types.ts` mirrors `SaveSummary` and `SaveLibraryBootstrapResponse`; `web/src/lib/api.ts` exposes `bootstrapLibrary` / `createSave` / `selectSave`.
@@ -245,17 +258,19 @@
   - **System menu lives in the skeleton strip too.** During character creation the play-time StatusStrip is unmounted, so without this the player would have no escape from a fresh save until they finalized a sheet.
 
 ### F-15 Campaign Setting Seed
-- Status: `backlog`
+
+- Status: `done`
 - Priority: `medium`
 - Goal: Let the player describe the desired setting/tone *before* a new campaign is generated, instead of every new save defaulting to oppressive medieval dark fantasy.
 - Why:
-  The current build hardcodes "oppressive medieval dark fantasy, adjacent to Berserk / Dark Souls / Fear & Hunger" into character generation, encounter seeding, the campaign opening, and the narrator's tone block. That works for one mood but not for noble-bright high fantasy, sword & sorcery, gothic horror, weird fiction, post-apocalyptic, science fantasy, mythic, hearth-and-homestead, etc. Any future campaign that doesn't want the grimdark vibe currently has no clean way in. F-12 makes this much more visible than it was — the save library invites running multiple campaigns in parallel, and right now they would all be near-tonal-clones of each other regardless of the character concept.
+The current build hardcodes "oppressive medieval dark fantasy, adjacent to Berserk / Dark Souls / Fear & Hunger" into character generation, encounter seeding, the campaign opening, and the narrator's tone block. That works for one mood but not for noble-bright high fantasy, sword & sorcery, gothic horror, weird fiction, post-apocalyptic, science fantasy, mythic, hearth-and-homestead, etc. Any future campaign that doesn't want the grimdark vibe currently has no clean way in. F-12 makes this much more visible than it was — the save library invites running multiple campaigns in parallel, and right now they would all be near-tonal-clones of each other regardless of the character concept.
 - Out-of-scope alignment note:
-  Cairn 2e (and Cairn 1e) do not use D&D-style alignment (`lawful/chaotic`, `good/evil`). Characters are defined by background / traits / bonds / omens, not a moral grid. So this ticket is explicitly **tonal/setting prompt seeding**, not "add alignment to the sheet". We should not introduce an alignment field as part of this ticket.
+Cairn 2e (and Cairn 1e) do not use D&D-style alignment (`lawful/chaotic`, `good/evil`). Characters are defined by background / traits / bonds / omens, not a moral grid. So this ticket is explicitly **tonal/setting prompt seeding**, not "add alignment to the sheet". We should not introduce an alignment field as part of this ticket.
 - Field shape (proposed — refine before implementation):
   - `time_period` — picker: `bronze_age | classical_antiquity | early_medieval | high_medieval | renaissance | early_modern | industrial | modern | near_future | far_future | post_apocalyptic | mythic_timeless`. Default `high_medieval`.
   - `tone_grim_noble` — slider/discrete: `grim | mixed | noble`. Grim = the world doesn't want you to win; noble = heroism is genuinely possible. (Famous "fantasy four" axis #1.)
   - `tone_dark_bright` — slider/discrete: `dark | mixed | bright`. Dark = oppressive imagery + hopeless mood; bright = wonder, hope, beauty. (Famous "fantasy four" axis #2; orthogonal to grim/noble.)
+  - `danger_profile` — slider/discrete: `story | standard | harsh | lethal`. This is deliberately separate from tone. `grim + story` should still allow a bleak world where fights are survivable; `bright + lethal` should still allow a hopeful world where combat is deadly. The backend should use this field to bound Cairn-scale mechanics, not just prompt flavor.
   - `genre` — multi-select tag set: `high_fantasy | low_fantasy | sword_and_sorcery | dark_fantasy | gothic_horror | cosmic_horror | weird_fiction | fairy_tale | mythic | post_apocalyptic | science_fantasy | historical_fantasy | urban_fantasy | hearth_and_homestead`. At most 2-3 to avoid prompt soup.
   - `magic_level` — `none | rare_numinous | common | ubiquitous`. Default `rare_numinous`.
   - `tech_level` — `stone | iron | medieval | renaissance | industrial | modern | spacefaring`. Defaults follow `time_period` so the player only overrides when desired (e.g. medieval setting + lost spacefaring ruins).
@@ -266,6 +281,13 @@
 - Backend scope:
   - Add a `CampaignSeed` Pydantic model and persist it on `GameState` (so it survives reloads, regenerate, and memory rebuilds). Migration: existing saves get a default seed matching today's hardcoded "Oppressive Dark Fantasy" so Vrtanes' canon is bit-for-bit unchanged.
   - Introduce a single `render_creative_direction(seed) -> str` helper. Replace every hardcoded "dark fantasy" / "Berserk · Dark Souls · Fear & Hunger" reference in the prompt corpus with a call to that helper. The hardcoded constant `SETTING_DIRECTION` in `campaign.py` becomes the helper's output for the default preset, not a literal string.
+  - Introduce a paired `render_danger_guidance(seed.danger_profile) -> str` helper used by Cairn-facing prompts and deterministic encounter clamps. This should express Cairn 2e behavior rather than bespoke "protect the player" instructions: attacks auto-hit, armor subtracts 0-3, average creatures sit around 3 HP, hardier threats around 6 HP, serious threats 10+ HP, morale matters, preparation can remove the opening DEX risk or send damage directly to STR, and non-mechanical fictional advantage is often the best difficulty valve.
+  - Enforce danger with typed backend bounds where possible, not only with LLM prose. Candidate clamps by profile:
+    - `story`: ordinary foes usually HP 1-3, armor 0-1, low enemy count, generous morale / flight, serious threats heavily telegraphed before combat.
+    - `standard`: Cairn-default feel; average foes around HP 3, hardier foes around HP 6, armor 0-2 unless the fiction strongly supports 3, morale as written.
+    - `harsh`: more frequent hardier foes, armor 1-3 when fiction supports it, enemy abilities and resource pressure appear earlier, retreat/preparation remains viable.
+    - `lethal`: serious threats and detachments are allowed earlier, enemy special abilities are more punishing, poor preparation can be fatal, but danger must still be telegraphed and grounded in the fiction.
+  - Avoid a pile of separate player-facing difficulty knobs in v1. If later playtests show a need, split the single profile internally into derived axes (`combat_lethality`, `resource_pressure`, `enemy_cleverness`, `recovery_generosity`, `oracle_pressure`) while keeping the creation UI simple.
   - Audit and rewrite the prompts that currently bake in the tone:
     - `campaign.py::SETTING_DIRECTION`
     - `campaign.py::CHARACTER_SYSTEM_PROMPT` (templates / scratch / quizzed all key off it)
@@ -280,26 +302,39 @@
   - `MemoryManager` does not need changes — memory is rebuilt from canon and the seed lives on `GameState`, not on memory cards.
 - Frontend scope:
   - New step in the "Begin a new campaign" flow that comes **before** character creation. This is where the player picks the preset, tweaks fields, and writes inspirations / restrictions. Submitting the step persists the seed on the new save and then flows into the existing character setup pipeline (templates / scratch / assist) — those character-generation calls now already see the seed, so the templates already feel right for the chosen tone.
+  - The creation screen should present `danger_profile` as an overall difficulty/danger slider beside, but visually distinct from, the tone controls. Copy should make the separation explicit: tone controls what the world feels like; danger controls how Cairn mechanics are bounded.
   - Surface the seed elsewhere as a small read-only summary:
     - `SaveLibrary.svelte` cards: a one-line genre/era badge under the kicker (e.g. `High Fantasy · Renaissance` or `Dark Fantasy · Medieval`). Helps the player tell parallel saves apart at a glance.
-    - `Inspector.svelte`: a collapsed "Setting seed" drawer that shows the chosen fields verbatim, useful for OOC reminders or for re-using as a screenshot recipe for a future save.
+    - `Inspector.svelte`: a collapsed "Setting seed" drawer that shows the chosen fields verbatim, including the danger profile, useful for OOC reminders or for re-using as a screenshot recipe for a future save.
   - Save library splash (empty-shelf mode) should pre-select the same default preset so an "I just want to play" first-run still produces the current default vibe without any clicks.
   - Slash command `/explain how was this setting picked?` should round-trip through the existing OOC explainer with the seed surfaced in its readonly state context — this is free once the seed lives on `GameState`.
 - Decisions to lock down before implementation:
   - **Timing.** Defer this ticket until the user is actually starting a new campaign. It is a creation-time primitive, not something worth retrofitting into the live Vrtanes save just to satisfy architectural neatness.
   - **Locked or live?** v1 should *lock* the seed at campaign creation. Mid-campaign tonal swaps would silently reshape character templates / encounter seeds / narrator voice and create archive incoherence. A future ticket can add an "amend setting seed" affordance if it ever feels worth the complexity.
   - **Free-text vs structured.** The user asked for "a few fields" — we should go structured for the dominant axes (era, grim/noble, dark/bright, genre, magic, tech, scale) and leave inspirations + restrictions as the only free-text slots. Pure free-text would re-create the prompt-engineering cliff for every player.
-  - **Forbidden imitation.** Inspirations are *flavor*, not a license to copy. The rendered direction block should always include a hard "no copied characters, locations, factions, or named lore from those works" line, exactly like the current `SETTING_DIRECTION` constant does.
+  - **Difficulty shape.** Start with one overall `danger_profile`, not a panel of sliders. The current product is chat-first and should not make campaign creation feel like tuning a CRPG ruleset. Internally, though, the backend should treat that one value as a structured policy affecting several mechanics surfaces (encounter HP/armor/count, morale, special abilities, recovery/resource pressure, and how much preparation can mitigate danger). If future play shows the player wants independent control, split the policy later.
+  - **Cairn difficulty, not anti-grimdark patches.** Do not solve Vrtanes-style early deaths with hyperspecific directives such as "make early enemies weak." The target is real Cairn 2e behavior: combat is dangerous because attacks land and bad positioning matters, but difficulty is fair when danger is telegraphed, average foes use average stats, morale routes enemies, HP refills in safety, and clever preparation can bypass HP or remove the first-round DEX gate.
   - **Default preset name.** The current vibe is `Oppressive Dark Fantasy`. Worth confirming with the user — they may prefer a more neutral starter default (e.g. "High Fantasy") so first-time runs feel less monochromatic.
 - Risk note:
-  This is a moderately heavy lift (touches 4 backend prompt files + 1 narrator file + 2-3 new frontend components + a state-shape migration), but the cost is mostly *audit*, not new architecture. The save library + per-save persistence from F-12 already gives us the right place to put the seed. The lift is worth it because every other future campaign-flavor ticket (alternate magic systems, hard-sci-fi mode, fairy-tale mode) already wants this primitive.
+This is a moderately heavy lift (touches 4 backend prompt files + 1 narrator file + 2-3 new frontend components + a state-shape migration), but the cost is mostly *audit*, not new architecture. The save library + per-save persistence from F-12 already gives us the right place to put the seed. The lift is worth it because every other future campaign-flavor ticket (alternate magic systems, hard-sci-fi mode, fairy-tale mode) already wants this primitive.
+- Final state:
+  - Backend: `src/dungeon_master/models.py` adds the `CampaignSeed` Pydantic model with the full structured field set (`time_period`, `tone_grim_noble`, `tone_dark_bright`, `danger_profile`, `genres` [≥1], `magic_level`, `tech_level`, `stakes_scale`, free-text `preset` / `inspirations` / `restrictions`) plus enums for every axis. `GameState.campaign_seed` is required; missing seeds default to the `Oppressive Dark Fantasy` preset so existing saves keep their original vibe bit-for-bit. `src/dungeon_master/campaign.py` introduces `render_creative_direction(seed)` and `render_danger_guidance(seed.danger_profile)` and routes character-template / scratch / quizzed / campaign / narrator / Cairn-encounter prompts through them; the old hardcoded `SETTING_DIRECTION` literal is gone. `src/dungeon_master/cairn.py` consumes `danger_profile` via the F-19 `EncounterScalingPolicy` so `story | standard | harsh | lethal` map to real HP / armor / weapon-die clamps, not just prompt flavor. `src/dungeon_master/api.py` exposes `POST /api/state/campaign-seed` (only valid while `campaign_status == "character_creation"`); `src/dungeon_master/save_library.py` carries `campaign_preset` + `danger_profile` on `SaveSummary` so the shelf can label saves; `src/dungeon_master/explainer.py` includes the seed in OOC explainer context.
+  - Frontend: `web/src/lib/types.ts` mirrors `CampaignSeed` plus all four-axis enums; `web/src/lib/campaign-seed.ts` is the single source of truth for label dictionaries, curated presets (`Oppressive Dark Fantasy` matches the backend default; `Ashen Pilgrimage` / `Bone Grinders' War` / `Lantern Road` are the deliberate excursions), `defaultCampaignSeed()`, `seedsEqual(a, b)`, and `seedBadgeLabel(seed)`. `web/src/lib/api.ts` adds `updateCampaignSeed(seed)`; the store wraps it through the standard `#run` plumbing. `web/src/components/CampaignSeedEditor.svelte` is a new pre-character-creation surface: it exposes the four presets as one-click starting points and sliders/selects for difficulty / era / tone (two axes) / genres (max 3) / magic / tech / stakes / preset name / inspirations / restrictions, plus a small advantage-payoff legend so the player understands what the danger slider actually grants. The editor is locked once `campaign_status` flips to `active` or `ended` (a read-only summary header takes its place). `CharacterSetup.svelte` mounts the editor above the mode picker so seeds settle before character templates are generated. `SaveLibrary.svelte` shows a `Preset · Danger` badge per card (badge color tracks danger tier). `Inspector.svelte` adds a collapsed "Campaign setting" drawer that renders the seed read-only at all times for OOC reference / screenshots.
+  - Tests: new `web/src/lib/campaign-seed.test.ts` covers `defaultCampaignSeed`, `seedsEqual` semantics, `seedBadgeLabel` empty-preset fallback, and label coverage for every enum variant; `web/src/lib/combat.test.ts` was extended for F-19 threat fields; backend `tests/test_service.py` covers `update_campaign_seed_before_campaign_start` and `start_campaign_preserves_campaign_seed`. Verification: `npm run check`, `npm test` (299/22 green), and `npm run build` all clean; `uv run ruff check`, `uv run mypy`, and `uv run pytest tests/test_cairn.py tests/test_service.py -q` all clean for the backend pass.
+- Decisions:
+  - Seed is **locked at campaign start**, not editable mid-campaign. Mid-run tonal swaps would silently reshape character templates / encounter seeds / narrator voice and create archive incoherence; the editor explicitly disables itself once `campaign_status` is `active` or `ended`.
+  - One overall `danger_profile` slider, not a panel. The kanban explicitly warned against making campaign creation feel like a CRPG ruleset; internally the single value still drives the F-19 scaling policy across HP / armor / weapon die / count, and the OOC narrator gets `render_danger_guidance(...)` so the model knows what story / standard / harsh / lethal means without re-implementing the rules.
+  - `Oppressive Dark Fantasy` stays the default preset because that is the existing live-Vrtanes flavor; old saves auto-migrate into it bit-for-bit. The other three presets are deliberate excursions (`Ashen Pilgrimage` / `Bone Grinders' War` / `Lantern Road`) chosen to span the tone × era × danger × magic surface so the editor's sliders prove themselves the moment the player hovers.
+  - The shelf badge is `Preset · Danger`, not the full structured seed, because parallel saves are mostly distinguishable by preset+danger; everything else is one click away in the read-only Inspector drawer.
+  - Genres are capped at 3 in the editor to keep prompt soup bounded; the editor enforces ≥ 1 to keep the model's tonal anchor non-empty.
 
 ### F-16 Introduced-Only NPC Roster / Hidden Cast
+
 - Status: `done`
 - Priority: `high`
 - Goal: Make the player-visible NPC roster reflect only people who have actually entered the story, while still letting the backend track hidden/revealed cast state canonically.
 - Why:
-  The current contract exposes opener-seeded NPCs directly in the Inspector from turn 0, even when the narration has not introduced them yet. That feels spoiler-y and confusing ("who are these two people and why are they on my roster?"). The inverse failure also exists: a dominant recurring antagonist can appear repeatedly in narration and still fail to become a tracked NPC if the updater never promotes them. The player-visible roster should therefore be an **introduced cast**, not a dump of every backend-authored character idea.
+The current contract exposes opener-seeded NPCs directly in the Inspector from turn 0, even when the narration has not introduced them yet. That feels spoiler-y and confusing ("who are these two people and why are they on my roster?"). The inverse failure also exists: a dominant recurring antagonist can appear repeatedly in narration and still fail to become a tracked NPC if the updater never promotes them. The player-visible roster should therefore be an **introduced cast**, not a dump of every backend-authored character idea.
 - Desired final state:
   - Backend canonical NPC tracking becomes **visibility-aware**. An NPC can exist in canon before the player sees them, but the Inspector must only render NPCs whose existence has been introduced through committed narration / observation / direct encounter. Hidden NPCs remain available to the game system as continuity anchors, foreshadowed movers, or pre-authored campaign structure, but they are not visible to the player.
   - Campaign generation may still author "secret" key NPCs if that improves long-arc coherence, but those NPCs must be persisted as hidden by default rather than immediately appearing in the visible roster.
@@ -329,11 +364,12 @@
   - Existing saves were one-time reseeded into the new contract on load; the legacy spoiler roster on the live Vrtanes save is gone without rolling the campaign back.
 
 ### B-02 Reframe Notes As Campaign Directives
+
 - Status: `done`
 - Priority: `medium`
 - Goal: Reframe the current `Notes` drawer away from a vague freeform editor and toward a clearly-scoped persistent OOC steering surface.
 - Why:
-  The current `Setting` / `Player` notes editor works mechanically, but "Edit notes" reads like a generic scratchpad. The user does **not** want to feel pushed into constantly editing freeform notes during play; the only compelling use-case is stable per-campaign guidance such as "the hierophant cannot speak first" or other persistent, non-canonical OOC constraints. If the surface remains, its job should be obvious: durable campaign directives / prompt steering, not casual journaling.
+The current `Setting` / `Player` notes editor works meF-1chanically, but "Edit notes" reads like a generic scratchpad. The user does **not** want to feel pushed into constantly editing freeform notes during play; the only compelling use-case is stable per-campaign guidance such as "the hierophant cannot speak first" or other persistent, non-canonical OOC constraints. If the surface remains, its job should be obvious: durable campaign directives / prompt steering, not casual journaling.
 - Candidate scope:
   - Rename/relabel the surface (`Campaign directives`, `GM guidance`, `Persistent guidance`, or similar) so it reads as an advanced OOC steering tool rather than a notebook.
   - Add explanatory copy clarifying that these fields are persistent per-campaign guidance fed into future generation, not canonical action-log events.
@@ -351,42 +387,97 @@
   - The drawer height is capped at 14rem (vs 12rem for the old notes drawer) because the directives editor carries an explicit intro paragraph + two labeled textareas with per-field hints; the slightly taller cap keeps the "Save directives" button in view without scrolling within the drawer body.
 
 ### F-11R Contextual Explain-This Hooks
+
 - Status: `later`
 - Priority: `low`
 - Goal: Add chat-native one-tap OOC explainer hooks on existing mechanics surfaces.
 - Why:
-  `F-11` as explicit attack/harm/recover/equip controls was skipped because it duplicated the planner-driven chat flow. The more useful reinterpretation is to help the player understand what the system just did without introducing a parallel action UI.
+`F-11` as explicit attack/harm/recover/equip controls was skipped because it duplicated the planner-driven chat flow. The more useful reinterpretation is to help the player understand what the system just did without introducing a parallel action UI.
 - Candidate scope:
   - Add small `Explain this` affordances on mechanical receipts, combat tracker rows, inventory/burden readouts, and other rules-heavy surfaces.
   - Clicking a hook should pre-seed `/explain ...` with contextual state, not create canonical events.
   - Answers remain ephemeral/non-canonical and reuse the existing F-10 OOC explainer pipeline.
 - Note:
-  This is the preferred “salvage” direction for the old F-11 area. If revisited, it should stay firmly chat-native and explanatory rather than becoming an explicit combat-controls layer.
+This is the preferred “salvage” direction for the old F-11 area. If revisited, it should stay firmly chat-native and explanatory rather than becoming an explicit combat-controls layer.
 
 ### F-17 Additional Provider Support
+
 - Status: `later`
 - Priority: `medium`
 - Goal: Expand the current desktop/runtime BYOK surface beyond the initial Gemini + OpenRouter beta pair.
 - Why:
-  The desktop beta now has a real app-level credential store, runtime settings API, and first-run provider prompt. Additional model/provider support should grow that typed seam deliberately instead of accreting one-off hacks.
+The desktop beta now has a real app-level credential store, runtime settings API, and first-run provider prompt. Additional model/provider support should grow that typed seam deliberately instead of accreting one-off hacks.
 - Notes:
   - Current beta scope is intentionally only `gemini` and `openrouter`.
   - The future pass should widen the backend provider enum/credential store, the settings API, the desktop BYOK UI, and the preset catalog together.
   - Do not change the currently selected models or public API contract unless the user explicitly asks for it.
 
+### F-18 Fictional Advantage / Enemy Weaknesses
+
+- Status: `done`
+- Priority: `medium`
+- Goal: Make player-created combat advantages mechanically legible without turning Cairn combat into a hit-location minigame.
+- Why:
+Cairn already supports the core payoff we want: attacks can be `enhanced`, vulnerable foes can take damage directly to STR, the first-round DEX gate can be bypassed by preparation, and Critical Damage can end a foe. The missing product seam is making sure free-text setup like "throw dust in its eyes", "hamstring it", "pin its arms", "lure it under the beam", or "wait for a clean head shot" becomes a structured mechanical advantage when the fiction supports it, rather than being left as narrator color.
+- Candidate scope:
+  - Add a planner op such as `gain_advantage` / `setup_advantage` that is distinct from `attack`. The op should describe the intended fictional setup, the target, the relevant risk/save if any, and the proposed payoff if successful.
+  - Add a Cairn resolution path that can grant one bounded payoff: `enhanced` next attack, direct-to-STR damage, skip/remove the opening DEX gate, deny the foe's next action, impair the foe, force morale, or expose a weakness for a follow-up attack.
+  - Treat foe weaknesses as generated per-encounter facts, not class/template definitions. Encounter seeding can author optional plain-English vulnerabilities or tactics for each generated combatant when the fiction calls for it; no fixed monster registry is required.
+  - Surface the payoff in `MechanicalReceipt.svelte` so the player can see why a later attack was enhanced or why HP was bypassed.
+  - Keep the UI chat-first. No body-part buttons, no universal "headshot" control, and no fixed hit-location table.
+- Decisions:
+  - This is Cairn-ish only if it stays fiction-first. The player should earn a stronger mechanical outcome by changing the situation in the fiction, not by selecting a called-shot option every round.
+  - Fear & Hunger-style enemy puzzles are a useful inspiration for "learn the enemy, exploit the opening", but the implementation should use Cairn's existing levers (`enhanced`, impaired, direct STR, Critical Damage, morale, lost action) rather than importing percentage headshots or limb HP.
+  - Short term, this can remain emergent through the existing narrator/planner, because enhanced damage and critical damage already exist. A ticket is still useful because model-emergent handling will be inconsistent unless the planner/service contract gives it a typed place to land.
+- Final state:
+  - Backend: `src/dungeon_master/models.py` adds `EncounterAdvantagePayoff` (`enhanced_attack | direct_str_damage | skip_dex_gate | deny_enemy_action | impair_enemy | force_morale | expose_weakness`) and `PendingEncounterAdvantage` (id, setup prose, target, payoff, source-turn). `EncounterState.pending_advantages: list[PendingEncounterAdvantage]` carries the live setup queue; `CairnResolution` gains `advantage_id` / `advantage_setup` / `advantage_payoff` / `advantage_target_name` / `advantage_applied` / `advantage_consumed` / `weakness` so receipts can show why a later attack was enhanced or why HP was bypassed. `src/dungeon_master/turn_router.py` adds a typed `setup_advantage` op kind (route = `player_action`, requires `target_name` + `advantage_payoff`); the combat-mechanics review prompt was widened to treat "concrete setup maneuver" as a trigger so the planner doesn't silently downgrade the op into prose. `src/dungeon_master/cairn.py` adds `setup_advantage(...)` (creates the `PendingEncounterAdvantage` and, when the payoff is `skip_dex_gate`, clears the round-1 DEX gate immediately) plus `_consume_pending_advantage(...)` inside `resolve_attack(...)`: matching advantages bump stance to `enhanced`, route damage straight to `STR` for `direct_str_damage` (forcing the Cairn STR save), trigger `_resolve_enemy_morale` for `force_morale`, and deny the foe's reactive turn for `deny_enemy_action`. `GameService` dispatches the new op into `CairnEngine.setup_advantage`. Foe weaknesses are author per-encounter facts on `EnemyCombatant.weakness`, not class definitions.
+  - Frontend: `web/src/lib/types.ts` mirrors the new payoff union, `PendingEncounterAdvantage`, and the F-18 fields on `CairnResolution`. `web/src/lib/campaign-seed.ts` exposes `ADVANTAGE_PAYOFF_LABEL` / `ADVANTAGE_PAYOFF_BLURB` (one source of truth for the receipt strip and the seed-editor legend). `web/src/lib/combat.ts` adds `advantagesForCombatant(state, name)` and `unattachedAdvantages(state)` so the tracker can pin advantages to the named foe and surface "loose" advantages above the foe list. `MechanicalReceipt.svelte` renders the F-18 fields inside the Cairn dl block (payoff label + setup prose + target name + a small `set up` / `consumed` chip + per-foe weakness). `CombatTracker.svelte` renders pinned and loose advantages as payoff-pill + setup-prose pairs, and the foe card surfaces `weakness` / `tactics` lines so the player can read the puzzle. The setup itself stays chat-first — there is **no** body-part button or universal "headshot" affordance; the player describes the setup, the planner classifies it as `setup_advantage`, the engine records the pending payoff, and the next attack consumes it.
+- Decisions:
+  - Foe weaknesses are encounter-scoped facts, not monster-class data. Encounter seeding can author optional plain-English vulnerabilities and tactics for each generated combatant when the fiction calls for it; no fixed monster registry is required.
+  - The advantage queue lives on `EncounterState`, not on the player or the foe. That keeps the cleanup contract simple — when the encounter resolves, the queue is gone with it, and a new ambush starts with no leftover advantages from a previous fight.
+  - Receipts intentionally show both the setup turn and the consumption turn (`set up` chip vs `consumed` chip) so the player can scrub their action log and see where a later enhanced strike came from. Without that, "why did this attack roll with advantage?" would be invisible.
+
+### F-19 Cairn Encounter Scaling / Stat Bounds
+
+- Status: `done`
+- Priority: `high`
+- Goal: Ensure generated enemies scale like Cairn 2e creatures instead of drifting into accidental meat sponges or unfair openers.
+- Why:
+Enemies are generated on the fly by encounter seeding, so difficulty depends on the generated stat block being Cairn-shaped every time. The system should treat "average creature = about 3 HP, hardier = about 6 HP, serious threat = 10+ HP" as an enforceable design invariant, not a loose prompt suggestion. This is separate from F-15's campaign-seed UI: F-15 chooses the desired danger profile, while this ticket makes the encounter engine respect Cairn stat bands in ordinary play.
+- Candidate scope:
+  - Add a typed encounter-scaling policy in `src/dungeon_master/cairn.py` that normalizes or rejects generated combatants outside the selected/default Cairn bands.
+  - Rework `GeneratedEncounterCombatant` / `EnemyCombatant` validation and encounter seeding so HP, armor, STR, DEX, WIL, weapon die, enemy count, and special notes follow Cairn 2e expectations.
+  - Default policy before F-15 exists: average foes around `3 HP`, hardier foes around `6 HP`, serious threats `10+ HP` only when clearly telegraphed by the scene; armor `0-1` for ordinary foes, `2` for meaningfully protected/tough foes, `3` only when the fiction strongly justifies it.
+  - Make fallback encounters less spongey than today's fixed `hp=6` default unless the target is clearly a hardier foe.
+  - Preserve lethality through Cairn levers rather than inflated HP: automatic damage, armor, critical damage, STR saves, morale, enemy abilities, detachments, positioning, and resource pressure.
+  - Add tests for ordinary human foe, armored/hardier foe, serious monster, multi-foe group, fallback seed, and out-of-band LLM output normalization.
+- Decisions:
+  - Do not solve balance by making all early fights easy. Solve it by making generated stat blocks legible, Cairn-scaled, and telegraphed.
+  - Do not rely on LLM prompt text alone. Prompt guidance is useful, but Python should enforce the mechanical envelope before stats become canonical encounter state.
+  - This ticket can land before F-15. When F-15 lands, `danger_profile` should feed into this same scaling policy instead of creating a second balance path.
+- Final state:
+  - Backend: `src/dungeon_master/cairn.py` adds an `EncounterScalingPolicy` dataclass keyed off `CampaignDangerProfile` with per-tier `hp_cap_for(threat)` / `armor_cap_for(threat)` clamps and an `ALLOWED_WEAPON_DICE` whitelist; `GeneratedEncounterCombatant` gets a `model_validator` that normalizes weapon dice to that whitelist before stats become canonical. `_seed_encounter` resolves the policy from `state.campaign_seed.danger_profile`, threads it through `_scaled_combatant`, and normalizes generated and fallback foes alike (`_fallback_encounter_seed` now seeds at `hp=3` / `str_score=10` / `threat_level=ORDINARY` instead of the old `hp=6` meat sponge default). `EnemyCombatant` carries `threat_level: EncounterThreatLevel` (`ordinary | hardier | serious`), `weakness`, and `tactics` so the scaling tier is canonical state, not just prompt color. The Cairn encounter prompt was rewritten to ask the model for `threat_level` + `weakness` + `tactics` per combatant; everything still gets clamped server-side.
+  - Frontend: `web/src/lib/types.ts` mirrors `EncounterThreatLevel` + the new `weakness`/`tactics` fields. `web/src/lib/combat.ts` threads `threat_level` / `weakness` / `tactics` through the adapter (defaulting to `ordinary` / `""` for legacy state). `web/src/lib/campaign-seed.ts` exposes `THREAT_LEVEL_LABEL` and `THREAT_LEVEL_BLURB` (`"Average Cairn foe — ~3 HP"` / `"Veteran or hardened threat — ~6 HP"` / `"Set-piece threat — 10+ HP"`). `CombatTracker.svelte` renders a per-foe threat-tier pip with the matching gold / rust / blood color, surfaces `weakness` and `tactics` lines, and pins/loosens any `pending_advantages` against the named foe. New backend tests (`tests/test_cairn.py`) prove fallback foes seed at the ordinary tier, out-of-band LLM HP/armor/dice get clamped to the active danger profile's caps, and `lethal` allows telegraphed serious threats up to 10+ HP. New frontend cases (`web/src/lib/combat.test.ts`) prove the adapter threads the new fields and falls back gracefully when the backend payload predates F-19.
+- Decisions:
+  - Threat tier is **canonical**, not derived. The model is asked to label each foe `ordinary | hardier | serious`, but Python clamps HP / armor / weapon die against the active `danger_profile` *and* the chosen tier, so a model can't accidentally promote an `ordinary` foe into a 12-HP brute by writing the wrong number.
+  - Fallback foes start at `hp=3` / `ORDINARY` instead of the old `hp=6` to match the kanban entry's "average creature = about 3 HP" invariant. Old saves do not migrate retroactively because past combatants are already canonical encounter state.
+  - The frontend never normalizes stats. The combat adapter only forwards what the backend already clamped; the threat pip and tooltip exist purely to make the tier visible to the player so a 10+ HP foe doesn't read like a bug.
+
 ## Tabled
 
 ### F-13 Player-Facing Rollback / Checkpoint Restore
+
 - Status: `tabled`
 - Priority: `low`
 - Reason:
-  The user does not want to prioritize cheating-friendly restore flow right now.
+The user does not want to prioritize cheating-friendly restore flow right now.
 
 ### F-14 Player-Facing Correction / Editing Services
+
 - Status: `tabled`
 - Priority: `low`
 - Reason:
-  The user does not want to prioritize manual correction/admin editing surfaces right now.
+The user does not want to prioritize manual correction/admin editing surfaces right now.
 
 ## Done
 
@@ -400,3 +491,4 @@
 - **F-08 Slash Suggestion Menu** — single `SLASH_COMMANDS` descriptor list shared by `/help` and the inline dropdown, with keyboard navigation, alias matching, and a11y wiring; F-02 extended it with the acquisition verbs.
 - **F-09 History Browsing** — frontend-only navigability layer over the existing `GameState` payload. New `web/src/lib/history.ts` (pure derivation + token-AND search across transcript rows and oracle outcomes, plus oracle-to-narrative event linking) drives a new "Transcript" Drawer in the Inspector and an inline filter strip (text + OracleKind pills) on "Oracle history". `ChatFeed.svelte` gains stable `data-event-id` anchors, opt-out auto-follow with a 120 px bottom band, a floating "Jump to latest" pill, and a 1.7 s gold flash on cross-component scroll targets. `store.svelte.ts` exposes `requestScrollTo` / `consumeScrollRequest` so the inspector can command the feed to scroll an event into view (with a rotating seq so repeat clicks on the same event still flash). 19 new vitest cases + 2 store cases; full suite 183 green; svelte-check + build green. Cross-campaign archive search is deferred to F-12; scene/turn jump deferred until backend exposes scene-index data from `memory.json`.
 - **F-17 Desktop Beta / Tauri Packaging** — the repo now ships a Tauri v2 shell under `web/src-tauri/`, a PyInstaller-based Python sidecar build path (`scripts/build_tauri_sidecar.py`), runtime API-base detection in the frontend, and a first-run BYOK flow that stores masked Gemini/OpenRouter credentials in the app-data directory while preserving the existing `.env` workflow. `.github/workflows/desktop-release.yml` now drafts GitHub release artifacts for macOS, Windows, and Linux. Current limitation: local Tauri compile/dev still requires Rust installed on the build machine, and signing/notarization remains a later follow-up.
+

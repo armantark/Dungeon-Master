@@ -25,6 +25,12 @@ go on a sibling component so this one stays the trust surface.
 -->
 <script lang="ts">
   import {
+    ADVANTAGE_PAYOFF_LABEL,
+    THREAT_LEVEL_BLURB,
+    THREAT_LEVEL_LABEL,
+  } from "../lib/campaign-seed";
+  import {
+    advantagesForCombatant,
     combatFromState,
     combatantHpTier,
     combatantStatusLabel,
@@ -32,6 +38,7 @@ go on a sibling component so this one stays the trust surface.
     enemyInitiated,
     firstRoundActionGated,
     sortCombatants,
+    unattachedAdvantages,
   } from "../lib/combat";
   import type { CombatantState } from "../lib/combat";
   import type { GameState } from "../lib/types";
@@ -46,6 +53,9 @@ go on a sibling component so this one stays the trust surface.
   const headline = $derived(encounterHeadline(encounter));
   const firstRound = $derived(firstRoundActionGated(encounter));
   const moraleTriggered = $derived(encounter !== null && encounter.morale_triggered);
+  // F-18 loose setups (no target_combatant_id pinned). Rendered above
+  // the foe list because they apply to the encounter as a whole.
+  const looseAdvantages = $derived(unattachedAdvantages(encounter));
   // F-05: surface the ambush cue as long as the encounter is active and
   // the foe was the one who opened it. We keep the flag visible across
   // rounds (not just round 1) because it affects the player's framing
@@ -106,6 +116,27 @@ go on a sibling component so this one stays the trust surface.
       Type <code>/retreat</code> to attempt to disengage.
     </p>
 
+    {#if looseAdvantages.length > 0}
+      <!--
+        F-18: setups that haven't been pinned to a specific foe
+        (e.g. a player blinded the room rather than a single
+        target). They apply to whichever foe the next attack
+        targets, so the tracker keeps them above the foe list as
+        a reminder of "live" leverage the player banked.
+      -->
+      <div class="setups setups--loose">
+        <span class="kicker">Pending setups</span>
+        <ul>
+          {#each looseAdvantages as adv (adv.id)}
+            <li>
+              <span class="pixel pill">{ADVANTAGE_PAYOFF_LABEL[adv.payoff]}</span>
+              <span class="setup-text">{adv.setup}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
     {#if combatants.length === 0}
       <p class="muted small">No tracked combatants yet.</p>
     {:else}
@@ -113,9 +144,28 @@ go on a sibling component so this one stays the trust surface.
         {#each combatants as foe (foe.id)}
           {@const tier = combatantHpTier(foe)}
           {@const statusLabel = combatantStatusLabel(foe.status)}
-          <li class="foe foe--{tier}" class:broken={foe.morale_broken}>
+          {@const foeAdvantages = advantagesForCombatant(encounter, foe.id)}
+          <li
+            class="foe foe--{tier} threat--{foe.threat_level}"
+            class:broken={foe.morale_broken}
+          >
             <div class="foe__head">
               <span class="foe__name">{foe.name}</span>
+              <!--
+                F-19: surface the scaling tier on every foe card so
+                the player knows whether the rail's HP/armor reflects
+                an "ordinary" rabble or a "serious" set-piece. The
+                ordinary tier deliberately renders too because
+                consistency reads better than "tiers only show up
+                on dangerous foes" — the player builds a mental
+                model of the difficulty curve over time.
+              -->
+              <span
+                class="foe__threat pixel threat-pip threat-pip--{foe.threat_level}"
+                title={THREAT_LEVEL_BLURB[foe.threat_level]}
+              >
+                {THREAT_LEVEL_LABEL[foe.threat_level]}
+              </span>
               {#if statusLabel !== null}
                 <span class="foe__status pixel">{statusLabel}</span>
               {/if}
@@ -160,6 +210,31 @@ go on a sibling component so this one stays the trust surface.
                 <dd class="pixel">{foe.morale}</dd>
               {/if}
             </dl>
+
+            {#if foe.weakness !== ""}
+              <p class="weakness">
+                <span class="kicker">Weakness</span>
+                <span>{foe.weakness}</span>
+              </p>
+            {/if}
+
+            {#if foe.tactics !== ""}
+              <p class="tactics muted small">
+                <span class="kicker">Tactics</span>
+                <span>{foe.tactics}</span>
+              </p>
+            {/if}
+
+            {#if foeAdvantages.length > 0}
+              <ul class="setups setups--pinned">
+                {#each foeAdvantages as adv (adv.id)}
+                  <li>
+                    <span class="pixel pill">{ADVANTAGE_PAYOFF_LABEL[adv.payoff]}</span>
+                    <span class="setup-text">{adv.setup}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -286,6 +361,104 @@ go on a sibling component so this one stays the trust surface.
   .foe--critical .foe__status,
   .foe--down .foe__status {
     color: var(--rust-iron);
+  }
+  /*
+   * F-19 threat tier pip. Sits next to the foe's name as a small
+   * uppercase chip. The color tier intentionally matches the
+   * difficulty pip on the save card and the danger profile in the
+   * seed editor — gold for ordinary / story-tier foes, rust for
+   * hardier veterans, blood-red for serious set-piece threats.
+   */
+  .threat-pip {
+    padding: 0.05rem 0.4rem;
+    border: 1px solid currentColor;
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .threat-pip--ordinary {
+    color: var(--gold-tarnished);
+  }
+  .threat-pip--hardier {
+    color: var(--rust-iron);
+  }
+  .threat-pip--serious {
+    color: var(--rust-blood);
+  }
+  /*
+   * Threat tier also reinforces the foe-card top-edge hue so a
+   * scan of the rail reads tier even before the pip does.
+   */
+  .foe.threat--serious {
+    border-top: 2px solid color-mix(in oklab, var(--rust-blood) 60%, transparent);
+  }
+  .foe.threat--hardier {
+    border-top: 2px solid color-mix(in oklab, var(--rust-iron) 55%, transparent);
+  }
+
+  .weakness,
+  .tactics {
+    margin: 0;
+    display: grid;
+    gap: 0.18rem;
+  }
+  .weakness {
+    color: var(--paper-warm);
+    font-size: 0.86rem;
+  }
+  .tactics {
+    font-size: 0.82rem;
+  }
+  /*
+   * F-18 setups (pinned to a foe or loose). The pill carries the
+   * mechanical payoff label so the player reads "Force morale ·
+   * (your prose)" and instantly knows what the next swing buys
+   * them.
+   */
+  .setups {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.3rem;
+  }
+  .setups--loose {
+    margin: 0;
+    padding: 0.45rem 0.55rem;
+    border: 1px dashed color-mix(in oklab, var(--gold-bright) 50%, transparent);
+    background: color-mix(in oklab, var(--gold-tarnished) 10%, var(--ink-deep) 90%);
+    display: grid;
+    gap: 0.3rem;
+  }
+  .setups--loose ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.25rem;
+  }
+  .setups--pinned {
+    margin-top: 0.1rem;
+  }
+  .setups li {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem;
+    align-items: baseline;
+    font-size: 0.85rem;
+    color: var(--paper-bone);
+  }
+  .pill {
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--gold-bright);
+    color: var(--gold-bright);
+    font-size: 0.66rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .setup-text {
+    font-style: italic;
+    color: var(--paper-warm);
   }
   .tags {
     list-style: none;

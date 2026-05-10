@@ -25,6 +25,7 @@ on-disk archive policy decisions (do we move-to-trash? hard-delete?
 keep checkpoint zips?), and that work isn't scoped into F-12.
 -->
 <script lang="ts">
+  import { DANGER_PROFILE_LABEL } from "../lib/campaign-seed";
   import { game } from "../lib/store.svelte";
   import type { SaveSummary } from "../lib/types";
 
@@ -83,6 +84,21 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     if (save.campaign_status === "ready_to_start") return "Ready";
     return "Setup";
   }
+
+  // F-15 / F-19: surface the campaign preset + danger profile on each
+  // card so the player can scan their shelf for the right vibe before
+  // binding. We render the preset and danger as a stacked pair (rather
+  // than concatenating with " · ") because long preset names would
+  // otherwise wrap awkwardly under the kicker; keeping them visually
+  // separate also lets the danger pip carry its own color tier.
+  function presetLabel(save: SaveSummary): string {
+    const trimmed = save.campaign_preset.trim();
+    return trimmed === "" ? "Unscoped campaign" : trimmed;
+  }
+
+  function dangerLabel(save: SaveSummary): string {
+    return DANGER_PROFILE_LABEL[save.danger_profile];
+  }
 </script>
 
 <div class="library iron">
@@ -133,6 +149,15 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
             {#if save.character_epithet}
               <p class="card__epithet">{save.character_epithet}</p>
             {/if}
+            <div class="card__seed">
+              <span class="card__seed-preset">{presetLabel(save)}</span>
+              <span
+                class="pixel card__seed-danger card__seed-danger--{save.danger_profile}"
+                title="Campaign difficulty"
+              >
+                {dangerLabel(save)}
+              </span>
+            </div>
             {#if save.identifying_line}
               <p class="card__line">{save.identifying_line}</p>
             {/if}
@@ -309,6 +334,44 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     font-style: italic;
     font-size: 0.92rem;
     color: color-mix(in oklab, var(--ink-bruise) 60%, var(--ink-black));
+  }
+  /*
+   * F-15 + F-19 seed badges sit between the epithet and the
+   * identifying-line. The preset is the player's scoping label
+   * (verbatim free text from the seed editor); the danger pip
+   * inherits the difficulty color tier so the shelf reads in one
+   * glance ("Lethal" cards have a blood pip).
+   */
+  .card__seed {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.35rem 0 0;
+    flex-wrap: wrap;
+  }
+  .card__seed-preset {
+    font-family: var(--font-display);
+    font-size: 0.86rem;
+    color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
+  }
+  .card__seed-danger {
+    padding: 0.05rem 0.4rem;
+    border: 1px solid currentColor;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .card__seed-danger--story {
+    color: color-mix(in oklab, var(--gold-bright) 60%, var(--ink-black));
+  }
+  .card__seed-danger--standard {
+    color: color-mix(in oklab, var(--gold-tarnished) 90%, var(--ink-black));
+  }
+  .card__seed-danger--harsh {
+    color: var(--rust-iron);
+  }
+  .card__seed-danger--lethal {
+    color: var(--rust-blood);
   }
   .card__line {
     margin: 0.4rem 0 0;

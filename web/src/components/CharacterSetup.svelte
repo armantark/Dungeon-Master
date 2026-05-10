@@ -30,6 +30,7 @@ Why three paths plus a quiz step:
     CharacterSheet,
     GameState,
   } from "../lib/types";
+  import CampaignSeedEditor from "./CampaignSeedEditor.svelte";
   import CharacterEditor from "./CharacterEditor.svelte";
   import CharacterTemplateCard from "./CharacterTemplateCard.svelte";
   import LoadingPanel from "./LoadingPanel.svelte";
@@ -140,6 +141,19 @@ Why three paths plus a quiz step:
       short interview before the AI drafts you a sheet.
     </p>
   </div>
+
+  <!--
+    F-15: campaign-seed editor lives above the mode picker. Templates,
+    the assist quiz, and the eventual `startCampaign` generation all
+    read `state.campaign_seed`, so the player should commit setting +
+    difficulty before generating drafts. Locked once the campaign is
+    `active` / `ended` so re-rolling the seed never desyncs the
+    generated world.
+  -->
+  <CampaignSeedEditor
+    seed={gs.campaign_seed}
+    locked={gs.campaign_status === "active" || gs.campaign_status === "ended"}
+  />
 
   {#if mode === "choose"}
     <div class="modes">

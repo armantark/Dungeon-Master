@@ -4,8 +4,11 @@ from litellm.types.utils import ModelResponse
 from dungeon_master.cairn import (
     AttackActor,
     CairnEngine,
+    EncounterScalingPolicy,
     GeneratedCairnBackfill,
     GeneratedCairnItemProfile,
+    GeneratedEncounterCombatant,
+    GeneratedEncounterSeed,
 )
 from dungeon_master.models import (
     AttackStance,
@@ -20,9 +23,12 @@ from dungeon_master.models import (
     CairnMechanicsSource,
     CairnSurvivalAction,
     CairnTimeAdvance,
+    CampaignDangerProfile,
+    EncounterAdvantagePayoff,
     EncounterEndReason,
     EncounterInitiator,
     EncounterState,
+    EncounterThreatLevel,
     EnemyCombatant,
     GameState,
     InventoryItem,
@@ -327,6 +333,148 @@ def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:
     assert outcome.cairn.combat_round == 1
     assert outcome.cairn.player_acted is True
     assert outcome.cairn.damage_after_armor == 4
+
+
+def test_fallback_encounter_seed_uses_ordinary_cairn_scale() -> None:
+    state = _ready_state()
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    outcome = engine.resolve_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=2,
+        weapon_item_id=state.character.inventory[0].id,
+        stance=AttackStance.NORMAL,
+    )
+
+    foe = state.encounter.combatants[0]
+    assert foe.max_hp == 3
+    assert foe.hp <= 3
+    assert foe.armor == 1
+    assert foe.threat_level == EncounterThreatLevel.ORDINARY
+    assert outcome.cairn is not None
+    assert outcome.cairn.target_armor == 1
+
+
+def test_encounter_scaling_normalizes_out_of_band_llm_stats() -> None:
+    engine = CairnEngine(config=NarrativeConfig(model="", api_key=None, base_url=None))
+    generated = GeneratedEncounterSeed(
+        notes="A model tried to overbuild an ordinary scuffle.",
+        combatants=[
+            GeneratedEncounterCombatant(
+                name="Overbuilt footpad",
+                hp=12,
+                str_score=18,
+                dex_score=18,
+                wil_score=18,
+                armor=3,
+                weapon_name="crooked knife",
+                weapon_damage_die=7,
+                threat_level=EncounterThreatLevel.ORDINARY,
+            ),
+            GeneratedEncounterCombatant(
+                name="Second footpad",
+                hp=9,
+                str_score=12,
+                dex_score=10,
+                wil_score=8,
+                armor=3,
+                weapon_name="club",
+                weapon_damage_die=6,
+                threat_level=EncounterThreatLevel.HARDIER,
+            ),
+        ],
+    )
+
+    scaled = engine._scaled_encounter_seed(  # noqa: SLF001
+        generated,
+        EncounterScalingPolicy.for_danger(CampaignDangerProfile.STANDARD),
+    )
+
+    assert scaled.combatants[0].hp == 3
+    assert scaled.combatants[0].armor == 1
+    assert scaled.combatants[0].weapon_damage_die in {4, 6, 8, 10, 12}
+    assert scaled.combatants[0].leader is True
+    assert scaled.combatants[1].hp == 6
+    assert scaled.combatants[1].armor == 2
+
+
+def test_lethal_encounter_scaling_allows_telegraphed_serious_threat() -> None:
+    engine = CairnEngine(config=NarrativeConfig(model="", api_key=None, base_url=None))
+    generated = GeneratedEncounterSeed(
+        notes="A clear monster, not a street scuffle.",
+        combatants=[
+            GeneratedEncounterCombatant(
+                name="Bell-tower ogre",
+                hp=12,
+                str_score=18,
+                dex_score=6,
+                wil_score=10,
+                armor=3,
+                weapon_name="iron bell-clapper",
+                weapon_damage_die=12,
+                threat_level=EncounterThreatLevel.SERIOUS,
+                weakness="Its bare ankles are exposed below the bell skirt.",
+            ),
+        ],
+    )
+
+    scaled = engine._scaled_encounter_seed(  # noqa: SLF001
+        generated,
+        EncounterScalingPolicy.for_danger(CampaignDangerProfile.LETHAL),
+    )
+
+    assert scaled.combatants[0].hp == 12
+    assert scaled.combatants[0].armor == 3
+    assert scaled.combatants[0].weakness == "Its bare ankles are exposed below the bell skirt."
+
+
+def test_setup_advantage_is_consumed_by_matching_attack() -> None:
+    state = _ready_state()
+    state.encounter = EncounterState(
+        active=True,
+        round_number=1,
+        first_round_dex_gate_pending=True,
+        initiator=EncounterInitiator.PLAYER,
+        combatants=[
+            EnemyCombatant(
+                name="Abbey ghoul",
+                hp=4,
+                max_hp=4,
+                armor=1,
+                weakness="Ash blinds the white film over its eyes.",
+            ),
+        ],
+    )
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    setup = engine.setup_advantage(
+        state,
+        target_name="Abbey ghoul",
+        setup="I fling ash into the ghoul's filmed eyes.",
+        payoff=EncounterAdvantagePayoff.ENHANCED_ATTACK,
+    )
+    attack = engine.resolve_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=0,
+        weapon_item_id=state.character.inventory[0].id,
+        stance=AttackStance.NORMAL,
+    )
+
+    assert setup.cairn is not None
+    assert setup.cairn.advantage_consumed is False
+    assert attack.cairn is not None
+    assert attack.cairn.advantage_payoff == EncounterAdvantagePayoff.ENHANCED_ATTACK
+    assert attack.cairn.advantage_consumed is True
+    assert attack.cairn.attack_stance == AttackStance.ENHANCED
+    assert state.encounter.pending_advantages == []
 
 
 def test_attack_rejects_dangling_primary_weapon_instead_of_unarmed_fallback() -> None:

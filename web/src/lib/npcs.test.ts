@@ -8,6 +8,7 @@ import {
   referencedNpcsForOutcome,
   sortNpcsForDisplay,
 } from "./npcs";
+import { defaultCampaignSeed } from "./campaign-seed";
 import type {
   GameState,
   NPC,
@@ -92,6 +93,7 @@ function state(overrides: Partial<GameState>): GameState {
     oracle_tables: overrides.oracle_tables ?? emptyOracleTables(),
     oracle_history: overrides.oracle_history ?? [],
     action_log: overrides.action_log ?? [],
+    campaign_seed: overrides.campaign_seed ?? defaultCampaignSeed(),
   };
 }
 

@@ -44,6 +44,7 @@ from dungeon_master.models import (
     CairnAbility,
     CairnRestKind,
     CampaignEndReason,
+    CampaignSeed,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterSheet,
@@ -83,6 +84,10 @@ class NotesRequest(BaseModel):
 class DirectivesRequest(BaseModel):
     world_guidance: str = ""
     play_guidance: str = ""
+
+
+class CampaignSeedRequest(BaseModel):
+    campaign_seed: CampaignSeed
 
 
 class YesNoRequest(BaseModel):
@@ -932,6 +937,17 @@ def update_directives(svc: ServiceDep, payload: Annotated[DirectivesRequest, Bod
             world_guidance=payload.world_guidance,
             play_guidance=payload.play_guidance,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/state/campaign-seed", response_model=GameState)
+def update_campaign_seed(
+    svc: ServiceDep,
+    payload: Annotated[CampaignSeedRequest, Body()],
+) -> GameState:
+    try:
+        return svc.update_campaign_seed(payload.campaign_seed)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

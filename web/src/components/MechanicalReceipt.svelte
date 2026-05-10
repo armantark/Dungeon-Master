@@ -16,6 +16,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
 -->
 <script lang="ts">
   import { untrack } from "svelte";
+  import { ADVANTAGE_PAYOFF_LABEL } from "../lib/campaign-seed";
   import {
     cairnHeadline,
     formatAbility,
@@ -356,6 +357,45 @@ and add a Cairn-specific dl block with the resolution snapshot.
           {#if cairn.attack_stance !== null}
             <dt>Stance</dt>
             <dd class="pixel">{formatStance(cairn.attack_stance)}</dd>
+          {/if}
+          <!--
+            F-18 fictional advantage. The same fields appear on two
+            different resolution shapes:
+              1. SETUP_ADVANTAGE op — `advantage_setup` is the prose
+                 of the maneuver, `advantage_payoff` is the
+                 mechanical lever it commits to, `advantage_target_name`
+                 names the foe pinned, and `advantage_applied=true`
+                 confirms the engine actually attached it.
+              2. The follow-up attack that consumed it — same
+                 fields are echoed but `advantage_consumed=true`,
+                 so the receipt for the swing reads as "powered by
+                 your earlier setup".
+            We render both shapes through the same rows; the
+            "Setup" label changes meaning by context, but the
+            player reads both as the same lineage of cause and
+            effect.
+          -->
+          {#if cairn.advantage_payoff != null}
+            <dt>Advantage payoff</dt>
+            <dd class="pixel">{ADVANTAGE_PAYOFF_LABEL[cairn.advantage_payoff]}</dd>
+          {/if}
+          {#if cairn.advantage_setup != null && cairn.advantage_setup !== ""}
+            <dt>Setup</dt>
+            <dd>{cairn.advantage_setup}</dd>
+          {/if}
+          {#if cairn.advantage_target_name != null && cairn.advantage_target_name !== ""}
+            <dt>Setup target</dt>
+            <dd>{cairn.advantage_target_name}</dd>
+          {/if}
+          {#if cairn.advantage_applied === true || cairn.advantage_consumed === true}
+            <dt>Advantage</dt>
+            <dd class="pixel">
+              {cairn.advantage_consumed === true ? "Consumed" : "Set up"}
+            </dd>
+          {/if}
+          {#if cairn.weakness != null && cairn.weakness !== ""}
+            <dt>Weakness</dt>
+            <dd>{cairn.weakness}</dd>
           {/if}
           {#if cairn.weapon_name !== null}
             <dt>Weapon</dt>

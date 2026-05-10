@@ -37,10 +37,12 @@ from dungeon_master.models import (
     CairnTimeAdvance,
     CampaignDirectives,
     CampaignEndReason,
+    CampaignSeed,
     CampaignStatus,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterSheet,
+    EncounterAdvantagePayoff,
     EventType,
     GameEvent,
     GameState,
@@ -220,16 +222,21 @@ class NarrativePort(Protocol):
 
 
 class CampaignPort(Protocol):
-    def generate(self, character: CharacterSheet) -> GameState:
+    def generate(self, character: CharacterSheet, seed: CampaignSeed | None = None) -> GameState:
         raise NotImplementedError
 
-    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
+    def generate_result(
+        self,
+        character: CharacterSheet,
+        seed: CampaignSeed | None = None,
+    ) -> CampaignWorldResult:
         raise NotImplementedError
 
     def iter_generate(
         self,
         character: CharacterSheet,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
         raise NotImplementedError
@@ -325,6 +332,18 @@ class CairnPort(Protocol):
     def resolve_retreat(self, state: GameState, reason: str) -> OracleOutcome:
         raise NotImplementedError
 
+    def setup_advantage(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        setup: str,
+        payoff: EncounterAdvantagePayoff,
+        actor_id: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        raise NotImplementedError
+
     def set_item_equipped(
         self,
         state: GameState,
@@ -375,18 +394,22 @@ class CairnPort(Protocol):
 
 
 class CharacterPort(Protocol):
-    def setup_state(self) -> GameState:
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
         raise NotImplementedError
 
-    def generate_templates(self) -> list[CharacterSheet]:
+    def generate_templates(self, seed: CampaignSeed | None = None) -> list[CharacterSheet]:
         raise NotImplementedError
 
-    def generate_templates_result(self) -> CharacterTemplatesResult:
+    def generate_templates_result(
+        self,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterTemplatesResult:
         raise NotImplementedError
 
     def iter_generate_templates(
         self,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
         raise NotImplementedError
@@ -793,18 +816,35 @@ class GameService:
     def _new_setup_state(self) -> GameState:
         return self._character_generator.setup_state()
 
+    def update_campaign_seed(self, seed: CampaignSeed) -> GameState:
+        state = self.load_state()
+        if state.campaign_status == CampaignStatus.ACTIVE:
+            message = "Campaign seed is locked after the campaign starts."
+            raise ValueError(message)
+        if state.campaign_status == CampaignStatus.ENDED:
+            message = self._campaign_end_conflict_message(state)
+            raise ValueError(message)
+        state.campaign_seed = seed.model_copy(deep=True)
+        self._save_state_commit(state, create_checkpoint=True)
+        return state
+
     def list_character_templates(self) -> list[CharacterSheet]:
-        return self._character_generator.generate_templates()
+        state = self.load_state()
+        return self._character_generator.generate_templates(seed=state.campaign_seed)
 
     def list_character_templates_result(self) -> CharacterTemplatesResult:
-        return self._character_generator.generate_templates_result()
+        state = self.load_state()
+        return self._character_generator.generate_templates_result(seed=state.campaign_seed)
 
     def stream_character_templates(
         self,
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
-        return self._character_generator.iter_generate_templates(cancel_token=cancel_token)
+        return self._character_generator.iter_generate_templates(
+            seed=self.load_state(cancel_token=cancel_token).campaign_seed,
+            cancel_token=cancel_token,
+        )
 
     def generate_character_draft(
         self,
@@ -939,7 +979,10 @@ class GameService:
             message = "Finalize a character before starting the campaign."
             raise ValueError(message)
 
-        generated = self._campaign_generator.generate_result(state.character)
+        generated = self._campaign_generator.generate_result(
+            state.character,
+            seed=state.campaign_seed,
+        )
         next_state = generated.state
         self._cairn.ensure_character_state(next_state, allow_backfill=True)
         self._record_event(
@@ -977,6 +1020,7 @@ class GameService:
 
         generator = self._campaign_generator.iter_generate(
             state.character,
+            seed=state.campaign_seed,
             cancel_token=cancel_token,
         )
 
@@ -1837,6 +1881,24 @@ class GameService:
                 )
                 oracle_title = "Coordinated attack"
                 step_summaries.append(f"Coordinated attack resolved: {primary_outcome.summary}")
+                continue
+
+            if (
+                op.kind == PlannedTurnOpKind.SETUP_ADVANTAGE
+                and op.target_name is not None
+                and op.advantage_payoff is not None
+            ):
+                actor = self._character_for_actor_name(state, op.actor_name)
+                primary_outcome = self._cairn.setup_advantage(
+                    state,
+                    target_name=op.target_name,
+                    setup=op.text,
+                    payoff=op.advantage_payoff,
+                    actor_id=None if actor.is_player else actor.id,
+                    cancel_token=cancel_token,
+                )
+                oracle_title = "Advantage setup"
+                step_summaries.append(f"Advantage setup resolved: {primary_outcome.summary}")
                 continue
 
             if op.kind == PlannedTurnOpKind.HARM:

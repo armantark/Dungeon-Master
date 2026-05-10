@@ -32,13 +32,17 @@ from dungeon_master.models import (
     CairnRestKind,
     CairnSurvivalAction,
     CairnTimeAdvance,
+    CampaignDangerProfile,
     CampaignEndReason,
+    CampaignSeed,
     CampaignStatus,
+    CampaignTimePeriod,
     CharacterQuiz,
     CharacterQuizAnswer,
     CharacterQuizOption,
     CharacterQuizQuestion,
     CharacterSheet,
+    EncounterAdvantagePayoff,
     EncounterInitiator,
     EncounterState,
     EnemyCombatant,
@@ -103,44 +107,59 @@ class FakeNarrative:
 
 
 class FakeCampaignGenerator:
-    def generate(self, character: CharacterSheet) -> GameState:
+    def generate(self, character: CharacterSheet, seed: CampaignSeed | None = None) -> GameState:
         state = sample_state()
         state.character = character
         state.player_notes = character.backstory
+        if seed is not None:
+            state.campaign_seed = seed
         return state
 
-    def generate_result(self, character: CharacterSheet) -> CampaignWorldResult:
-        return CampaignWorldResult(state=self.generate(character))
+    def generate_result(
+        self,
+        character: CharacterSheet,
+        seed: CampaignSeed | None = None,
+    ) -> CampaignWorldResult:
+        return CampaignWorldResult(state=self.generate(character, seed=seed))
 
     def iter_generate(
         self,
         character: CharacterSheet,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CampaignWorldResult]:
         del cancel_token
-        result = self.generate_result(character)
+        result = self.generate_result(character, seed=seed)
         yield CompletionDelta(content=result.state.model_dump_json())
         return result
 
 
 class FakeCharacterGenerator:
-    def setup_state(self) -> GameState:
-        return sample_state()
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
+        state = sample_state()
+        if seed is not None:
+            state.campaign_seed = seed
+        return state
 
-    def generate_templates(self) -> list[CharacterSheet]:
+    def generate_templates(self, seed: CampaignSeed | None = None) -> list[CharacterSheet]:
+        del seed
         return [sample_state().character]
 
-    def generate_templates_result(self) -> CharacterTemplatesResult:
-        return CharacterTemplatesResult(templates=self.generate_templates())
+    def generate_templates_result(
+        self,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterTemplatesResult:
+        return CharacterTemplatesResult(templates=self.generate_templates(seed=seed))
 
     def iter_generate_templates(
         self,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterTemplatesResult]:
         del cancel_token
-        result = self.generate_templates_result()
+        result = self.generate_templates_result(seed=seed)
         yield CompletionDelta(content=result.templates[0].model_dump_json())
         return result
 
@@ -272,8 +291,10 @@ class FakeCharacterGenerator:
 
 
 class SetupCharacterGenerator(FakeCharacterGenerator):
-    def setup_state(self) -> GameState:
+    def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
         state = sample_state()
+        if seed is not None:
+            state.campaign_seed = seed
         state.campaign_status = CampaignStatus.CHARACTER_CREATION
         state.threads = []
         state.npcs = []
@@ -814,6 +835,31 @@ class FakeCairnEngine:
                 str_after=state.character.cairn.str_score,
                 enemy_damage=1,
                 enemy_damage_source=source,
+            ),
+        )
+
+    def setup_advantage(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        setup: str,
+        payoff: EncounterAdvantagePayoff,
+        actor_id: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del actor_id, cancel_token
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=f"Advantage set against {target_name}: {setup}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                target_name=target_name,
+                advantage_setup=setup,
+                advantage_payoff=payoff,
+                advantage_target_name=target_name,
+                advantage_applied=True,
+                advantage_consumed=False,
             ),
         )
 
@@ -1992,6 +2038,28 @@ def test_finalize_character_sets_ready_to_start(tmp_path: Path) -> None:
     assert state.character.name == character.name
 
 
+def test_update_campaign_seed_before_campaign_start(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=SetupCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    seed = CampaignSeed(
+        preset="Ashen Bronze",
+        time_period=CampaignTimePeriod.BRONZE_AGE,
+        danger_profile=CampaignDangerProfile.HARSH,
+    )
+
+    state = service.update_campaign_seed(seed)
+
+    assert state.campaign_seed.preset == "Ashen Bronze"
+    assert state.campaign_seed.time_period == CampaignTimePeriod.BRONZE_AGE
+    assert state.campaign_seed.danger_profile == CampaignDangerProfile.HARSH
+
+
 def test_start_campaign_uses_finalized_character(tmp_path: Path) -> None:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
@@ -2012,6 +2080,64 @@ def test_start_campaign_uses_finalized_character(tmp_path: Path) -> None:
     assert state.character.cairn.source == CairnMechanicsSource.NARRATIVE_BACKFILL
     assert state.character.cairn.slots_used >= 1
     assert state.character.cairn.primary_weapon_item_id is not None
+
+
+def test_start_campaign_preserves_campaign_seed(tmp_path: Path) -> None:
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=SetupCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+    )
+    seed = CampaignSeed(
+        preset="Lethal pilgrimage",
+        danger_profile=CampaignDangerProfile.LETHAL,
+    )
+
+    service.update_campaign_seed(seed)
+    service.finalize_character(sample_state().character)
+    state = service.start_campaign()
+
+    assert state.campaign_seed.preset == "Lethal pilgrimage"
+    assert state.campaign_seed.danger_profile == CampaignDangerProfile.LETHAL
+
+
+def test_setup_advantage_turn_records_cairn_payoff(tmp_path: Path) -> None:
+    def advantage_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SETUP_ADVANTAGE,
+                    text=text,
+                    target_name="abbey ghoul",
+                    advantage_payoff=EncounterAdvantagePayoff.ENHANCED_ATTACK,
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=advantage_classifier),
+    )
+
+    state = service.submit_player_turn("I blind the abbey ghoul with ash.")
+
+    assert state.oracle_history[0].kind == OracleKind.PLAYER_ACTION
+    assert state.oracle_history[0].cairn is not None
+    assert (
+        state.oracle_history[0].cairn.advantage_payoff
+        == EncounterAdvantagePayoff.ENHANCED_ATTACK
+    )
 
 
 def test_load_state_backfills_active_character_once(tmp_path: Path) -> None:

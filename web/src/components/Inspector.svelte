@@ -16,6 +16,18 @@ it into a drawer keeps that ceremony.
 <script lang="ts">
   import { tick } from "svelte";
   import { hasCairnMechanics } from "../lib/cairn";
+  import {
+    DANGER_PROFILE_BLURB,
+    DANGER_PROFILE_LABEL,
+    GENRE_LABEL,
+    MAGIC_LEVEL_LABEL,
+    STAKES_SCALE_LABEL,
+    TECH_LEVEL_LABEL,
+    TIME_PERIOD_LABEL,
+    TONE_DARK_BRIGHT_LABEL,
+    TONE_GRIM_NOBLE_LABEL,
+    seedBadgeLabel,
+  } from "../lib/campaign-seed";
   import { combatFromState } from "../lib/combat";
   import {
     deriveTranscriptRows,
@@ -341,6 +353,54 @@ it into a drawer keeps that ceremony.
         <CombatTracker state={gs} />
       </Drawer>
     {/if}
+
+    <!--
+      F-15 / F-19: read-only seed readout. The editor is reachable
+      from the character-creation screen; once the campaign is
+      `active` (or `ended`), the seed is locked and we surface this
+      drawer as the "trust signal" for what the world was generated
+      against. Keeping it collapsed by default so the inspector
+      doesn't lead with this — it's the kind of thing a player
+      consults a few hours into a campaign, not every drawer open.
+    -->
+    <Drawer title="Campaign setting" open={false} maxHeight="20rem">
+      <div class="seed-readout">
+        <p class="seed-readout__head pixel">{seedBadgeLabel(gs.campaign_seed)}</p>
+        <p class="muted seed-readout__danger">
+          {DANGER_PROFILE_BLURB[gs.campaign_seed.danger_profile]}
+        </p>
+        <dl class="seed-readout__grid">
+          <dt>Era</dt>
+          <dd>{TIME_PERIOD_LABEL[gs.campaign_seed.time_period]}</dd>
+          <dt>Tone</dt>
+          <dd>
+            {TONE_GRIM_NOBLE_LABEL[gs.campaign_seed.tone_grim_noble]}
+            ·
+            {TONE_DARK_BRIGHT_LABEL[gs.campaign_seed.tone_dark_bright]}
+          </dd>
+          <dt>Difficulty</dt>
+          <dd class="pixel">{DANGER_PROFILE_LABEL[gs.campaign_seed.danger_profile]}</dd>
+          <dt>Genres</dt>
+          <dd>
+            {gs.campaign_seed.genres.map((g) => GENRE_LABEL[g]).join(", ")}
+          </dd>
+          <dt>Magic</dt>
+          <dd>{MAGIC_LEVEL_LABEL[gs.campaign_seed.magic_level]}</dd>
+          <dt>Tech</dt>
+          <dd>{TECH_LEVEL_LABEL[gs.campaign_seed.tech_level]}</dd>
+          <dt>Stakes</dt>
+          <dd>{STAKES_SCALE_LABEL[gs.campaign_seed.stakes_scale]}</dd>
+          {#if gs.campaign_seed.inspirations.trim() !== ""}
+            <dt>Inspirations</dt>
+            <dd>{gs.campaign_seed.inspirations}</dd>
+          {/if}
+          {#if gs.campaign_seed.restrictions.trim() !== ""}
+            <dt>Restrictions</dt>
+            <dd>{gs.campaign_seed.restrictions}</dd>
+          {/if}
+        </dl>
+      </div>
+    </Drawer>
 
     <div bind:this={threadsDrawerEl}>
       <Drawer title="Threads" open={false} maxHeight="11rem" reopenToken={threadFocusSeq}>
@@ -717,6 +777,41 @@ it into a drawer keeps that ceremony.
     font-family: var(--font-body);
     font-size: 0.92rem;
     line-height: 1.45;
+    color: var(--paper-bone);
+  }
+  .seed-readout {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .seed-readout__head {
+    margin: 0;
+    color: var(--gold-bright);
+    font-size: 0.92rem;
+    letter-spacing: 0.04em;
+  }
+  .seed-readout__danger {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+  .seed-readout__grid {
+    margin: 0;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 0.85rem;
+    row-gap: 0.25rem;
+    font-size: 0.88rem;
+  }
+  .seed-readout__grid dt {
+    margin: 0;
+    font-family: var(--font-pixel);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--gold-tarnished);
+  }
+  .seed-readout__grid dd {
+    margin: 0;
     color: var(--paper-bone);
   }
   .archived-hint {
