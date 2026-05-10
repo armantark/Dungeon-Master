@@ -543,6 +543,9 @@ class CairnEngine:
     ) -> OracleOutcome:
         self._require_ready(state)
         actor = self._resolve_actor(state, actor_id)
+        existing_encounter_active = (
+            state.encounter.active and self._has_active_enemies(state.encounter)
+        )
         encounter = self._ensure_encounter(
             state,
             player_input=f"Attack {target_name}",
@@ -551,7 +554,11 @@ class CairnEngine:
             initiator=EncounterInitiator.PLAYER,
             cancel_token=cancel_token,
         )
-        target = self._require_target(encounter, target_name)
+        target = (
+            self._require_target(encounter, target_name)
+            if existing_encounter_active
+            else self._resolve_opening_attack_target(encounter, target_name)
+        )
         weapon = self._resolve_weapon(actor.sheet, weapon_item_id)
         base_die = self._attack_die(weapon, stance)
         round_before = encounter.round_number
@@ -1927,6 +1934,23 @@ class CairnEngine:
             message = f"No active foe matches '{target_name}'."
             raise ValueError(message)
         return target
+
+    def _resolve_opening_attack_target(
+        self,
+        encounter: EncounterState,
+        target_name: str,
+    ) -> EnemyCombatant:
+        matched = self._find_combatant(encounter, target_name)
+        if matched is not None:
+            return matched
+
+        active = [combatant for combatant in encounter.combatants if not combatant.defeated and not combatant.fled]
+        if not active:
+            message = "No active foe is available for the opening attack."
+            raise ValueError(message)
+
+        leader = next((combatant for combatant in active if combatant.leader), None)
+        return leader or active[0]
 
     def _find_combatant(self, encounter: EncounterState, target_name: str) -> EnemyCombatant | None:
         cleaned = target_name.strip().lower()

@@ -1,3 +1,4 @@
+import pytest
 from litellm.types.utils import ModelResponse
 
 from dungeon_master.cairn import CairnEngine, GeneratedCairnBackfill
@@ -133,6 +134,10 @@ class RecordingAcquisitionCompletion:
         return _stream()  # type: ignore[return-value]
 
 
+def _usable_test_config() -> NarrativeConfig:
+    return NarrativeConfig(model="test-model", api_key=None, base_url=None)
+
+
 def test_generated_backfill_normalizes_zero_weapon_damage_for_non_weapons() -> None:
     generated = GeneratedCairnBackfill.model_validate(
         {
@@ -250,6 +255,98 @@ def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:
     assert outcome.cairn.combat_round == 1
     assert outcome.cairn.player_acted is True
     assert outcome.cairn.damage_after_armor == 4
+
+
+def test_resolve_attack_against_broad_opening_target_uses_seeded_leader() -> None:
+    state = _ready_state()
+    state.encounter = EncounterState(
+        active=False,
+        round_number=2,
+        end_reason=EncounterEndReason.PLAYER_ESCAPED,
+        combatants=[
+            EnemyCombatant(
+                name="Spent prior foe",
+                hp=1,
+                max_hp=1,
+            ),
+        ],
+    )
+
+    engine = CairnEngine(
+        seed=1,
+        config=_usable_test_config(),
+        completion_function=RecordingAcquisitionCompletion(
+            """{
+              "notes": "The vanguard pushes through the hovel doorway.",
+              "combatants": [
+                {
+                  "name": "Leper-Crowd Bell-Ringer",
+                  "description": "A rotting fanatic swinging a rusted bell.",
+                  "hp": 4,
+                  "str_score": 9,
+                  "dex_score": 9,
+                  "wil_score": 11,
+                  "armor": 0,
+                  "weapon_name": "Heavy iron bell",
+                  "weapon_damage_die": 6,
+                  "leader": true,
+                  "notes": "Signals the rest of the crowd."
+                },
+                {
+                  "name": "Leper-Pilgrim",
+                  "description": "A diseased zealot in filthy robes.",
+                  "hp": 3,
+                  "str_score": 8,
+                  "dex_score": 8,
+                  "wil_score": 10,
+                  "armor": 0,
+                  "weapon_name": "Jagged censer",
+                  "weapon_damage_die": 6,
+                  "leader": false,
+                  "notes": "Fights with reckless devotion."
+                }
+              ]
+            }""",
+        ),
+    )
+
+    outcome = engine.resolve_attack(
+        state,
+        target_name="Leper-crowd vanguard",
+        target_armor=0,
+        weapon_item_id=state.character.inventory[0].id,
+        stance=AttackStance.NORMAL,
+    )
+
+    assert state.encounter.active is True
+    assert [combatant.name for combatant in state.encounter.combatants] == [
+        "Leper-Crowd Bell-Ringer",
+        "Leper-Pilgrim",
+    ]
+    assert outcome.cairn is not None
+    assert outcome.question == "Attack Leper-Crowd Bell-Ringer"
+    assert outcome.cairn.target_name == "Leper-Crowd Bell-Ringer"
+    assert outcome.cairn.target_combatant_id == state.encounter.combatants[0].id
+
+
+def test_resolve_attack_keeps_strict_targeting_during_active_encounter() -> None:
+    state = _active_encounter_state(player_dex=18, enemy_dex=8)
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No active foe matches 'leper-crowd vanguard'\\.",
+    ):
+        engine.resolve_attack(
+            state,
+            target_name="leper-crowd vanguard",
+            target_armor=0,
+            weapon_item_id=state.character.inventory[0].id,
+            stance=AttackStance.NORMAL,
+        )
 
 
 def test_resolve_enemy_opener_seeds_encounter_and_tracks_enemy_initiative() -> None:
