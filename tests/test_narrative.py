@@ -18,6 +18,7 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     PartyMember,
+    SceneStatus,
 )
 from dungeon_master.narrative import (
     DEFAULT_MODEL,
@@ -531,6 +532,90 @@ def test_narrative_prompt_includes_diegetic_threat_appraisal_for_overtuned_fight
     assert "Flesh-Bound Mass: serious" in system_prompt
     assert "calcified core exposed" in system_prompt
     assert "never as explicit game-balance advice" in system_prompt
+
+
+def test_interrupted_scene_check_forbids_teleporting_non_pursuing_boss() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.current_scene = "Interrupted before: Descend into the cellar sanctuary"
+    state.scene_status = SceneStatus.INTERRUPTED
+    state.encounter = EncounterState(
+        active=False,
+        pursuit_active=False,
+        combatants=[
+            EnemyCombatant(
+                name="Flesh-Bound Abomination",
+                hp=10,
+                max_hp=10,
+                str_score=14,
+                weapon_name="crushing bulk",
+                weapon_damage_die=8,
+                threat_level=EncounterThreatLevel.SERIOUS,
+            ),
+        ],
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.SCENE_CHECK,
+        summary="interrupted: Descend into the cellar sanctuary",
+        question="Descend into the cellar sanctuary",
+        chaos_factor=state.chaos_factor,
+        scene_status=SceneStatus.INTERRUPTED,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(model=DEFAULT_MODEL, api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "I descend into the cellar sanctuary.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert "<SCENE_INTERRUPTION_CONSTRAINTS>" in system_prompt
+    assert "without canonical active pursuit" in system_prompt
+    assert "Do not make an earlier escaped boss" in system_prompt
+    assert "physically reappear" in system_prompt
+
+
+def test_interrupted_scene_check_allows_canonical_active_pursuit() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.current_scene = "Interrupted before: Cross the execution yard"
+    state.scene_status = SceneStatus.INTERRUPTED
+    state.encounter = EncounterState(
+        active=True,
+        pursuit_active=True,
+        combatants=[
+            EnemyCombatant(
+                name="Iron-Masked Headsman",
+                hp=6,
+                max_hp=6,
+                str_score=12,
+                weapon_name="cleaver",
+                weapon_damage_die=8,
+                threat_level=EncounterThreatLevel.HARDIER,
+            ),
+        ],
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.SCENE_CHECK,
+        summary="interrupted: Cross the execution yard",
+        question="Cross the execution yard",
+        chaos_factor=state.chaos_factor,
+        scene_status=SceneStatus.INTERRUPTED,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(model=DEFAULT_MODEL, api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "I cross the execution yard.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert "<SCENE_INTERRUPTION_CONSTRAINTS>" in system_prompt
+    assert "with canonical active pursuit" in system_prompt
+    assert "Iron-Masked Headsman" in system_prompt
+    assert "physically plausible" in system_prompt
 
 
 def test_narrative_prompt_includes_campaign_directives_when_present() -> None:

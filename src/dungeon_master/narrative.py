@@ -40,8 +40,10 @@ from dungeon_master.models import (
     EncounterThreatLevel,
     EnemyCombatant,
     GameState,
+    OracleKind,
     OracleOutcome,
     PartyMember,
+    SceneStatus,
 )
 from dungeon_master.observability import (
     LLMCallRecord,
@@ -118,6 +120,12 @@ Discipline:
   across consecutive responses unless it materially changes this beat.
 - Do not manufacture urgency, consequences, or forced-choice branches unless
   the supplied outcome/state actually licenses them.
+- For interrupted scene checks, the oracle licenses an interruption before
+  the expected scene; it does not by itself license teleporting an older
+  threat, escaped boss, or quest objective into the destination. A direct
+  stalker-style reappearance requires canonical active pursuit, an explicit
+  current outcome, or the latest user action to establish how that threat can
+  physically be there.
 - When the supplied threat appraisal says the active danger is beyond the
   party's direct-fight footing, telegraph that **inside the fiction**: weight,
   footing, exhaustion, impossible reach, companions hesitating, the foe's mass
@@ -504,6 +512,9 @@ class NarrativeEngine:
             "<ORACLE_OUTCOME_JSON>",
             self._xml_escape(self._compact_outcome_json(outcome)),
             "</ORACLE_OUTCOME_JSON>",
+            "<SCENE_INTERRUPTION_CONSTRAINTS>",
+            self._xml_escape(self._scene_interruption_constraints(state, outcome)),
+            "</SCENE_INTERRUPTION_CONSTRAINTS>",
             "<DIEGETIC_THREAT_APPRAISAL>",
             self._xml_escape(self._threat_appraisal(state)),
             "</DIEGETIC_THREAT_APPRAISAL>",
@@ -610,6 +621,54 @@ class NarrativeEngine:
                 + self._clip_prompt_text(state.directives.play_guidance, 350),
             )
         return "\n".join(lines) or "(none)"
+
+    def _scene_interruption_constraints(
+        self,
+        state: GameState,
+        outcome: OracleOutcome,
+    ) -> str:
+        if (
+            outcome.kind != OracleKind.SCENE_CHECK
+            or outcome.scene_status != SceneStatus.INTERRUPTED
+        ):
+            return "No special scene-interruption constraint for this outcome."
+
+        pursuing_foes = [
+            foe
+            for foe in state.encounter.combatants
+            if state.encounter.active
+            and state.encounter.pursuit_active
+            and not foe.defeated
+            and not foe.fled
+        ]
+        if pursuing_foes:
+            foe_names = ", ".join(foe.name for foe in pursuing_foes[:3])
+            return "\n".join(
+                [
+                    "Interrupted scene check with canonical active pursuit.",
+                    f"Pursuing threat(s): {foe_names}.",
+                    (
+                        "A direct stalker-style complication may involve these threat(s), "
+                        "but only in a physically plausible way. Preserve mobility, scale, "
+                        "route knowledge, and recent geography; if those are unsupported, "
+                        "use traces, blocked routes, collateral damage, witnesses, minions, "
+                        "or time pressure instead of immediate bodily reappearance."
+                    ),
+                ],
+            )
+
+        return (
+            "Interrupted scene check without canonical active pursuit.\n"
+            "The interruption should be a local or indirect complication before "
+            "the expected scene: suspicious guards, a locked or watched entrance, "
+            "a rival arrival, collapsing masonry, a bad omen, a hard choice, "
+            "lost time, or another plausible obstacle.\n"
+            "Do not make an earlier escaped boss, major quest threat, or established "
+            "monster physically reappear, stalk the player, or block the destination "
+            "unless the latest user message or oracle outcome explicitly establishes "
+            "that direct pursuit. Older memory can color the pressure through echoes, "
+            "damage, cult rumors, distant noise, residue, or consequences."
+        )
 
     def _threat_appraisal(self, state: GameState) -> str:
         if not state.encounter.active:
