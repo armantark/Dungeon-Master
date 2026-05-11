@@ -3269,6 +3269,8 @@ class GameService:
             )
         touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
         touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
+        if touched_npc_ids:
+            self._sync_party_members_from_visible_npcs(state, npc_ids=touched_npc_ids)
         self._apply_thread_references(outcome, touched_thread_ids)
         self._apply_npc_references(state, outcome, touched_npc_ids)
         return self._memory_for_state(state, existing_memory=memory)

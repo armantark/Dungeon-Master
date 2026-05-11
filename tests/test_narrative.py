@@ -450,6 +450,7 @@ def test_narrative_prompt_includes_party_member_primary_weapons() -> None:
     assert '"party_members":' in system_prompt
     assert "Rusted wood-axe" in system_prompt
     assert '"primary_weapon":true' in system_prompt
+    assert "compact `party_members` JSON is the authority" in system_prompt
 
 
 def test_narrative_prompt_includes_bounded_memory_context() -> None:

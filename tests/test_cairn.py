@@ -12,6 +12,7 @@ from dungeon_master.cairn import (
 )
 from dungeon_master.models import (
     AttackStance,
+    CairnAbility,
     CairnCharacterState,
     CairnConditionKey,
     CairnDayPhase,
@@ -245,6 +246,58 @@ def test_generated_backfill_defaults_missing_weapon_damage_for_weapons() -> None
 
     assert generated.inventory[0].weapon_damage_die == 6
     assert generated.inventory[1].weapon_damage_die is None
+
+
+def test_generated_backfill_normalizes_common_llm_enum_slop() -> None:
+    generated = GeneratedCairnBackfill.model_validate(
+        {
+            "skills": ["Zealous guard"],
+            "abilities": ["Pain tolerance"],
+            "str_score": 12,
+            "dex_score": 9,
+            "wil_score": 14,
+            "max_hp": 4,
+            "inventory": [
+                {
+                    "name": "Martyr's iron pendant",
+                    "details": "A crude symbol worn at the throat.",
+                    "tags": ["holy_relic", "petty"],
+                    "slots": 0,
+                    "weapon_damage_die": None,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": True,
+                    "power": {
+                        "kind": "holy_relic",
+                        "name": "Witness the wound",
+                        "summary": "Bolsters resolve in danger.",
+                        "effect": "restore_attribute",
+                        "effect_amount": 1,
+                        "effect_ability": "wil",
+                        "clears_condition": None,
+                        "recharge_condition": "",
+                        "requires_wil_save_in_danger": False,
+                        "adds_fatigue": False,
+                        "consumed_on_use": False,
+                    },
+                },
+                {
+                    "name": "Iron mace",
+                    "details": "A practical weapon.",
+                    "tags": ["weapon"],
+                    "slots": 2,
+                    "weapon_damage_die": 8,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": True,
+                },
+            ],
+        },
+    )
+
+    relic = generated.inventory[0]
+    assert relic.tags == [CairnItemTag.HOLY, CairnItemTag.RELIC, CairnItemTag.PETTY]
+    assert relic.power.effect_ability == CairnAbility.WIL
 
 
 def test_backfill_prompt_preserves_visible_authored_gear() -> None:

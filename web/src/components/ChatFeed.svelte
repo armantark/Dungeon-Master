@@ -264,6 +264,7 @@ F-09 browsing behavior:
   // ally, and clear it on a timer so the rule doesn't linger.
   let flashEventId: string | null = $state(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  let resizeObserver: ResizeObserver | null = null;
 
   // Distance from the bottom edge below which auto-follow is on. We
   // pick a band rather than `scrollTop === scrollBottom` because
@@ -280,6 +281,15 @@ F-09 browsing behavior:
   function scrollToBottom(behavior: ScrollBehavior = "instant"): void {
     if (!scroller) return;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+  }
+
+  async function settleToBottom(): Promise<void> {
+    await tick();
+    scrollToBottom();
+    requestAnimationFrame(() => {
+      scrollToBottom();
+      requestAnimationFrame(() => scrollToBottom());
+    });
   }
 
   function jumpToLatest(): void {
@@ -332,7 +342,7 @@ F-09 browsing behavior:
     if (totalCount !== lastCount) {
       lastCount = totalCount;
       if (pinnedToBottom) {
-        tick().then(() => scrollToBottom());
+        void settleToBottom();
       }
     }
   });
@@ -350,7 +360,7 @@ F-09 browsing behavior:
     if (playerMessageCount > lastPlayerCount) {
       lastPlayerCount = playerMessageCount;
       pinnedToBottom = true;
-      tick().then(() => scrollToBottom());
+      void settleToBottom();
     }
   });
 
@@ -377,8 +387,16 @@ F-09 browsing behavior:
       (count, m) => (m.kind === "player" ? count + 1 : count),
       0,
     );
-    tick().then(() => scrollToBottom());
+    if (scroller) {
+      resizeObserver = new ResizeObserver(() => {
+        if (pinnedToBottom) void settleToBottom();
+      });
+      resizeObserver.observe(scroller);
+    }
+    void settleToBottom();
     return () => {
+      resizeObserver?.disconnect();
+      resizeObserver = null;
       if (flashTimer !== null) clearTimeout(flashTimer);
     };
   });

@@ -108,6 +108,10 @@ Discipline:
   item and do not substitute a different weapon from older prose. If no weapon
   is named in the outcome, use the actor's primary/equipped weapon from
   canonical inventory.
+- For party members, the compact `party_members` JSON is the authority for
+  names, roles, armor, and carried gear. Once a companion sheet exists, do not
+  keep using older transcript weapon color that conflicts with their
+  primary/equipped inventory.
 - Static character facts, injuries, and recurring motifs are reference context,
   not mandatory prose beats; mention them only when they materially affect the
   immediate action or scene.

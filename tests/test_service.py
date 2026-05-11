@@ -3232,6 +3232,62 @@ def test_service_syncs_recruited_party_member_when_true_name_is_narrated(
     assert updated.party_members[0].loyalty == "steady after revealing himself"
 
 
+def test_service_syncs_recruited_party_member_after_post_narration_npc_update(
+    tmp_path: Path,
+) -> None:
+    def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        npc = state.npcs[0]
+        npc.name = "Vilerius"
+        npc.player_label = "Vilerius"
+        npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
+        npc.role = "Scarred martyr veteran"
+        npc.disposition = "loyal after revealing his name"
+        return (npc.id,)
+
+    store = StateStore(tmp_path / "game_state.json")
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.NPCS),
+        npc_updater=FakeNpcUpdater(mutate=mutate),
+    )
+    state = service.load_state()
+    npc = NPC(
+        name="Scarred Martyr Veteran",
+        role="Scarred zealot",
+        disposition="zealous",
+        player_label="Imposing warrior",
+        player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+    )
+    state.npcs = [npc]
+    state.party_members.append(
+        PartyMember(
+            sheet=CharacterSheet(
+                name="Imposing warrior",
+                archetype="Scarred zealot",
+                epithet="zealous",
+            ),
+            npc_id=npc.id,
+            loyalty="zealous",
+        ),
+    )
+    store.save(state, create_checkpoint=False)
+
+    updated = service.submit_player_action("I ask the warrior his name.")
+
+    assert updated.npcs[0].name == "Vilerius"
+    assert updated.npcs[0].player_label_kind == NPCPlayerLabelKind.PROPER_NAME
+    assert updated.party_members[0].sheet.name == "Vilerius"
+    assert updated.party_members[0].sheet.archetype == "Scarred martyr veteran"
+    assert updated.party_members[0].sheet.epithet == "loyal after revealing his name"
+    assert updated.party_members[0].loyalty == "loyal after revealing his name"
+
+
 def test_service_only_persists_visible_npc_ids_on_outcomes(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "game_state.json")
 

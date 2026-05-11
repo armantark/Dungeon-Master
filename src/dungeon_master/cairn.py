@@ -435,10 +435,13 @@ class GeneratedCairnItemProfile(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_weapon_damage_die(cls, data: object) -> object:
+    def normalize_generated_item_payload(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
         migrated = dict(data)
+        migrated["tags"] = _normalize_generated_item_tags(migrated.get("tags", []))
+        if "power" in migrated:
+            migrated["power"] = _normalize_generated_item_power(migrated.get("power"))
         raw_tags = migrated.get("tags", [])
         tags = {
             tag.value if isinstance(tag, CairnItemTag) else str(tag)
@@ -518,6 +521,54 @@ class EmptyBackfillContentError(ValueError):
 def _raise_empty_backfill_content_error() -> None:
     message = "Cairn backfill returned empty content."
     raise EmptyBackfillContentError(message)
+
+
+def _normalize_generated_item_tags(raw_tags: object) -> list[object]:
+    if not isinstance(raw_tags, list):
+        return []
+    normalized: list[object] = []
+    for raw_tag in raw_tags:
+        if isinstance(raw_tag, CairnItemTag):
+            candidate = raw_tag.value
+        elif isinstance(raw_tag, str):
+            candidate = raw_tag.strip().lower().replace("-", "_").replace(" ", "_")
+        else:
+            continue
+        if candidate == "holy_relic":
+            normalized.extend([CairnItemTag.HOLY.value, CairnItemTag.RELIC.value])
+            continue
+        if candidate in {tag.value for tag in CairnItemTag}:
+            normalized.append(candidate)
+    return _dedupe_preserve_order(normalized)
+
+
+def _normalize_generated_item_power(raw_power: object) -> object:
+    if raw_power is None:
+        return raw_power
+    if not isinstance(raw_power, dict):
+        return raw_power
+    migrated = dict(raw_power)
+    raw_ability = migrated.get("effect_ability")
+    if isinstance(raw_ability, str):
+        cleaned_ability = raw_ability.strip().upper()
+        if cleaned_ability in {ability.value for ability in CairnAbility}:
+            migrated["effect_ability"] = cleaned_ability
+    for field_name in ("kind", "effect", "clears_condition"):
+        raw_value = migrated.get(field_name)
+        if isinstance(raw_value, str):
+            migrated[field_name] = raw_value.strip().lower().replace("-", "_").replace(" ", "_")
+    return migrated
+
+
+def _dedupe_preserve_order(values: list[object]) -> list[object]:
+    seen: set[object] = set()
+    deduped: list[object] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 @dataclass(frozen=True)
