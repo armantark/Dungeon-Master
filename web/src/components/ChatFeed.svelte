@@ -245,6 +245,7 @@ F-09 browsing behavior:
 
   let scroller: HTMLElement | undefined;
   let lastCount: number = $state(0);
+  let lastPlayerCount: number = $state(0);
   // F-09: auto-follow latches off when the player scrolls up out of
   // the bottom band, on again when they scroll back into it. The
   // alternative ("once unlatched, stay off until the user clicks
@@ -252,6 +253,12 @@ F-09 browsing behavior:
   // where the player scrolled up by accident — resuming on
   // re-bottom matches the muscle memory people have from chat apps.
   let pinnedToBottom: boolean = $state(true);
+  // Set whenever we're driving a scroll ourselves so the matching
+  // onscroll events don't flip `pinnedToBottom` off. Without this
+  // guard, the single trailing onscroll fired after a programmatic
+  // scroll can be measured *before* the scrollTop value has settled
+  // and unlatch follow on the very first stream token.
+  let programmaticScroll: boolean = false;
   // Last consumed scroll request seq. We track it instead of clearing
   // `game.scrollRequest` synchronously because a freshly-set request
   // for the same eventId still has to re-run the scroll/flash effect
@@ -278,7 +285,18 @@ F-09 browsing behavior:
 
   function scrollToBottom(behavior: ScrollBehavior = "smooth"): void {
     if (!scroller) return;
+    // We mark the next handful of onscroll events as programmatic
+    // so `handleScroll` doesn't race the scroll animation and
+    // unlatch follow. The flag clears after the scroll has settled.
+    programmaticScroll = true;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    // For instant scrolls the onscroll fires before the next frame;
+    // for smooth scrolls it fires over many frames. A 250 ms window
+    // covers both without keeping the latch suppressed long enough
+    // for a real user scroll to leak through.
+    window.setTimeout(() => {
+      programmaticScroll = false;
+    }, 250);
   }
 
   function jumpToLatest(): void {
@@ -288,6 +306,9 @@ F-09 browsing behavior:
 
   function handleScroll(): void {
     if (!scroller) return;
+    // Ignore scroll events we triggered ourselves; only real user
+    // scrolls should be able to disengage auto-follow.
+    if (programmaticScroll) return;
     pinnedToBottom = distanceFromBottom() <= FOLLOW_THRESHOLD_PX;
   }
 
@@ -340,13 +361,44 @@ F-09 browsing behavior:
       // a smooth-scroll mid-animation fires `onscroll` repeatedly
       // with `distanceFromBottom > FOLLOW_THRESHOLD_PX`, which
       // would briefly flip `pinnedToBottom` to false and stall the
-      // follow on the next streamed token. Smooth scroll is
-      // reserved for the explicit jumpToLatest / scrollToEvent
-      // paths where the visual cue matters and there's no token
-      // race in flight.
+      // follow on the next streamed token. We must pass "instant"
+      // explicitly (not "auto") because the .feed element has
+      // `scroll-behavior: smooth` CSS for the explicit jump/anchor
+      // paths, and `behavior: "auto"` defers to that CSS rule.
+      // Smooth scroll is reserved for the explicit jumpToLatest /
+      // scrollToEvent paths where the visual cue matters and
+      // there's no token race in flight.
       if (pinnedToBottom) {
-        requestAnimationFrame(() => scrollToBottom("auto"));
+        requestAnimationFrame(() => scrollToBottom("instant"));
       }
+    }
+  });
+
+  // Always-on follow when the player submits. Without this, a
+  // player who previously scrolled up (e.g. to re-read backstory)
+  // would send a message and see neither their own bubble nor the
+  // DM reply unless they manually hit "Jump to latest". Submitting
+  // is an explicit "I'm interacting now" signal, so we re-pin and
+  // scroll regardless of prior latch state.
+  //
+  // We use a double rAF because the player bubble and the
+  // provisional DM bubble (plus StageChecklist) may mount across
+  // two layout passes — markdown rendering inside ChatMessage and
+  // the conditional checklist both bump the scroll height after
+  // the initial commit. A single rAF would scroll to a stale
+  // height; the second rAF lets the streaming bubble settle in.
+  const playerMessageCount = $derived(
+    messages.reduce((count, m) => (m.kind === "player" ? count + 1 : count), 0),
+  );
+
+  $effect(() => {
+    if (playerMessageCount > lastPlayerCount) {
+      lastPlayerCount = playerMessageCount;
+      pinnedToBottom = true;
+      requestAnimationFrame(() => {
+        scrollToBottom("instant");
+        requestAnimationFrame(() => scrollToBottom("instant"));
+      });
     }
   });
 
@@ -369,7 +421,16 @@ F-09 browsing behavior:
   });
 
   onMount(() => {
-    requestAnimationFrame(() => scrollToBottom("auto"));
+    // Seed the player-count baseline so the playerMessageCount
+    // effect doesn't fire on mount (it would force-scroll on every
+    // remount, which is jarring when the player is just navigating
+    // around the inspector). We only want it to fire on *new*
+    // player events after mount.
+    lastPlayerCount = messages.reduce(
+      (count, m) => (m.kind === "player" ? count + 1 : count),
+      0,
+    );
+    requestAnimationFrame(() => scrollToBottom("instant"));
     return () => {
       if (flashTimer !== null) clearTimeout(flashTimer);
     };
