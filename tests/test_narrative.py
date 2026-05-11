@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from types import SimpleNamespace
 
 import pytest
 from litellm.types.utils import ModelResponse
@@ -25,6 +26,8 @@ from dungeon_master.narrative import (
     NarrativeConfig,
     NarrativeEngine,
     _completion,
+    complete_text,
+    iter_text_deltas,
 )
 from tests.factories import sample_state
 
@@ -60,6 +63,22 @@ class SlowStreamingCompletion:
                 yield {"choices": [{"delta": {"content": "late"}}]}
 
         return _stream()  # type: ignore[return-value]
+
+
+def _minimal_completion_request(*, stream: bool) -> CompletionRequest:
+    return CompletionRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "hello"}],
+        temperature=0.1,
+        max_tokens=32,
+        timeout=1.0,
+        stream=stream,
+        api_key=None,
+        base_url=None,
+        reasoning_effort="minimal",
+        reasoning={"max_tokens": 180, "exclude": False},
+        extra_headers=None,
+    )
 
 
 def test_default_narrative_config_uses_openrouter_kimi(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,6 +215,103 @@ def test_completion_prefers_reasoning_token_cap_over_effort_alias(
 
     assert captured["reasoning_effort"] is None
     assert captured["reasoning"] == {"max_tokens": 180, "exclude": False}
+
+
+def test_complete_text_extracts_gemini_thought_parts_from_message_content() -> None:
+    def fake_completion(request: CompletionRequest) -> ModelResponse:
+        del request
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {"text": "Check combat state.", "thought": True},
+                            {"text": "You strike the exposed core."},
+                        ],
+                    },
+                ),
+            ],
+        )  # type: ignore[return-value]
+
+    result = complete_text(
+        _minimal_completion_request(stream=False),
+        fake_completion,
+    )
+
+    assert result.content == "You strike the exposed core."
+    assert result.thinking == "Check combat state."
+
+
+def test_iter_text_deltas_extracts_gemini_streamed_thought_parts() -> None:
+    def fake_completion(request: CompletionRequest) -> ModelResponse:
+        del request
+
+        def stream() -> Generator[dict[str, object], None, None]:
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": [
+                                {"text": "Consider the last round.", "thought": True},
+                            ],
+                        },
+                    },
+                ],
+            }
+            yield {
+                "choices": [
+                    {"delta": {"content": [{"text": "Bone cracks under the dagger."}]}},
+                ],
+            }
+
+        return stream()  # type: ignore[return-value]
+
+    deltas = list(
+        iter_text_deltas(
+            _minimal_completion_request(stream=True),
+            fake_completion,
+        ),
+    )
+
+    assert deltas[0].thinking == "Consider the last round."
+    assert deltas[0].content == ""
+    assert deltas[1].content == "Bone cracks under the dagger."
+    assert deltas[1].thinking == ""
+
+
+def test_iter_text_deltas_extracts_nested_gemini_thinking_parts() -> None:
+    def fake_completion(request: CompletionRequest) -> ModelResponse:
+        del request
+
+        def stream() -> Generator[dict[str, object], None, None]:
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": {
+                                "parts": [
+                                    {"type": "thinking", "text": "Route as an attack."},
+                                    {"type": "text", "text": "The blade bites true."},
+                                ],
+                            },
+                        },
+                    },
+                ],
+            }
+
+        return stream()  # type: ignore[return-value]
+
+    deltas = list(
+        iter_text_deltas(
+            _minimal_completion_request(stream=True),
+            fake_completion,
+        ),
+    )
+
+    assert len(deltas) == 1
+    assert deltas[0].thinking == "Route as an attack."
+    assert deltas[0].content == "The blade bites true."
 
 
 def test_narrative_prompt_prefers_compact_grounded_prose() -> None:

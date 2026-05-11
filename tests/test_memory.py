@@ -1,6 +1,12 @@
-from dungeon_master.memory import CommittedTurnMemory, MemoryManager
+from dungeon_master.memory import (
+    CommittedTurnMemory,
+    MemoryManager,
+    active_encounter_line_for_state,
+)
 from dungeon_master.models import (
     NPC,
+    EncounterState,
+    EnemyCombatant,
     EventType,
     GameEvent,
     NPCPlayerLabelKind,
@@ -510,3 +516,24 @@ def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:
         for line in narrator.relevant_memory
     )
     assert all("The Hierophant" not in line for line in narrator.relevant_memory)
+
+
+def test_active_encounter_line_none_without_tracked_combat() -> None:
+    assert active_encounter_line_for_state(sample_state()) is None
+
+
+def test_active_encounter_line_reflects_round_and_living_foes() -> None:
+    state = sample_state()
+    state.encounter = EncounterState(
+        active=True,
+        round_number=2,
+        combatants=[
+            EnemyCombatant(name="Flesh-Bound Mass"),
+            EnemyCombatant(name="Drowned Acolyte", defeated=True),
+        ],
+    )
+
+    assert (
+        active_encounter_line_for_state(state)
+        == "Combat is active in round 2 against Flesh-Bound Mass."
+    )

@@ -903,14 +903,16 @@ def complete_text(
         )
 
     message = response.choices[0].message
+    content, content_thinking = _extract_content_and_thinking(message)
     return CompletionText(
-        content=_extract_text(_get_field(message, "content")),
+        content=content,
         thinking=_extract_text(
             _get_field(message, "reasoning_content")
             or _get_field(message, "reasoning")
             or _get_field(message, "thinking")
             or _provider_reasoning(message),
-        ),
+        )
+        or content_thinking,
     )
 
 
@@ -1000,10 +1002,7 @@ def _iter_stream_response(
             if choice is None:
                 continue
             delta = _get_field(choice, "delta") or _get_field(choice, "message") or choice
-            content = _extract_text(
-                _get_field(delta, "content")
-                or _get_field(delta, "text")
-            )
+            content, content_thinking = _extract_content_and_thinking(delta)
             thinking = _extract_text(
                 _get_field(delta, "reasoning_content")
                 or _get_field(delta, "reasoning")
@@ -1011,7 +1010,7 @@ def _iter_stream_response(
                 or _provider_reasoning(delta)
                 or _provider_reasoning(choice)
                 or _provider_reasoning(chunk)
-            )
+            ) or content_thinking
             if content or thinking:
                 yield CompletionDelta(content=content, thinking=thinking)
     except RequestCancelledError:
@@ -1046,6 +1045,49 @@ def _provider_reasoning(obj: object) -> object | None:
             or provider_fields.get("thinking")
         )
     return None
+
+
+def _extract_content_and_thinking(obj: object) -> tuple[str, str]:
+    content = _get_field(obj, "content")
+    if content is not None:
+        return _extract_text_parts(content)
+    return (_extract_text(_get_field(obj, "text")), "")
+
+
+def _extract_text_parts(value: object) -> tuple[str, str]:
+    if isinstance(value, list):
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        for part in value:
+            content, thinking = _extract_text_part(part)
+            if content:
+                content_parts.append(content)
+            if thinking:
+                thinking_parts.append(thinking)
+        return ("".join(content_parts), "".join(thinking_parts))
+    nested_parts = _get_field(value, "parts")
+    if nested_parts is not None:
+        return _extract_text_parts(nested_parts)
+    return (_extract_text(value), "")
+
+
+def _extract_text_part(part: object) -> tuple[str, str]:
+    text = _extract_text(part)
+    if not text:
+        return ("", "")
+    if _part_is_thought(part):
+        return ("", text)
+    return (text, "")
+
+
+def _part_is_thought(part: object) -> bool:
+    part_type = _get_field(part, "type")
+    if isinstance(part_type, str) and part_type.lower() in {"thinking", "thought", "reasoning"}:
+        return True
+    return any(
+        _get_field(part, field) is True
+        for field in ("thought", "thinking", "is_thought", "isThinking")
+    )
 
 
 def _get_field(obj: object, name: str) -> object | None:

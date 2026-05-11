@@ -1390,6 +1390,12 @@ def _encounter_summary(state: GameState) -> str:
     return f"Combat is active in round {state.encounter.round_number} against {foes}."
 
 
+def active_encounter_line_for_state(state: GameState) -> str | None:
+    """Planner/reviewer gate: authoritative one-line canonical encounter snapshot."""
+    compact = _encounter_summary(state)
+    return compact or None
+
+
 def _scene_key(scene_number: int) -> str:
     return f"scene_{scene_number}"
 

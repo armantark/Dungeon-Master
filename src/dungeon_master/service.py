@@ -26,6 +26,7 @@ from dungeon_master.memory import (
     ConversationMessage,
     MemoryManager,
     MemoryState,
+    active_encounter_line_for_state,
 )
 from dungeon_master.models import (
     NPC,
@@ -2811,10 +2812,12 @@ class GameService:
             planner_memory,
             text,
         )
+        encounter_hint = active_encounter_line_for_state(state)
         plan = self._turn_router.plan(
             text,
             memory_context=planner_context.render(),
             scene_messages=self._prompt_scene_messages(planner_context.scene_messages),
+            combat_encounter_hint=encounter_hint,
             cancel_token=cancel_token,
         )
         self._raise_if_cancelled(cancel_token)

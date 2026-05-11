@@ -270,6 +270,14 @@ Rules:
 - Do not invent mechanics not implied by the text.
 - Do not invent items, foes, or scene discoveries that the text does not support.
 - Use any supplied memory context as support, not as permission to invent.
+- When bounded memory or the canonical encounter-status appendix states that
+  tracked combat is active against named standing foes and the player's turn
+  commits to immediate weapon violence (slashes, thrusts, flurries, carving into
+  a weak spot or core, hacking, pinning strikes) aimed at those foes or bare
+  pronouns that clearly denote them (`it`, `the creature`, `the mass`), emit
+  `attack` with `target_name` set to that foe's exact name unless several living
+  enemies make referents materially ambiguous; in that ambiguous case emit
+  `clarify` instead of guessing a target.
 - Prefer canonical supplied memory over improvising from tone.
 - Preserve the player's meaning; clean wording lightly but do not rewrite
   it into a different action.
@@ -430,6 +438,15 @@ Decision rule:
 - Return false when the proposed plan spends the player's first combat action
   by adding a target, weapon, or blow that the original player turn did not
   actually declare.
+- When canonical_active_encounter is non-null, it mirrors live encounter state:
+  tracked combat rounds and the names of standing foes. If it says combat is
+  active and the player's language clearly performs immediate strikes, slashes,
+  flurries of cuts, driving a blade into an exposed core/weak spot, or similar
+  offense against pronouns that unambiguously refer to those listed foes, allow
+  mechanics when the proposed target is one of those foes. Reject only when the
+  player clearly describes zero offensive contact (pure reposition, talk,
+  inspect without striking) or when multiple named foes make the referent
+  genuinely unclear.
 - Judge meaning, not wording. Do not use keyword matching; compare the original
   player intent to the proposed mechanical plan.
 """
@@ -452,6 +469,7 @@ class TurnRouter:
         *,
         memory_context: str | None = None,
         scene_messages: list[dict[str, str]] | None = None,
+        combat_encounter_hint: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> TurnPlan:
         body, likelihood = self._strip_likelihood_hint(text)
@@ -472,10 +490,17 @@ class TurnRouter:
             self._log_plan_decision(plan, source="no_model")
             return plan
 
-        prompt = (
+        prompt_core = (
             TURN_ROUTER_USER_PROMPT_TEMPLATE.replace("<<TURN>>", normalized)
             .replace("<<MEMORY>>", memory_context or "(none)")
             .replace("<<LIKELIHOOD>>", likelihood.value if likelihood is not None else "null")
+        )
+        hint = combat_encounter_hint.strip() if combat_encounter_hint is not None else ""
+        prompt = (
+            f"{prompt_core}\nCanonical encounter status from backend (authoritative):\n"
+            f"{hint}\n"
+            if hint
+            else prompt_core
         )
         profile = self._config.profiles.turn_router
         request = CompletionRequest(
@@ -515,6 +540,7 @@ class TurnRouter:
                 plan = self._review_combat_mechanics_plan(
                     plan,
                     normalized_text=normalized,
+                    combat_encounter_hint=combat_encounter_hint,
                     cancel_token=cancel_token,
                 )
                 self._log_plan_decision(plan, source="model")
@@ -542,6 +568,7 @@ class TurnRouter:
             repaired = self._review_combat_mechanics_plan(
                 repaired,
                 normalized_text=normalized,
+                combat_encounter_hint=combat_encounter_hint,
                 cancel_token=cancel_token,
             )
             self._log_plan_decision(repaired, source="repair")
@@ -612,6 +639,7 @@ class TurnRouter:
         plan: TurnPlan,
         *,
         normalized_text: str,
+        combat_encounter_hint: str | None,
         cancel_token: CancellationToken | None,
     ) -> TurnPlan:
         if not self._requires_combat_mechanics_review(plan):
@@ -619,6 +647,7 @@ class TurnRouter:
         review = self._generate_combat_mechanics_review(
             plan,
             normalized_text=normalized_text,
+            canonical_active_encounter=combat_encounter_hint,
             cancel_token=cancel_token,
         )
         if review is not None and review.allow_combat_mechanics:
@@ -649,6 +678,7 @@ class TurnRouter:
         plan: TurnPlan,
         *,
         normalized_text: str,
+        canonical_active_encounter: str | None,
         cancel_token: CancellationToken | None,
     ) -> GeneratedCombatMechanicsReview | None:
         if self._classifier is not None or not self._config.is_usable():
@@ -656,6 +686,7 @@ class TurnRouter:
         profile = self._config.profiles.turn_router
         payload = {
             "original_player_turn": normalized_text,
+            "canonical_active_encounter": canonical_active_encounter,
             "proposed_plan": {
                 "route": plan.route.value,
                 "text": plan.text,
@@ -714,6 +745,7 @@ class TurnRouter:
         *,
         memory_context: str | None = None,
         scene_messages: list[dict[str, str]] | None = None,
+        combat_encounter_hint: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> RoutedTurn:
         return self._routed_turn_from_plan(
@@ -721,6 +753,7 @@ class TurnRouter:
                 text,
                 memory_context=memory_context,
                 scene_messages=scene_messages,
+                combat_encounter_hint=combat_encounter_hint,
                 cancel_token=cancel_token,
             ),
         )
