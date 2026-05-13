@@ -16,6 +16,9 @@ import type {
   CairnItemEffectKind,
   CairnItemPower,
   CairnItemPowerKind,
+  CairnResourceCost,
+  CairnResourceDelta,
+  CairnResourcePool,
   CairnItemState,
   CairnItemTag,
   CairnMechanicsSource,
@@ -112,6 +115,9 @@ export function defaultCairnItemState(): CairnItemState {
     uses: null,
     equipped: false,
     power: defaultCairnItemPower(),
+    resources: [],
+    attack_costs: [],
+    use_costs: [],
   };
 }
 
@@ -238,6 +244,25 @@ const TAG_LABEL: Record<CairnItemTag, string> = {
 
 export function itemTagLabel(tag: CairnItemTag): string {
   return TAG_LABEL[tag];
+}
+
+export function formatResourcePool(pool: CairnResourcePool): string {
+  if (pool.max !== null) return `${pool.label} ${pool.current}/${pool.max}`;
+  return `${pool.label} ${pool.current}`;
+}
+
+export function formatResourceCost(cost: CairnResourceCost): string {
+  const suffix = cost.amount === 1 ? cost.label : `${cost.amount} ${cost.label}`;
+  if (cost.draw_policy === "self") return suffix;
+  if (cost.draw_policy === "actor_inventory") return `${suffix} from inventory`;
+  if (cost.draw_policy === "linked_item") return `${suffix} from linked item`;
+  return `${suffix} from actor pool`;
+}
+
+export function formatResourceDelta(delta: CairnResourceDelta): string {
+  const actor = delta.actor_name !== null ? `${delta.actor_name} · ` : "";
+  const item = delta.item_name !== null ? `${delta.item_name} · ` : "";
+  return `${actor}${item}${delta.resource_label} ${delta.before} → ${delta.after}`;
 }
 
 export function itemTagLabels(item: CairnItemState): string[] {

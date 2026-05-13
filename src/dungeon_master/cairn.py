@@ -22,6 +22,12 @@ from dungeon_master.models import (
     CairnItemTag,
     CairnMechanicsSource,
     CairnResolution,
+    CairnResourceCost,
+    CairnResourceDelta,
+    CairnResourceDeltaReason,
+    CairnResourceDrawPolicy,
+    CairnResourcePool,
+    CairnResourceRechargePolicy,
     CairnRestKind,
     CairnSurvivalAction,
     CairnTimeAdvance,
@@ -194,6 +200,15 @@ Rules philosophy:
   not symbolic transcripts of the backstory.
 - Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
   uses, equipped state.
+- For limited ammunition/charges/fuel/components, prefer structured
+  `resources` and `attack_costs` over prose. Use `uses` only as a legacy
+  single counter when no structured pool fits. Examples:
+  bow + quiver: quiver resource `{label:"Arrows", kind:"ammo", current:12}`
+  and bow attack cost `{label:"Arrows", kind:"ammo", amount:1,
+  draw_policy:"actor_inventory"}`; repeating crossbow with internal magazine:
+  weapon resource `{label:"Bolts", kind:"ammo", current:5, max:5}` and self
+  attack cost; sunlight laser: weapon resource `{label:"Sun charge",
+  kind:"charge", current:2, max:2, recharge_policy:"in_sunlight"}`.
 - If an item is a spellbook, scroll, relic, or holy relic, include a bounded
   `power` object. Keep powers item-bound, limited, and costly when appropriate;
   do not invent generic blessing/buff states.
@@ -236,6 +251,9 @@ CAIRN_BACKFILL_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "weapon_damage_die": 6,
       "armor_bonus": 0,
       "uses": null,
+      "resources": [],
+      "attack_costs": [],
+      "use_costs": [],
       "equipped": true,
       "power": {
         "kind": "none",
@@ -363,6 +381,9 @@ Rules:
   field.
 - Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
   uses, equipped state.
+- For limited ammunition/charges/fuel/components, prefer structured
+  `resources` and `attack_costs` over prose. Use `uses` only as a legacy
+  single counter when no structured pool fits.
 - If the acquired item is a spellbook, scroll, relic, or holy relic, include a
   bounded `power` object. Relics do not add Fatigue by default; spellbooks do;
   scrolls are consumed; holy relics should stay subtle and item-bound.
@@ -382,6 +403,9 @@ CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "weapon_damage_die": null,
       "armor_bonus": 0,
       "uses": null,
+      "resources": [],
+      "attack_costs": [],
+      "use_costs": [],
       "equipped": false,
       "power": {
         "kind": "none",
@@ -430,6 +454,9 @@ class GeneratedCairnItemProfile(StrictModel):
     weapon_damage_die: int | None = Field(default=None, ge=4, le=12)
     armor_bonus: int = Field(default=0, ge=0, le=3)
     uses: int | None = Field(default=None, ge=1)
+    resources: list[CairnResourcePool] = Field(default_factory=list)
+    attack_costs: list[CairnResourceCost] = Field(default_factory=list)
+    use_costs: list[CairnResourceCost] = Field(default_factory=list)
     equipped: bool = False
     power: CairnItemPower = Field(default_factory=CairnItemPower)
 
@@ -607,6 +634,7 @@ class ItemUseResolution:
     target_name: str | None = None
     wil_save_target: int | None = None
     wil_save_success: bool | None = None
+    resource_deltas: tuple[CairnResourceDelta, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -621,6 +649,15 @@ class ResolvedActor:
     name: str
     sheet: CharacterSheet
     is_player: bool
+
+
+@dataclass(frozen=True)
+class ResolvedResourceCost:
+    cost: CairnResourceCost
+    item: InventoryItem
+    pool: CairnResourcePool
+    before: int
+    after: int
 
 
 class CairnEngine:
@@ -737,6 +774,12 @@ class CairnEngine:
         base_die = self._attack_die(weapon, effective_stance)
         round_before = encounter.round_number
         weapon_name = weapon.name if weapon is not None else "Unarmed strike"
+        resolved_resource_costs = (
+            self._resolve_resource_costs(actor, weapon, weapon.cairn.attack_costs)
+            if weapon is not None
+            else []
+        )
+        resource_deltas: list[CairnResourceDelta] = []
         rolls: list[Roll] = []
         combat_started = encounter.round_number == 1 and encounter.first_round_dex_gate_pending
         player_acted = True
@@ -764,6 +807,12 @@ class CairnEngine:
         attack_rolls: list[Roll] = []
 
         if player_acted:
+            if weapon is not None:
+                resource_deltas = self._consume_resolved_resource_costs(
+                    resolved_resource_costs,
+                    actor=actor,
+                    reason=CairnResourceDeltaReason.ATTACK,
+                )
             rolls.append(damage_roll)
             damage_after_armor = max(0, damage_roll.result - target.armor)
             if (
@@ -907,6 +956,7 @@ class CairnEngine:
                 fled_combatant_ids=fled_ids,
                 scar_result=enemy_harm.scar_result,
                 overloaded=actor.sheet.cairn.overloaded,
+                resource_deltas=resource_deltas,
             ),
         )
 
@@ -968,8 +1018,34 @@ class CairnEngine:
         target_defeated = target.defeated
         lone_zero_triggered = False
         attack_summaries: list[str] = []
+        resource_deltas: list[CairnResourceDelta] = []
+        preflight_resource_costs: list[list[ResolvedResourceCost]] = []
+        preflight_actors: list[ResolvedActor] = []
 
         for participant in participants:
+            preflight_actor = self._resolve_actor(state, participant.id)
+            preflight_weapon = self._resolve_weapon(participant.sheet, participant.weapon_item_id)
+            if (
+                preflight_weapon is None
+                and participant.sheet.cairn.primary_weapon_item_id is not None
+            ):
+                message = (
+                    f"{participant.name}'s primary weapon is missing from inventory; "
+                    "repair or re-equip before resolving an attack."
+                )
+                raise ValueError(message)
+            preflight_actors.append(preflight_actor)
+            preflight_resource_costs.append(
+                self._resolve_resource_costs(
+                    preflight_actor,
+                    preflight_weapon,
+                    preflight_weapon.cairn.attack_costs,
+                )
+                if preflight_weapon is not None
+                else [],
+            )
+
+        for index, participant in enumerate(participants):
             weapon = self._resolve_weapon(participant.sheet, participant.weapon_item_id)
             if weapon is None and participant.sheet.cairn.primary_weapon_item_id is not None:
                 message = (
@@ -984,6 +1060,15 @@ class CairnEngine:
             participant_damage = 0
 
             if player_acted and not target.defeated and not target.fled:
+                resolved_actor = preflight_actors[index]
+                if weapon is not None:
+                    resource_deltas.extend(
+                        self._consume_resolved_resource_costs(
+                            preflight_resource_costs[index],
+                            actor=resolved_actor,
+                            reason=CairnResourceDeltaReason.ATTACK,
+                        ),
+                    )
                 damage_roll = self._roll(
                     self._attack_die(weapon, participant.stance),
                     f"damage_{participant.id or 'player'}",
@@ -1110,6 +1195,7 @@ class CairnEngine:
                 morale_success=morale_success,
                 coordinated_attack=True,
                 coordinated_participants=participants_out,
+                resource_deltas=resource_deltas,
                 defeated_combatant_ids=defeated_ids,
                 fled_combatant_ids=fled_ids,
                 scar_result=enemy_harm.scar_result,
@@ -1466,6 +1552,13 @@ class CairnEngine:
             cairn.paralyzed = False
             cairn.delirious = False
 
+        resource_deltas: list[CairnResourceDelta] = []
+        if kind != CairnRestKind.BREATHER:
+            self._recharge_resources_for_policy(
+                actor,
+                CairnResourceRechargePolicy.ON_REST,
+                deltas=resource_deltas,
+            )
         self._recompute_derived(actor.sheet)
         actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
@@ -1484,6 +1577,7 @@ class CairnEngine:
                 str_after=cairn.str_score,
                 fatigue_before=fatigue_before,
                 fatigue_after=cairn.fatigue,
+                resource_deltas=resource_deltas,
                 overloaded=cairn.overloaded,
             ),
         )
@@ -1508,12 +1602,32 @@ class CairnEngine:
         ration_uses_before: int | None = None
         ration_uses_after: int | None = None
         notes: list[str] = []
+        resource_deltas: list[CairnResourceDelta] = []
 
         watches = self._watch_count_for_time_advance(before.watch_index, time_advance)
         if watches > 0:
             self._advance_survival_watches(cairn, watches)
+            recharge_reason = (
+                CairnResourceRechargePolicy.PER_WATCH
+                if watches < WATCHES_PER_DAY
+                else CairnResourceRechargePolicy.PER_DAY
+            )
+            notes.extend(
+                self._recharge_resources_for_policy(
+                    actor,
+                    recharge_reason,
+                    deltas=resource_deltas,
+                ),
+            )
         if extra_days > 0:
             cairn.survival.day_number += extra_days
+            notes.extend(
+                self._recharge_resources_for_policy(
+                    actor,
+                    CairnResourceRechargePolicy.PER_DAY,
+                    deltas=resource_deltas,
+                ),
+            )
         if CairnSurvivalAction.EAT in actions:
             ration = self._find_ration_item(actor.sheet)
             if ration is None:
@@ -1569,6 +1683,7 @@ class CairnEngine:
                 ration_item_name=ration_item_name,
                 ration_uses_before=ration_uses_before,
                 ration_uses_after=ration_uses_after,
+                resource_deltas=resource_deltas,
                 overloaded=cairn.overloaded,
             ),
         )
@@ -1610,7 +1725,7 @@ class CairnEngine:
             message = f"Unknown inventory item: {item_id}"
             raise ValueError(message)
 
-        resolution = self._resolve_item_use(state, actor.sheet, target, intent=intent)
+        resolution = self._resolve_item_use(state, actor, target, intent=intent)
         self._recompute_derived(actor.sheet)
         actor_prefix = "" if actor.is_player else f"{actor.name}: "
         return OracleOutcome(
@@ -1629,6 +1744,7 @@ class CairnEngine:
                 effect_summary=resolution.effect_summary,
                 uses_before=resolution.uses_before,
                 uses_after=resolution.uses_after,
+                resource_deltas=list(resolution.resource_deltas),
                 recharge_condition=target.cairn.power.recharge_condition or None,
                 ability=CairnAbility.WIL if resolution.wil_save_target is not None else None,
                 target=resolution.wil_save_target,
@@ -1652,11 +1768,12 @@ class CairnEngine:
     def _resolve_item_use(
         self,
         state: GameState,
-        character: CharacterSheet,
+        actor: ResolvedActor,
         item: InventoryItem,
         *,
         intent: str,
     ) -> ItemUseResolution:
+        character = actor.sheet
         cairn = character.cairn
         power = self._effective_item_power(item)
         hp_before = cairn.hp
@@ -1697,6 +1814,11 @@ class CairnEngine:
                 fatigue_after=cairn.fatigue,
             )
 
+        resolved_resource_costs = self._resolve_resource_costs(
+            actor,
+            item,
+            item.cairn.use_costs,
+        )
         if power.adds_fatigue or power.kind == CairnItemPowerKind.SPELLBOOK:
             cairn.fatigue += 1
             effect_notes.append("Fatigue +1")
@@ -1717,6 +1839,13 @@ class CairnEngine:
         )
         effect_notes.insert(0, effect_summary)
 
+        resource_deltas = tuple(
+            self._consume_resolved_resource_costs(
+                resolved_resource_costs,
+                actor=actor,
+                reason=CairnResourceDeltaReason.ITEM_USE,
+            ),
+        )
         item_removed = self._spend_item_use(character, item, power)
         uses_after = None if item_removed else item.cairn.uses
         summary = self._item_use_summary(
@@ -1748,6 +1877,7 @@ class CairnEngine:
             target_name=target_name,
             wil_save_target=wil_save_target,
             wil_save_success=wil_save_success,
+            resource_deltas=resource_deltas,
         )
 
     def _effective_item_power(self, item: InventoryItem) -> CairnItemPower:
@@ -2167,6 +2297,9 @@ class CairnEngine:
                     weapon_damage_die=profile.weapon_damage_die,
                     armor_bonus=profile.armor_bonus,
                     uses=profile.uses,
+                    resources=profile.resources,
+                    attack_costs=profile.attack_costs,
+                    use_costs=profile.use_costs,
                     equipped=profile.equipped,
                     power=profile.power,
                 ),
@@ -3099,6 +3232,160 @@ class CairnEngine:
             item.cairn.uses = uses_after
         self._recompute_derived(character)
         return (uses_before, uses_after)
+
+    def _resolve_resource_costs(
+        self,
+        actor: ResolvedActor,
+        source_item: InventoryItem,
+        costs: list[CairnResourceCost],
+    ) -> list[ResolvedResourceCost]:
+        resolved: list[ResolvedResourceCost] = []
+        remaining_by_pool: dict[tuple[str, str], int] = {}
+        for cost in costs:
+            if cost.amount <= 0:
+                continue
+            match = self._find_resource_pool(actor.sheet, source_item, cost)
+            if match is None:
+                if cost.required:
+                    message = (
+                        f"{actor.name} lacks required {cost.label} "
+                        f"for {source_item.name}."
+                    )
+                    raise ValueError(message)
+                continue
+            item, pool = match
+            key = (item.id, pool.id)
+            before = remaining_by_pool.get(key, pool.current)
+            after = before - cost.amount
+            if after < 0:
+                message = (
+                    f"{actor.name} has insufficient {pool.label} "
+                    f"for {source_item.name} ({before} available, "
+                    f"{cost.amount} required)."
+                )
+                raise ValueError(message)
+            remaining_by_pool[key] = after
+            resolved.append(
+                ResolvedResourceCost(
+                    cost=cost,
+                    item=item,
+                    pool=pool,
+                    before=before,
+                    after=after,
+                ),
+            )
+        return resolved
+
+    def _consume_resolved_resource_costs(
+        self,
+        resolved: list[ResolvedResourceCost],
+        *,
+        actor: ResolvedActor,
+        reason: CairnResourceDeltaReason,
+    ) -> list[CairnResourceDelta]:
+        deltas: list[CairnResourceDelta] = []
+        for entry in resolved:
+            entry.pool.current = entry.after
+            deltas.append(
+                CairnResourceDelta(
+                    actor_id=None if actor.is_player else actor.id,
+                    actor_name=None if actor.is_player else actor.name,
+                    item_id=entry.item.id,
+                    item_name=entry.item.name,
+                    resource_id=entry.pool.id,
+                    resource_label=entry.pool.label,
+                    resource_kind=entry.pool.kind,
+                    before=entry.before,
+                    after=entry.after,
+                    amount=entry.cost.amount,
+                    reason=reason,
+                    note=f"{entry.cost.label} for {entry.cost.draw_policy.value}",
+                ),
+            )
+        return deltas
+
+    def _recharge_resources_for_policy(
+        self,
+        actor: ResolvedActor,
+        policy: CairnResourceRechargePolicy,
+        *,
+        deltas: list[CairnResourceDelta],
+    ) -> list[str]:
+        notes: list[str] = []
+        for item in actor.sheet.inventory:
+            for pool in item.cairn.resources:
+                if pool.recharge_policy != policy:
+                    continue
+                if pool.max is None or pool.current >= pool.max:
+                    continue
+                before = pool.current
+                pool.current = min(pool.max, pool.current + pool.recharge_amount)
+                if pool.current == before:
+                    continue
+                delta = CairnResourceDelta(
+                    actor_id=None if actor.is_player else actor.id,
+                    actor_name=None if actor.is_player else actor.name,
+                    item_id=item.id,
+                    item_name=item.name,
+                    resource_id=pool.id,
+                    resource_label=pool.label,
+                    resource_kind=pool.kind,
+                    before=before,
+                    after=pool.current,
+                    amount=pool.current - before,
+                    reason=CairnResourceDeltaReason.RECHARGE,
+                    note=pool.recharge_condition or policy.value,
+                )
+                deltas.append(delta)
+                notes.append(f"{pool.label} recharged {before}->{pool.current}")
+        return notes
+
+    def _find_resource_pool(
+        self,
+        character: CharacterSheet,
+        source_item: InventoryItem,
+        cost: CairnResourceCost,
+    ) -> tuple[InventoryItem, CairnResourcePool] | None:
+        if cost.draw_policy == CairnResourceDrawPolicy.SELF:
+            return self._find_resource_pool_on_item(source_item, cost)
+
+        if cost.draw_policy == CairnResourceDrawPolicy.LINKED_ITEM:
+            if cost.linked_item_id is None:
+                return None
+            item = self._find_item(character, cost.linked_item_id)
+            if item is None:
+                return None
+            return self._find_resource_pool_on_item(item, cost)
+
+        if cost.draw_policy in (
+            CairnResourceDrawPolicy.ACTOR_INVENTORY,
+            CairnResourceDrawPolicy.ACTOR_POOL,
+        ):
+            for item in character.inventory:
+                found = self._find_resource_pool_on_item(item, cost)
+                if found is not None:
+                    return found
+        return None
+
+    def _find_resource_pool_on_item(
+        self,
+        item: InventoryItem,
+        cost: CairnResourceCost,
+    ) -> tuple[InventoryItem, CairnResourcePool] | None:
+        for pool in item.cairn.resources:
+            if cost.resource_id is not None and pool.id != cost.resource_id:
+                continue
+            if cost.resource_id is None and pool.kind != cost.kind:
+                continue
+            if cost.resource_id is None and not self._resource_label_matches(pool.label, cost.label):
+                continue
+            return (item, pool)
+        return None
+
+    def _resource_label_matches(self, pool_label: str, cost_label: str) -> bool:
+        left = pool_label.strip().casefold()
+        right = cost_label.strip().casefold()
+        return left == right or left.rstrip("s") == right.rstrip("s")
 
     def _resolve_weapon(
         self,

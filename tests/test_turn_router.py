@@ -277,6 +277,7 @@ def test_turn_router_prompt_keeps_broad_combat_intent_out_of_attack() -> None:
     assert "A broad request to seek, start, or enter danger/combat" in system_prompt
     assert "concrete attack by itself" in system_prompt
     assert "`begin_encounter` with `target_name`" in system_prompt
+    assert "Active-combat companion weapon commands are also immediate attacks" in system_prompt
 
 
 def test_model_can_begin_encounter_without_spending_attack() -> None:
@@ -464,6 +465,72 @@ def test_turn_planner_user_prompt_appends_backend_encounter_hint() -> None:
     assert isinstance(user, str)
     assert hint in user
     assert "Canonical encounter status from backend" in user
+
+
+def test_combat_review_allows_active_companion_weapon_command_prompt() -> None:
+    captured_system_prompts: list[str] = []
+
+    class CompanionAttackCompletion:
+        def __call__(self, request: CompletionRequest) -> ModelResponse:
+            if request.trace_route == "turn_router.combat_review":
+                captured_system_prompts.append(request.messages[0]["content"])
+                return [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "content": (
+                                        '{"allow_combat_mechanics":true,'
+                                        '"reason":"companion shoots"}'
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                ]  # type: ignore[return-value]
+            return [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": (
+                                    '{"route":"attack",'
+                                    '"text":"Drusus can use his bow to snipe them.",'
+                                    '"ops":[{"kind":"attack",'
+                                    '"text":"Drusus can use his bow to snipe them.",'
+                                    '"likelihood":null,"ability":null,'
+                                    '"target_name":"Fleeing zealot",'
+                                    '"stance":"normal","rest_kind":null,'
+                                    '"item_name":"bow","npc_name":null,'
+                                    '"actor_name":"Drusus","supporting_actor_names":[],'
+                                    '"source_actor_name":null,"target_actor_name":null,'
+                                    '"equipped":null,"harm_amount":null,'
+                                    '"harm_source":null,"armor_applies":null,'
+                                    '"in_combat":null,"advantage_payoff":null}]}'
+                                ),
+                            },
+                        },
+                    ],
+                },
+            ]  # type: ignore[return-value]
+
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=CompanionAttackCompletion(),
+    )
+
+    plan = router.plan(
+        "Drusus can use his bow to snipe them.",
+        combat_encounter_hint="Combat is active in round 2 against Fleeing zealot.",
+    )
+
+    assert plan.route == TurnRoute.ATTACK
+    assert plan.ops[0].actor_name == "Drusus"
+    assert captured_system_prompts
+    system_prompt = " ".join(captured_system_prompts[0].split())
+    assert "Companion commands like" in system_prompt
+    assert "bow/crossbow" in system_prompt
+    assert "not color narration" in system_prompt
 
 
 def test_classifier_can_return_recovery_route() -> None:

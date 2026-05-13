@@ -2567,6 +2567,8 @@ class GameService:
             return update
         merged = base.model_dump()
         merged.update(update.model_dump(exclude_none=True, exclude_defaults=True))
+        if base.resource_deltas or update.resource_deltas:
+            merged["resource_deltas"] = [*base.resource_deltas, *update.resource_deltas]
         return CairnResolution.model_validate(merged)
 
     def _search_scene_summary(self, step_text: str) -> str:

@@ -22,6 +22,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
     formatAbility,
     formatCombatInitiator,
     formatDayPhase,
+    formatResourceDelta,
     formatRestKind,
     formatStance,
     formatTurnTimeAdvance,
@@ -124,6 +125,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
     cairn === null ? null : formatCombatInitiator(cairn.combat_initiator),
   );
   const coordinatedParticipants = $derived(cairn?.coordinated_participants ?? []);
+  const resourceDeltas = $derived(cairn?.resource_deltas ?? []);
 
   // Survival-clock deltas. The backend stamps `time_advance` on every
   // resolution that billed time and a *_before/*_after snapshot pair
@@ -349,6 +351,17 @@ and add a Cairn-specific dl block with the resolution snapshot.
           {#if cairn.uses_before != null}
             <dt>Uses</dt>
             <dd class="pixel">{cairn.uses_before} → {cairn.uses_after ?? 0}</dd>
+          {/if}
+          {#if resourceDeltas.length > 0}
+            <dt>Resource</dt>
+            <dd class="resource-list">
+              {#each resourceDeltas as delta, index (`${delta.item_id ?? "item"}-${delta.resource_id ?? "resource"}-${delta.reason}-${index}`)}
+                <span class="resource-chip">
+                  <span class="pixel">{formatResourceDelta(delta)}</span>
+                  <span class="muted">{delta.reason.replaceAll("_", " ")}</span>
+                </span>
+              {/each}
+            </dd>
           {/if}
           {#if cairn.recharge_condition != null && cairn.recharge_condition !== ""}
             <dt>Recharge</dt>
@@ -692,12 +705,14 @@ and add a Cairn-specific dl block with the resolution snapshot.
   dd {
     margin: 0;
   }
-  .coordinated-list {
+  .coordinated-list,
+  .resource-list {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
   }
-  .coordinated-chip {
+  .coordinated-chip,
+  .resource-chip {
     display: inline-grid;
     gap: 0.12rem;
     padding: 0.28rem 0.45rem;

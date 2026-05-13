@@ -307,6 +307,41 @@ class CairnSurvivalAction(StrEnum):
     SLEEP = "sleep"
 
 
+class CairnResourceKind(StrEnum):
+    AMMO = "ammo"
+    CHARGE = "charge"
+    FUEL = "fuel"
+    COMPONENT = "component"
+    MIND = "mind"
+    DURABILITY = "durability"
+    SUPPLY = "supply"
+    CUSTOM = "custom"
+
+
+class CairnResourceRechargePolicy(StrEnum):
+    NONE = "none"
+    PER_TURN = "per_turn"
+    PER_WATCH = "per_watch"
+    PER_DAY = "per_day"
+    ON_REST = "on_rest"
+    IN_SUNLIGHT = "in_sunlight"
+    MANUAL_CONDITION = "manual_condition"
+
+
+class CairnResourceDrawPolicy(StrEnum):
+    SELF = "self"
+    ACTOR_INVENTORY = "actor_inventory"
+    LINKED_ITEM = "linked_item"
+    ACTOR_POOL = "actor_pool"
+
+
+class CairnResourceDeltaReason(StrEnum):
+    ATTACK = "attack"
+    ITEM_USE = "item_use"
+    RECHARGE = "recharge"
+    SURVIVAL = "survival"
+
+
 _WATCH_PHASES: tuple[CairnDayPhase, ...] = (
     CairnDayPhase.DAWN,
     CairnDayPhase.DAY,
@@ -441,6 +476,49 @@ class CairnItemPower(StrictModel):
     consumed_on_use: bool = False
 
 
+class CairnResourcePool(StrictModel):
+    id: str = Field(default_factory=lambda: new_id("res"))
+    label: str = Field(min_length=1)
+    kind: CairnResourceKind = CairnResourceKind.CUSTOM
+    current: int = Field(default=0, ge=0)
+    max: int | None = Field(default=None, ge=0)
+    recharge_policy: CairnResourceRechargePolicy = CairnResourceRechargePolicy.NONE
+    recharge_amount: int = Field(default=1, ge=0)
+    recharge_condition: str = ""
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def normalize_current(self) -> CairnResourcePool:
+        if self.max is not None:
+            object.__setattr__(self, "current", min(self.current, self.max))
+        return self
+
+
+class CairnResourceCost(StrictModel):
+    label: str = Field(min_length=1)
+    kind: CairnResourceKind = CairnResourceKind.CUSTOM
+    amount: int = Field(default=1, ge=1)
+    draw_policy: CairnResourceDrawPolicy = CairnResourceDrawPolicy.SELF
+    resource_id: str | None = None
+    linked_item_id: str | None = None
+    required: bool = True
+
+
+class CairnResourceDelta(StrictModel):
+    actor_id: str | None = None
+    actor_name: str | None = None
+    item_id: str | None = None
+    item_name: str | None = None
+    resource_id: str | None = None
+    resource_label: str = Field(min_length=1)
+    resource_kind: CairnResourceKind = CairnResourceKind.CUSTOM
+    before: int = Field(ge=0)
+    after: int = Field(ge=0)
+    amount: int = Field(ge=0)
+    reason: CairnResourceDeltaReason
+    note: str = ""
+
+
 class CairnItemState(StrictModel):
     source: CairnMechanicsSource = CairnMechanicsSource.UNSET
     backfill_version: int = Field(default=0, ge=0)
@@ -451,6 +529,9 @@ class CairnItemState(StrictModel):
     uses: int | None = Field(default=None, ge=0)
     equipped: bool = False
     power: CairnItemPower = Field(default_factory=CairnItemPower)
+    resources: list[CairnResourcePool] = Field(default_factory=list)
+    attack_costs: list[CairnResourceCost] = Field(default_factory=list)
+    use_costs: list[CairnResourceCost] = Field(default_factory=list)
 
 
 class InventoryItem(StrictModel):
@@ -616,6 +697,7 @@ class CairnResolution(StrictModel):
     morale_success: bool | None = None
     coordinated_attack: bool = False
     coordinated_participants: list[CoordinatedAttackParticipant] = Field(default_factory=list)
+    resource_deltas: list[CairnResourceDelta] = Field(default_factory=list)
     defeated_combatant_ids: list[str] = Field(default_factory=list)
     fled_combatant_ids: list[str] = Field(default_factory=list)
     retreat_outcome: RetreatOutcome | None = None

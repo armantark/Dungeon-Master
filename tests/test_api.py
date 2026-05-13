@@ -835,6 +835,37 @@ class FakePlayableCairnEngine(FakeCairnEngine):
             ),
         )
 
+    def begin_encounter(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del text, cancel_token
+        state.encounter = EncounterState(
+            active=True,
+            round_number=1,
+            first_round_dex_gate_pending=True,
+            initiator=EncounterInitiator.PLAYER,
+            combatants=[EnemyCombatant(name=target_name, hp=4, max_hp=4)],
+            notes="Fake encounter started.",
+        )
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=f"Encounter started against {target_name}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=1,
+                combat_started=True,
+                combat_active=True,
+                combat_initiator=EncounterInitiator.PLAYER,
+                player_acted=False,
+                target_name=target_name,
+            ),
+        )
+
     def recover(
         self,
         state: GameState,

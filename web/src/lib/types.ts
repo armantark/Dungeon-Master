@@ -237,6 +237,37 @@ export type CairnConditionKey =
   | "paralyzed"
   | "delirious";
 
+export type CairnResourceKind =
+  | "ammo"
+  | "charge"
+  | "fuel"
+  | "component"
+  | "mind"
+  | "durability"
+  | "supply"
+  | "custom";
+
+export type CairnResourceRechargePolicy =
+  | "none"
+  | "per_turn"
+  | "per_watch"
+  | "per_day"
+  | "on_rest"
+  | "in_sunlight"
+  | "manual_condition";
+
+export type CairnResourceDrawPolicy =
+  | "self"
+  | "actor_inventory"
+  | "linked_item"
+  | "actor_pool";
+
+export type CairnResourceDeltaReason =
+  | "attack"
+  | "item_use"
+  | "recharge"
+  | "survival";
+
 export interface Roll {
   sides: number;
   result: number;
@@ -279,6 +310,43 @@ export interface CairnItemPower {
   consumed_on_use: boolean;
 }
 
+export interface CairnResourcePool {
+  id: string;
+  label: string;
+  kind: CairnResourceKind;
+  current: number;
+  max: number | null;
+  recharge_policy: CairnResourceRechargePolicy;
+  recharge_amount: number;
+  recharge_condition: string;
+  notes: string;
+}
+
+export interface CairnResourceCost {
+  label: string;
+  kind: CairnResourceKind;
+  amount: number;
+  draw_policy: CairnResourceDrawPolicy;
+  resource_id: string | null;
+  linked_item_id: string | null;
+  required: boolean;
+}
+
+export interface CairnResourceDelta {
+  actor_id: string | null;
+  actor_name: string | null;
+  item_id: string | null;
+  item_name: string | null;
+  resource_id: string | null;
+  resource_label: string;
+  resource_kind: CairnResourceKind;
+  before: number;
+  after: number;
+  amount: number;
+  reason: CairnResourceDeltaReason;
+  note: string;
+}
+
 // Mirrors `CairnItemState` in models.py. `weapon_damage_die` is the d-side
 // for the item's weapon roll (4–12 in models.py); `armor_bonus` adds to
 // the wearer's armor pool (0–3); `uses` is null for unlimited consumables
@@ -296,6 +364,9 @@ export interface CairnItemState {
   uses: number | null;
   equipped: boolean;
   power: CairnItemPower;
+  resources: CairnResourcePool[];
+  attack_costs: CairnResourceCost[];
+  use_costs: CairnResourceCost[];
 }
 
 export interface InventoryItem {
@@ -512,6 +583,7 @@ export interface CairnResolution {
   morale_success?: boolean | null;
   coordinated_attack?: boolean;
   coordinated_participants?: CoordinatedAttackParticipant[];
+  resource_deltas?: CairnResourceDelta[];
   defeated_combatant_ids?: string[];
   fled_combatant_ids?: string[];
   retreat_outcome?: RetreatOutcome | null;

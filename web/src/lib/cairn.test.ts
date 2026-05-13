@@ -23,6 +23,9 @@ import {
   formatBurden,
   formatCombatInitiator,
   formatRestKind,
+  formatResourceCost,
+  formatResourceDelta,
+  formatResourcePool,
   formatStance,
   hasCairnMechanics,
   isAmbushOpener,
@@ -158,6 +161,7 @@ function emptyCairnResolution(): CairnResolution {
     player_disengaged: null,
     pursuit_active: null,
     encounter_end_reason: null,
+    resource_deltas: [],
     overloaded: null,
   };
 }
@@ -205,6 +209,9 @@ describe("default factories", () => {
     expect(item.weapon_damage_die).toBeNull();
     expect(item.armor_bonus).toBe(0);
     expect(item.uses).toBeNull();
+    expect(item.resources).toEqual([]);
+    expect(item.attack_costs).toEqual([]);
+    expect(item.use_costs).toEqual([]);
     expect(item.equipped).toBe(false);
     expect(item.power).toEqual({
       kind: "none",
@@ -219,6 +226,81 @@ describe("default factories", () => {
       adds_fatigue: false,
       consumed_on_use: false,
     });
+  });
+});
+
+describe("resource formatting", () => {
+  it("formats finite and unbounded resource pools", () => {
+    expect(
+      formatResourcePool({
+        id: "res_arrows",
+        label: "Arrows",
+        kind: "ammo",
+        current: 7,
+        max: 12,
+        recharge_policy: "none",
+        recharge_amount: 1,
+        recharge_condition: "",
+        notes: "",
+      }),
+    ).toBe("Arrows 7/12");
+    expect(
+      formatResourcePool({
+        id: "res_stones",
+        label: "Soul stones",
+        kind: "component",
+        current: 2,
+        max: null,
+        recharge_policy: "none",
+        recharge_amount: 1,
+        recharge_condition: "",
+        notes: "",
+      }),
+    ).toBe("Soul stones 2");
+  });
+
+  it("formats resource costs by draw policy", () => {
+    expect(
+      formatResourceCost({
+        label: "Arrows",
+        kind: "ammo",
+        amount: 1,
+        draw_policy: "actor_inventory",
+        resource_id: null,
+        linked_item_id: null,
+        required: true,
+      }),
+    ).toBe("Arrows from inventory");
+    expect(
+      formatResourceCost({
+        label: "Charges",
+        kind: "charge",
+        amount: 2,
+        draw_policy: "self",
+        resource_id: null,
+        linked_item_id: null,
+        required: true,
+      }),
+    ).toBe("2 Charges");
+  });
+
+  it("formats resource deltas with actor and item attribution", () => {
+    expect(
+      formatResourceDelta({
+        actor_id: "party_drusus",
+        actor_name: "Drusus",
+        item_id: "item_quiver",
+        item_name: "Drusus' quiver",
+        resource_id: "res_arrows",
+        resource_label: "Arrows",
+        resource_kind: "ammo",
+        before: 4,
+        after: 3,
+        amount: 1,
+        reason: "attack",
+        note: "",
+      }),
+    ).toBe("Drusus · Drusus' quiver · Arrows 4 → 3");
   });
 });
 

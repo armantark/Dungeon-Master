@@ -32,6 +32,12 @@ from dungeon_master.models import (
     CairnItemTag,
     CairnMechanicsSource,
     CairnResolution,
+    CairnResourceCost,
+    CairnResourceDelta,
+    CairnResourceDeltaReason,
+    CairnResourceDrawPolicy,
+    CairnResourceKind,
+    CairnResourcePool,
     CairnRestKind,
     CairnSurvivalAction,
     CairnTimeAdvance,
@@ -787,12 +793,24 @@ class FakeCairnEngine:
         actor_id: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
-        del actor_id, cancel_token
+        del cancel_token
+        actor_name = None
+        if actor_id is not None:
+            actor_name = next(
+                (
+                    member.sheet.name
+                    for member in state.party_members
+                    if member.id == actor_id
+                ),
+                None,
+            )
         return OracleOutcome(
             kind=OracleKind.ATTACK,
             summary=f"Attack against {target_name}.",
             chaos_factor=state.chaos_factor,
             cairn=CairnResolution(
+                actor_id=actor_id,
+                actor_name=actor_name,
                 weapon_item_id=weapon_item_id,
                 target_name=target_name,
                 target_armor=target_armor,
@@ -1208,6 +1226,67 @@ class FatalFakeCairnEngine(FakeCairnEngine):
                 hp_after=0,
                 str_before=1,
                 str_after=0,
+            ),
+        )
+
+
+class ResourceTrackingFakeCairnEngine(FakeCairnEngine):
+    def resolve_attack(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        target_armor: int,
+        weapon_item_id: str | None,
+        stance: AttackStance,
+        actor_id: str | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        actor_sheet = state.character
+        actor_name: str | None = None
+        if actor_id is not None:
+            member = next(member for member in state.party_members if member.id == actor_id)
+            actor_sheet = member.sheet
+            actor_name = member.sheet.name
+        weapon = next(item for item in actor_sheet.inventory if item.id == weapon_item_id)
+        cost = weapon.cairn.attack_costs[0]
+        resource_item = next(
+            item
+            for item in actor_sheet.inventory
+            if item.cairn.resources and item.cairn.resources[0].kind == cost.kind
+        )
+        pool = resource_item.cairn.resources[0]
+        before = pool.current
+        pool.current -= cost.amount
+        delta = CairnResourceDelta(
+            actor_id=actor_id,
+            actor_name=actor_name,
+            item_id=resource_item.id,
+            item_name=resource_item.name,
+            resource_id=pool.id,
+            resource_label=pool.label,
+            resource_kind=pool.kind,
+            before=before,
+            after=pool.current,
+            amount=cost.amount,
+            reason=CairnResourceDeltaReason.ATTACK,
+        )
+        return OracleOutcome(
+            kind=OracleKind.ATTACK,
+            summary=f"Attack against {target_name}; {pool.label} {before}->{pool.current}.",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                actor_id=actor_id,
+                actor_name=actor_name,
+                weapon_item_id=weapon_item_id,
+                weapon_name=weapon.name,
+                target_name=target_name,
+                target_armor=target_armor,
+                attack_stance=stance,
+                base_damage=5,
+                damage_after_armor=5,
+                resource_deltas=[delta],
             ),
         )
 
@@ -1689,6 +1768,85 @@ def test_service_player_turn_routes_attack(tmp_path: Path) -> None:
     assert state.oracle_history[0].kind == "attack"
     assert state.oracle_history[0].cairn is not None
     assert state.oracle_history[0].cairn.target_name == "Abbey ghoul"
+
+
+def test_service_companion_attack_can_publish_resource_delta(tmp_path: Path) -> None:
+    def companion_attack_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.ATTACK,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ATTACK,
+                    text=text,
+                    target_name="Fleeing zealot",
+                    actor_name="Drusus",
+                    item_name="Drusus' bow",
+                    stance=AttackStance.NORMAL,
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=ResourceTrackingFakeCairnEngine(),
+        turn_router=TurnRouter(classifier=companion_attack_classifier),
+    )
+    state = service.load_state()
+    drusus = PartyMember(sheet=CharacterSheet(name="Drusus"))
+    bow = InventoryItem(
+        name="Drusus' bow",
+        details="A weathered hunting bow.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.WEAPON, CairnItemTag.RANGED],
+            weapon_damage_die=6,
+            equipped=True,
+            attack_costs=[
+                CairnResourceCost(
+                    label="Arrows",
+                    kind=CairnResourceKind.AMMO,
+                    draw_policy=CairnResourceDrawPolicy.ACTOR_INVENTORY,
+                ),
+            ],
+        ),
+    )
+    quiver = InventoryItem(
+        name="Drusus' quiver",
+        details="Iron-headed arrows.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.SUPPLIES, CairnItemTag.RANGED],
+            resources=[
+                CairnResourcePool(
+                    label="Arrows",
+                    kind=CairnResourceKind.AMMO,
+                    current=4,
+                    max=12,
+                ),
+            ],
+        ),
+    )
+    drusus.sheet.inventory = [bow, quiver]
+    drusus.sheet.cairn.primary_weapon_item_id = bow.id
+    state.party_members.append(drusus)
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    updated = service.submit_player_turn("Drusus can use his bow to snipe them.")
+    outcome = updated.oracle_history[0]
+
+    assert updated.party_members[0].sheet.inventory[1].cairn.resources[0].current == 3
+    assert outcome.cairn is not None
+    assert outcome.cairn.actor_name == "Drusus"
+    assert outcome.cairn.resource_deltas[0].resource_label == "Arrows"
+    assert outcome.cairn.resource_deltas[0].before == 4
+    assert outcome.cairn.resource_deltas[0].after == 3
+    assert "Arrows 4->3" in updated.action_log[1].content
 
 
 def test_service_player_turn_can_begin_encounter_without_attack(tmp_path: Path) -> None:

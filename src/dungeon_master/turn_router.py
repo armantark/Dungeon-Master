@@ -289,6 +289,13 @@ Rules:
   `attack` with `target_name` set to that foe's exact name unless several living
   enemies make referents materially ambiguous; in that ambiguous case emit
   `clarify` instead of guessing a target.
+- Active-combat companion weapon commands are also immediate attacks. If the
+  player names a party member/helper and a weapon use against standing foes
+  (for example, "Drusus can use his bow to snipe them"), emit `attack` with
+  `actor_name` set to that companion when one foe is the clear target, or
+  `coordinated_attack` when the player plus companions are acting as one tactic.
+  Do not degrade these to narration merely because the player used permissive
+  wording like "can" or tactical shorthand like "snipe them".
 - Prefer canonical supplied memory over improvising from tone.
 - Preserve the player's meaning; clean wording lightly but do not rewrite
   it into a different action.
@@ -459,10 +466,11 @@ Decision rule:
   active and the player's language clearly performs immediate strikes, slashes,
   flurries of cuts, driving a blade into an exposed core/weak spot, or similar
   offense against pronouns that unambiguously refer to those listed foes, allow
-  mechanics when the proposed target is one of those foes. Reject only when the
-  player clearly describes zero offensive contact (pure reposition, talk,
-  inspect without striking) or when multiple named foes make the referent
-  genuinely unclear.
+  mechanics when the proposed target is one of those foes. Companion commands
+  like "Drusus uses his bow/crossbow to shoot/snipe them" count as immediate
+  named weapon use, not color narration. Reject only when the player clearly
+  describes zero offensive contact (pure reposition, talk, inspect without
+  striking) or when multiple named foes make the referent genuinely unclear.
 - Judge meaning, not wording. Do not use keyword matching; compare the original
   player intent to the proposed mechanical plan.
 """

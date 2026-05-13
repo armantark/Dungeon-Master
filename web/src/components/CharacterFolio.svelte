@@ -17,6 +17,8 @@ readout is purely read-only here; no buttons mutate state from this rail.
     defaultCairnCharacterState,
     defaultCairnItemState,
     hasCairnMechanics,
+    formatResourceCost,
+    formatResourcePool,
     itemPowerSummary,
     itemPowerTitle,
     itemTagLabels,
@@ -222,6 +224,9 @@ readout is purely read-only here; no buttons mutate state from this rail.
         {@const showTags = showCairn && tagLabels.length > 0}
         {@const powerTitle = itemPowerTitle(item.cairn.power)}
         {@const powerSummary = itemPowerSummary(item.cairn.power)}
+        {@const resources = item.cairn.resources}
+        {@const attackCosts = item.cairn.attack_costs}
+        {@const useCosts = item.cairn.use_costs}
         <li class:item--equipped={item.cairn.equipped}>
           <div class="item__head">
             <strong>{item.name}</strong>
@@ -282,6 +287,34 @@ readout is purely read-only here; no buttons mutate state from this rail.
                   <li>Consumed</li>
                 {/if}
               </ul>
+            {/if}
+            {#if resources.length > 0 || attackCosts.length > 0 || useCosts.length > 0}
+              <div class="item__resources" aria-label="Item resources">
+                {#if resources.length > 0}
+                  <div class="item__resource-row">
+                    <span class="kicker">Resources</span>
+                    <span class="item__resource-values pixel">
+                      {resources.map(formatResourcePool).join(" · ")}
+                    </span>
+                  </div>
+                {/if}
+                {#if attackCosts.length > 0}
+                  <div class="item__resource-row">
+                    <span class="kicker">Attack cost</span>
+                    <span class="item__resource-values pixel">
+                      {attackCosts.map(formatResourceCost).join(" · ")}
+                    </span>
+                  </div>
+                {/if}
+                {#if useCosts.length > 0}
+                  <div class="item__resource-row">
+                    <span class="kicker">Use cost</span>
+                    <span class="item__resource-values pixel">
+                      {useCosts.map(formatResourceCost).join(" · ")}
+                    </span>
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/if}
         </li>
@@ -602,6 +635,29 @@ readout is purely read-only here; no buttons mutate state from this rail.
     display: inline;
     flex-direction: initial;
     gap: 0;
+  }
+  .item__resources {
+    margin-top: 0.22rem;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid color-mix(in oklab, var(--gold-tarnished) 30%, transparent);
+    background: rgba(0, 0, 0, 0.22);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .item__resource-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .item__resource-row .kicker {
+    font-size: 0.62rem;
+  }
+  .item__resource-values {
+    color: var(--paper-bone);
+    font-size: 0.7rem;
+    text-align: right;
   }
 
   /*

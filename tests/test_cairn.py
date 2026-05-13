@@ -22,6 +22,12 @@ from dungeon_master.models import (
     CairnItemState,
     CairnItemTag,
     CairnMechanicsSource,
+    CairnResourceCost,
+    CairnResourceDeltaReason,
+    CairnResourceDrawPolicy,
+    CairnResourceKind,
+    CairnResourcePool,
+    CairnResourceRechargePolicy,
     CairnSurvivalAction,
     CairnTimeAdvance,
     CampaignDangerProfile,
@@ -753,6 +759,144 @@ def test_companion_can_resolve_attack_with_own_weapon_and_take_retaliation() -> 
     assert state.character.cairn.hp == 4
 
 
+def test_ranged_attack_consumes_actor_inventory_resource() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    bow = companion.sheet.inventory[0]
+    bow.name = "Drusus' bow"
+    bow.cairn.tags = [CairnItemTag.WEAPON, CairnItemTag.RANGED]
+    bow.cairn.weapon_damage_die = 6
+    bow.cairn.attack_costs = [
+        CairnResourceCost(
+            label="Arrows",
+            kind=CairnResourceKind.AMMO,
+            amount=1,
+            draw_policy=CairnResourceDrawPolicy.ACTOR_INVENTORY,
+        ),
+    ]
+    quiver = InventoryItem(
+        name="Quiver of iron-headed arrows",
+        details="A companion's arrow bundle.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.SUPPLIES, CairnItemTag.RANGED],
+            resources=[
+                CairnResourcePool(
+                    label="Arrows",
+                    kind=CairnResourceKind.AMMO,
+                    current=3,
+                    max=12,
+                ),
+            ],
+        ),
+    )
+    companion.sheet.inventory.append(quiver)
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    outcome = engine.resolve_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=0,
+        weapon_item_id=bow.id,
+        stance=AttackStance.NORMAL,
+        actor_id=companion.id,
+    )
+
+    assert quiver.cairn.resources[0].current == 2
+    assert outcome.cairn is not None
+    assert outcome.cairn.resource_deltas == [
+        outcome.cairn.resource_deltas[0],
+    ]
+    delta = outcome.cairn.resource_deltas[0]
+    assert delta.actor_id == companion.id
+    assert delta.item_id == quiver.id
+    assert delta.resource_label == "Arrows"
+    assert delta.before == 3
+    assert delta.after == 2
+    assert delta.reason == CairnResourceDeltaReason.ATTACK
+
+
+def test_attack_rejects_insufficient_resource_without_partial_mutation() -> None:
+    state = _ready_state()
+    weapon = state.character.inventory[0]
+    weapon.cairn.resources = [
+        CairnResourcePool(
+            label="Sun charge",
+            kind=CairnResourceKind.CHARGE,
+            current=0,
+            max=2,
+        ),
+    ]
+    weapon.cairn.attack_costs = [
+        CairnResourceCost(
+            label="Sun charge",
+            kind=CairnResourceKind.CHARGE,
+            amount=1,
+            draw_policy=CairnResourceDrawPolicy.SELF,
+        ),
+    ]
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    with pytest.raises(ValueError, match="insufficient Sun charge"):
+        engine.resolve_attack(
+            state,
+            target_name="Abbey ghoul",
+            target_armor=0,
+            weapon_item_id=weapon.id,
+            stance=AttackStance.NORMAL,
+        )
+
+    assert weapon.cairn.resources[0].current == 0
+    assert state.encounter.active is True
+    assert state.encounter.combatants[0].hp == state.encounter.combatants[0].max_hp
+
+
+def test_coordinated_attack_consumes_each_participant_resource() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    player_weapon = state.character.inventory[0]
+    player_weapon.cairn.resources = [
+        CairnResourcePool(
+            label="Charges",
+            kind=CairnResourceKind.CHARGE,
+            current=2,
+            max=2,
+        ),
+    ]
+    player_weapon.cairn.attack_costs = [
+        CairnResourceCost(label="Charges", kind=CairnResourceKind.CHARGE),
+    ]
+    companion_weapon = companion.sheet.inventory[0]
+    companion_weapon.cairn.resources = [
+        CairnResourcePool(
+            label="Charges",
+            kind=CairnResourceKind.CHARGE,
+            current=2,
+            max=2,
+        ),
+    ]
+    companion_weapon.cairn.attack_costs = [
+        CairnResourceCost(label="Charges", kind=CairnResourceKind.CHARGE),
+    ]
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    outcome = engine.resolve_coordinated_attack(
+        state,
+        target_name="Abbey ghoul",
+        target_armor=0,
+        participants=(
+            AttackActor(id=None, name=state.character.name, sheet=state.character),
+            AttackActor(id=companion.id, name=companion.sheet.name, sheet=companion.sheet),
+        ),
+    )
+
+    assert player_weapon.cairn.resources[0].current == 1
+    assert companion_weapon.cairn.resources[0].current == 1
+    assert outcome.cairn is not None
+    assert len(outcome.cairn.resource_deltas) == 2
+    assert {delta.actor_id for delta in outcome.cairn.resource_deltas} == {None, companion.id}
+
+
 def test_suffer_harm_does_not_seed_encounter() -> None:
     state = _ready_state()
     engine = CairnEngine(
@@ -926,6 +1070,41 @@ def test_overnight_sleep_rolls_to_next_dawn_and_clears_sleep_deprivation() -> No
     assert update.resolution.day_number_after == 3
 
 
+def test_survival_time_recharges_policy_resources() -> None:
+    state = _ready_state()
+    lantern = InventoryItem(
+        name="Self-feeding lantern",
+        details="Its worm-oil condenses slowly through the day.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.LIGHT],
+            resources=[
+                CairnResourcePool(
+                    label="Oil",
+                    kind=CairnResourceKind.FUEL,
+                    current=0,
+                    max=2,
+                    recharge_policy=CairnResourceRechargePolicy.PER_WATCH,
+                ),
+            ],
+        ),
+    )
+    state.character.inventory.append(lantern)
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    update = engine.advance_survival_clock(
+        state,
+        time_advance=CairnTimeAdvance.WATCH,
+        actions=(),
+    )
+
+    assert lantern.cairn.resources[0].current == 1
+    assert update.resolution.resource_deltas[0].resource_label == "Oil"
+    assert update.resolution.resource_deltas[0].before == 0
+    assert update.resolution.resource_deltas[0].after == 1
+    assert update.resolution.resource_deltas[0].reason == CairnResourceDeltaReason.RECHARGE
+
+
 def test_acquire_items_adds_typed_loot_and_recomputes_burden() -> None:
     state = _ready_state()
     completion = RecordingAcquisitionCompletion(
@@ -1077,6 +1256,45 @@ def test_companion_item_use_consumes_companion_item() -> None:
     assert outcome.cairn.actor_id == companion.id
     assert scroll not in companion.sheet.inventory
     assert all(item.name != "Sava's scroll" for item in state.character.inventory)
+
+
+def test_item_use_consumes_structured_charge_resource() -> None:
+    state = _ready_state()
+    relic = InventoryItem(
+        name="Glass sun battery",
+        details="A small light-catching cell.",
+        cairn=CairnItemState(
+            source=CairnMechanicsSource.EXPLICIT,
+            tags=[CairnItemTag.RELIC],
+            resources=[
+                CairnResourcePool(
+                    label="Sun charge",
+                    kind=CairnResourceKind.CHARGE,
+                    current=2,
+                    max=2,
+                    recharge_policy=CairnResourceRechargePolicy.IN_SUNLIGHT,
+                ),
+            ],
+            use_costs=[
+                CairnResourceCost(label="Sun charge", kind=CairnResourceKind.CHARGE),
+            ],
+            power=CairnItemPower(
+                kind=CairnItemPowerKind.RELIC,
+                name="Cauterizing gleam",
+                effect=CairnItemEffectKind.RESTORE_HP,
+                effect_amount=1,
+            ),
+        ),
+    )
+    state.character.inventory.append(relic)
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    outcome = engine.use_item(state, item_id=relic.id, intent="I spend the battery's light.")
+
+    assert relic.cairn.resources[0].current == 1
+    assert outcome.cairn is not None
+    assert outcome.cairn.resource_deltas[0].resource_label == "Sun charge"
+    assert outcome.cairn.resource_deltas[0].reason == CairnResourceDeltaReason.ITEM_USE
 
 
 def test_spellbook_adds_fatigue_and_requires_wil_save_in_danger() -> None:

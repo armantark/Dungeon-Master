@@ -450,6 +450,7 @@ describe("filterOracleHistory", () => {
       effect_summary: null,
       uses_before: null,
       uses_after: null,
+      resource_deltas: [],
       recharge_condition: null,
       attack_stance: null,
       weapon_item_id: null,
