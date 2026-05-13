@@ -110,11 +110,23 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.35;
+  /*
+   * Two stacked grain layers. `soft-light` modulates the underlying
+   * gradient (so the page stays dark) but at 0.35 it was below the
+   * visual threshold on a near-black backdrop. Stacking the same tile
+   * at a second scale (~480px vs 280px) gives the grain irregular
+   * frequency — fine fibre + larger blotchy fibre weave — which reads
+   * as real paper instead of as one uniform noise pattern, without
+   * cranking either layer high enough to flatten to slate.
+   */
+  background-image:
+    url("/textures/paper-grain.png"),
+    url("/textures/paper-grain.png");
+  background-size: 280px 280px, 480px 480px;
+  background-repeat: repeat, repeat;
+  background-blend-mode: normal, multiply;
+  opacity: 0.55;
   mix-blend-mode: soft-light;
-  background-image: url("/textures/paper-grain.png");
-  background-size: 280px 280px;
-  background-repeat: repeat;
 }
 
 /* --- Typography ------------------------------------------------------- */
@@ -202,8 +214,18 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
     );
   color: var(--ink-deep);
   border: 1px solid color-mix(in oklab, var(--ink-bruise) 60%, transparent);
+  /*
+   * Inset shadow widened and darkened to give every card a "stained
+   * edge" ring — the paper looks more handled, less brand-new. This
+   * is a substrate effect that doesn't need a texture asset, and it
+   * registers visibly without depending on perception of fine grain.
+   * The outer drop-shadow stays the same so cards still feel like
+   * they sit above the page.
+   */
   box-shadow:
-    inset 0 0 60px rgba(60, 30, 10, 0.22),
+    inset 0 0 0 1px rgba(60, 30, 10, 0.10),
+    inset 0 0 90px rgba(60, 30, 10, 0.32),
+    inset 0 0 20px rgba(60, 30, 10, 0.18),
     0 18px 36px -12px rgba(0, 0, 0, 0.65);
   padding: 1.4rem 1.6rem;
 }
@@ -213,18 +235,22 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/paper-grain.png");
-  background-size: 280px 280px;
-  background-repeat: repeat;
   /*
-   * Plain alpha would dump near-black grain spots onto cream paper —
-   * legible at moderate strength but reads as "ink stipple," not paper
-   * fibre, and competes with the actual narration text. `multiply`
-   * darkens only where the source PNG is dark, so the grain shows as
-   * subtle warmer fibre threads in the parchment instead of as a
-   * separate stippled layer over it.
+   * Same stacked-tiles trick as the body backdrop: same PNG at two
+   * scales gives irregular frequency. `multiply` darkens only where
+   * the source PNG is dark, so the grain reads as warm fibre threads
+   * in the parchment rather than as ink stipple over it. 0.55 is
+   * past the prior subtle pass — the user couldn't see 0.30 on the
+   * cream paper, so we push to clearly perceptible while keeping
+   * multiply doing the heavy lifting on tone.
    */
-  opacity: 0.30;
+  background-image:
+    url("/textures/paper-grain.png"),
+    url("/textures/paper-grain.png");
+  background-size: 280px 280px, 460px 460px;
+  background-repeat: repeat, repeat;
+  background-blend-mode: normal, multiply;
+  opacity: 0.55;
   mix-blend-mode: multiply;
 }
 .parchment > * {
