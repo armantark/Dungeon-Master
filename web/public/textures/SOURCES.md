@@ -40,35 +40,30 @@ blend modes so they read as substrate without competing with content.
   bundled redistribution inside this single-user desktop app.
 - **Modifications.** None. Saved verbatim.
 
-## `leather.png` — `.iron` chassis surfaces
+## `leather.png` — chassis panels AND cast-iron buttons
 
-- **Role.** `.iron::after`, plain-alpha at full opacity, 300px tile.
-  The "front-ish" dark surface — leather-clad iron panels used on
-  every `.iron` chassis (CharacterFolio, Inspector, SaveLibrary, hero
-  panels, dropdown menus). The PNG is alpha-stamped on top of the iron
-  gradient: its mid-tan brown pixels with sparse alpha give the
-  surface its leather pores against the dark base.
+- **Role 1 (panels).** `.iron::after`, plain alpha + `filter:
+  brightness(0.18) contrast(1.25)`, 300px tile. The tan-brown source
+  pixels are crushed near-black by the filter, leaving the pore
+  pattern's tonal relationships intact — so chassis surfaces read as
+  almost-black tooled leather rather than warm brown leather.
+- **Role 2 (buttons).** `button::before` / `.btn::before`, plain
+  alpha + `filter: brightness(0.10) contrast(1.4)`, 200px tile. The
+  same texture darkened further passes for sand-cast iron pitting:
+  near-black surface with faint randomised micro-variation. Hover
+  bumps the brightness filter to 0.22 — iron catching slightly more
+  light, no warm-brass shift.
+- **Why one texture for two materials.** Cast iron pitting and pressed
+  leather pores both have the same statistical character (random
+  small bumps on an otherwise uniform surface). Using a single source
+  PNG with two filter recipes keeps the bundle smaller and the
+  material logic in CSS instead of split across multiple assets.
 - **Source.** Transparent Textures (`leather.png`),
   https://www.transparenttextures.com/patterns/leather.png — Subtle
   Patterns collection.
 - **License.** Same permissive MIT-style as `dark-wood.png`.
-- **Modifications.** None.
-
-## `brushed-metal.png` — buttons and dropdowns
-
-- **Role.** `button::before` / `.btn::before` pseudo, plain-alpha at
-  55% (85% on hover), 200px tile. Stamps faint brushed-aluminium
-  scratch highlights onto the dark button gradient so clickable chrome
-  reads as a separate material from static iron panels. On hover the
-  pseudo brightens and a `sepia/saturate/hue-rotate` filter chain
-  warms the brushed marks toward gold — the affordance is the metal
-  "catching light" rather than a flat color swap.
-- **Source.** Transparent Textures (`brushed-alum-dark.png`),
-  https://www.transparenttextures.com/patterns/brushed-alum-dark.png —
-  Subtle Patterns collection.
-- **License.** Same permissive MIT-style as `dark-wood.png`.
-- **Modifications.** Renamed from `brushed-alum-dark.png` to
-  `brushed-metal.png` for clarity; otherwise verbatim.
+- **Modifications.** None to the source PNG. The two-material effect
+  is achieved entirely through CSS `filter` chains, documented above.
 
 ## `natural-paper.png` — parchment fibre
 
