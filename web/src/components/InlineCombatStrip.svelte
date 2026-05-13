@@ -58,6 +58,15 @@ strictly a trust-surface, never a control.
   const combatants = $derived<CombatantState[]>(
     encounter === null ? [] : sortCombatants(encounter.combatants),
   );
+  // "Standing" = anyone not down/dead/fled. We use it as the
+  // collapsed-summary count so the disclosure header gives the
+  // player a single mechanical "how is this fight going?" pulse
+  // without unfolding the body. We don't expose individual HP here
+  // (that would re-introduce the Warden-style readout the strip is
+  // explicitly built to avoid); we just count who's still up.
+  const standingCount = $derived(
+    combatants.reduce((n, c) => (c.status === "active" ? n + 1 : n), 0),
+  );
   const headline = $derived(encounterHeadline(encounter));
   const firstRound = $derived(firstRoundActionGated(encounter));
   const ambushed = $derived(encounter !== null && encounter.active && enemyInitiated(encounter));
@@ -66,11 +75,43 @@ strictly a trust-surface, never a control.
 </script>
 
 {#if encounter !== null && active}
-  <aside class="strip iron" aria-label="Active combat">
-    <header class="strip__head">
-      <span class="kicker">Encounter</span>
-      <span class="pixel headline">{headline ?? "Active"}</span>
-    </header>
+  <!--
+    Top-level disclosure. The strip starts collapsed because combat
+    is not the only reason a player looks at the chat: between rounds
+    they're often reading prose, and a permanently-expanded tracker
+    pushes the latest narrative offscreen. The header (kicker +
+    encounter headline + foe count) stays visible as the summary so
+    a glance still tells the player "you're in round N, X foes
+    standing, DEX gate or not"; opening the strip reveals the foe
+    cards, pending advantages, and Warden audit paths.
+
+    We use a native <details> element instead of a hand-rolled
+    button + state pair to keep keyboard / a11y behavior free, and
+    to mirror the per-foe Warden disclosure idiom that already lives
+    inside the strip.
+  -->
+  <details class="strip iron" aria-label="Active combat">
+    <summary class="strip__head">
+      <span class="strip__head-main">
+        <span class="kicker">Encounter</span>
+        <span class="pixel headline">{headline ?? "Active"}</span>
+      </span>
+      <!--
+        Foe count is the smallest possible "should I open this?"
+        hint that respects the fiction-first protocol: it's visible
+        in the chat narration anyway ("four plague-bearers shamble
+        toward you"), so leaking the standing count here doesn't
+        add Warden information. The chevron sits next to it so the
+        click target reads as a toggle, not a static label.
+      -->
+      <span class="strip__head-aside pixel">
+        <span class="strip__count">
+          {standingCount}
+          <span class="muted">/ {combatants.length}</span>
+        </span>
+        <span class="strip__chevron" aria-hidden="true">▸</span>
+      </span>
+    </summary>
 
     {#if ambushed || firstRound || moraleTriggered}
       <ul class="flags">
@@ -232,7 +273,7 @@ strictly a trust-surface, never a control.
     <p class="retreat-hint small">
       Type <code>/retreat</code> to attempt to disengage.
     </p>
-  </aside>
+  </details>
 {:else if encounter !== null && !encounter.active && encounter.summary !== null}
   <p class="cleared muted small">{encounter.summary}</p>
 {/if}
@@ -244,29 +285,91 @@ strictly a trust-surface, never a control.
    * over-iron palette so it visually belongs to the same family as
    * MechanicalReceipt while still standing apart from prose bubbles.
    */
+  /*
+   * `<details>` defaults give us the right open/closed semantics
+   * but the default `<summary>` styling (list marker, default
+   * cursor on some platforms) isn't right for an inline panel that
+   * sits between chat messages. We strip the marker, then layer
+   * the parchment-over-iron palette so the strip visually belongs
+   * to the same family as MechanicalReceipt while still standing
+   * apart from prose bubbles.
+   */
   .strip {
     margin: 0.65rem auto 0.85rem;
     max-width: 72ch;
-    padding: 0.75rem 0.9rem;
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
     background: linear-gradient(
       180deg,
       color-mix(in oklab, var(--ink-deep) 92%, var(--rust-iron)) 0%,
       color-mix(in oklab, var(--ink-black) 96%, var(--rust-iron)) 100%
     );
-    display: grid;
-    gap: 0.6rem;
     color: var(--paper-warm);
   }
   .strip__head {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.6rem 0.85rem;
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 0.6rem;
   }
-  .strip__head .kicker {
-    margin: 0;
+  /* Hide the default list marker across browsers. */
+  .strip__head::-webkit-details-marker { display: none; }
+  .strip__head::marker { content: ""; }
+  .strip__head-main {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    min-width: 0;
   }
+  .strip__head-aside {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    color: var(--gold-tarnished);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+  }
+  .strip__count .muted { color: var(--paper-shadow); }
+  /*
+   * Chevron rotates instead of being swapped for "▾" because the
+   * open/closed cue should be silent typography, not a glyph
+   * change that re-layouts the right edge of the header.
+   */
+  .strip__chevron {
+    display: inline-block;
+    font-family: var(--font-pixel);
+    color: var(--gold-tarnished);
+    transition: transform 120ms ease, color 120ms ease;
+  }
+  .strip[open] .strip__chevron {
+    transform: rotate(90deg);
+    color: var(--gold-bright);
+  }
+  .strip__head:hover .strip__chevron,
+  .strip__head:focus-visible .strip__chevron {
+    color: var(--gold-bright);
+  }
+  .strip[open] .strip__head {
+    border-bottom: var(--rule-hair);
+  }
+  /*
+   * Direct-child grid on the opened body. We can't put the gap on
+   * the host `<details>` because the summary would inherit the
+   * gap too and visually drift away from the body when open.
+   * Selecting "every direct child after the summary" gives us the
+   * vertical rhythm we used to get from the old `display: grid`
+   * on the outer aside.
+   */
+  .strip[open] > :not(summary) {
+    margin: 0.55rem 0.9rem 0;
+  }
+  .strip[open] > :not(summary):last-child {
+    margin-bottom: 0.8rem;
+  }
+  .strip .kicker { margin: 0; }
   .headline {
     color: var(--gold-bright);
     font-size: 0.95rem;
