@@ -86,19 +86,20 @@ body {
 /*
  * Substrate grain on the dark backdrop.
  *
- * The previous overlay used SVG `feTurbulence` to fake paper fibre. That
- * reads as filter noise more than as a real surface — uniform frequency,
- * no real fibres. The fixed paper-grain PNG is a CC0 scan-derived tile
- * (see `web/public/textures/SOURCES.md`). It's a transparent grayscale
- * PNG: dark spots overlay onto the body's near-black gradient, the rest
- * lets the gradient through unchanged.
+ * The first version used `feTurbulence` SVG noise under `overlay` blend
+ * at 10% — mathematically correct, visually invisible on near-black.
+ * The second version cranked plain-alpha to 55% — visible, but read as
+ * gray slate against the dark gradient and started competing with text
+ * on adjacent parchment cards.
  *
- * No `mix-blend-mode` — the texture's own alpha channel does the work.
- * The blend-mode version was effectively invisible on near-black at 10%,
- * which made the whole experiment land as a no-op. Plain alpha at
- * moderate opacity is honest: the grain reads as real fibre against the
- * dark page wherever the body is visible (gutters around the chat
- * column and the folio rail).
+ * The current tuning is in between: plain alpha (the transparent PNG's
+ * own dark spots do the work) plus a `soft-light` blend mode so the
+ * grain modulates the underlying gradient instead of stamping a gray
+ * layer over it. `soft-light` is the right blend for substrate texture
+ * specifically — it darkens where the source is dark and lightens
+ * where light, but with much gentler contrast than `overlay`, so the
+ * fibre reads as paper tooth without driving up the apparent lightness
+ * of the page.
  *
  * Kept fixed-position + pointer-events: none so it's purely a substrate
  * decoration. Tile size matches the source PNG so neither axis stretches.
@@ -109,7 +110,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.55;
+  opacity: 0.35;
+  mix-blend-mode: soft-light;
   background-image: url("/textures/paper-grain.png");
   background-size: 280px 280px;
   background-repeat: repeat;
@@ -214,7 +216,16 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-image: url("/textures/paper-grain.png");
   background-size: 280px 280px;
   background-repeat: repeat;
-  opacity: 0.45;
+  /*
+   * Plain alpha would dump near-black grain spots onto cream paper —
+   * legible at moderate strength but reads as "ink stipple," not paper
+   * fibre, and competes with the actual narration text. `multiply`
+   * darkens only where the source PNG is dark, so the grain shows as
+   * subtle warmer fibre threads in the parchment instead of as a
+   * separate stippled layer over it.
+   */
+  opacity: 0.30;
+  mix-blend-mode: multiply;
 }
 .parchment > * {
   position: relative;
@@ -273,6 +284,15 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   position: relative;
   isolation: isolate;
 }
+/*
+ * Same blend-and-alpha logic as `body::before` — `soft-light` makes
+ * the metal grain feel like real surface modulation rather than a
+ * gray noise stamp. The opacity is higher than the body's (55% vs
+ * 35%) because `.iron-grained` sits on the deeper ink-deep/ink-black
+ * chassis: there's less ambient page light competing for the noise's
+ * attention, so a stronger source still reads as suggestion rather
+ * than as a metal-plate photo.
+ */
 .iron-grained::after {
   content: "";
   position: absolute;
@@ -282,8 +302,8 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-image: url("/textures/iron-grain.png");
   background-size: 192px 192px;
   background-repeat: repeat;
-  mix-blend-mode: overlay;
-  opacity: 0.10;
+  mix-blend-mode: soft-light;
+  opacity: 0.55;
 }
 .iron-grained > * {
   position: relative;

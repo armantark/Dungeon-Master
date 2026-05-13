@@ -101,7 +101,7 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
 </script>
 
-<div class="library iron iron-grained" class:frontispiece={mode === "empty"}>
+<div class="library iron iron-grained frontispiece" class:library--empty={mode === "empty"}>
   <header class="library__head">
     <span class="kicker">Oracle's Ledger</span>
     {#if mode === "empty"}
@@ -216,28 +216,31 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
 
   /*
-   * Empty-shelf frontispiece. The Dürer plate is anchored to the right
-   * so the headline + lead + CTA stack on the left without competing
-   * with the figure. We push min-height up so the engraving has actual
-   * room to live; without it the splash would be ~120px tall and the
-   * plate would render as a sliver.
+   * Frontispiece engraving — Dürer plate behind the splash. Used in
+   * both modes (empty + selecting). The first version gated this on
+   * `mode === "empty"` only; with a populated library that left the
+   * selecting splash unchanged, which was the dominant entry point.
+   * The plate is now ambient: present at all times, but quieter in
+   * the selecting mode so the populated card grid stays legible.
    *
-   * Plate opacity is bumped slightly above the default `.frontispiece`
-   * 18% because the iron chassis underneath is very dark — at 14-16%
-   * the figure essentially disappears.
+   * Position is anchored on the right so headlines and CTAs read on
+   * the left without crashing into the figure.
    */
-  .library.frontispiece {
+  .library {
     --frontispiece-position: right -1rem center;
-    --frontispiece-opacity: 0.22;
     --frontispiece-blend: screen;
     --frontispiece-size: auto 130%;
-    min-height: 420px;
+    --frontispiece-opacity: 0.10;
     overflow: hidden;
   }
-  .library.frontispiece .library__head {
+  .library--empty {
+    --frontispiece-opacity: 0.24;
+    min-height: 420px;
+  }
+  .library--empty .library__head {
     max-width: 36ch;
   }
-  .library.frontispiece .library__foot {
+  .library--empty .library__foot {
     max-width: 40ch;
   }
   .library__head {
