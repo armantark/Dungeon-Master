@@ -6,82 +6,65 @@ URL, license, and how it's used inside the app — keeping this honest is
 cheaper than relicensing later.
 
 The design rationale for what gets a texture and what stays procedural
-is documented in `web/src/styles/app.css` (see the substrate-grain,
-iron-chassis, and `.frontispiece` comment blocks). Short version: photo
-textures are reserved for *substrate degradation* (paper tooth, metal
-grain) and for one or two *frontispiece moments* (campaign end, empty
-shelf). They are not used as UI chrome — buttons, tags, receipts, and
-pigment math stay derived from the `:root` palette.
+is documented in `web/src/styles/app.css` (see the body-backdrop,
+parchment, and iron-chassis comment blocks). Short version: real
+photographic textures from Transparent Textures are used for the three
+material surfaces of the grimoire fiction —
 
-## `paper-grain.png` — body substrate
+1. **Ebony wood** — body backdrop. The deepest material layer.
+2. **Dark leather** — `.iron-grained` chassis surfaces (front-ish).
+3. **Aged paper** — `.parchment` cards (where text lives).
 
-- **Role.** Replaces the previous `feTurbulence` SVG overlay on
-  `body::before`. Rendered at 10% opacity under `mix-blend-mode:
-  overlay` so it reads as paper fibre at glancing angle without
-  competing with type or pixel chips.
-- **Source.** Transparent Textures (`paper-2.png`),
-  https://www.transparenttextures.com/patterns/paper-2.png — a
+Plus one frontispiece engraving used as a hero plate on the empty save
+shelf and campaign-end banner.
+
+Earlier rounds of this experiment used procedurally-generated noise
+PNGs for the substrate textures. They were obviously fake at retina and
+forced multiple blend-mode compromises. The current set are all real
+material photography, used at low opacity through carefully chosen
+blend modes so they read as substrate without competing with content.
+
+## `dark-wood.png` — body backdrop (ebony)
+
+- **Role.** `body::before`, `overlay` blend at 35% opacity, 512px tile.
+  Provides the ebony-wood grain that the rest of the grimoire sits on.
+  Overlay on a near-black radial-gradient body darkens the darks and
+  barely touches the candle-warm highlights, so the page reads as warm
+  brown wood rather than as gray noise.
+- **Source.** Transparent Textures (`dark-wood.png`),
+  https://www.transparenttextures.com/patterns/dark-wood.png — a
   re-publication of Atle Mo's "Subtle Patterns" collection.
 - **License.** Subtle Patterns / Transparent Textures content is
   distributed under a permissive MIT-style license that allows
-  commercial use without attribution. The pattern itself is a small
-  tileable PNG; we treat it as license-clean for bundled
-  redistribution inside this single-user desktop app.
-- **Modifications.** None. Saved verbatim as `paper-grain.png`.
+  commercial use without attribution. Treated as license-clean for
+  bundled redistribution inside this single-user desktop app.
+- **Modifications.** None. Saved verbatim.
 
-## `paper-stains.png` — coarse low-frequency stain plate
+## `leather.png` — `.iron-grained` chassis surfaces
 
-- **Role.** The *visible-at-retina* substrate layer for both the body
-  backdrop (`body::after`, screen blend) and parchment cards
-  (`.parchment::after`, multiply blend). The fine paper-grain.png tile
-  collapses to a sub-pixel cross-hatch at 2x DPR; this plate is at
-  1024px so its features land at 50-200 logical pixels and stay
-  perceptible regardless of pixel density.
-- **Source.** Locally generated with ImageMagick. Reproducible command:
+- **Role.** `.iron-grained::after`, `overlay` blend at 40% opacity,
+  300px tile. The "front-ish" dark surface — leather-clad iron panels
+  used on SaveLibrary and other hero chassis. Overlay on the existing
+  iron gradient darkens the darks and shifts the highlights into warm
+  brown without graying the surface out.
+- **Source.** Transparent Textures (`leather.png`),
+  https://www.transparenttextures.com/patterns/leather.png — Subtle
+  Patterns collection.
+- **License.** Same permissive MIT-style as `dark-wood.png`.
+- **Modifications.** None.
 
-  ```sh
-  magick -size 1024x1024 xc:gray50 \
-    +noise gaussian \
-    -virtual-pixel tile \
-    -blur 0x22 \
-    -level 22%,78% \
-    -colorspace Gray \
-    -depth 8 \
-    -define png:compression-level=9 \
-    paper-stains.png
-  ```
+## `natural-paper.png` — parchment fibre
 
-  Gaussian noise plus a heavy 22-pixel blur produces low-frequency
-  blotchy patches; the level remap compresses contrast so the result
-  is mid-gray noise rather than full black-and-white. Tileable
-  (`-virtual-pixel tile`).
-
-- **License.** Procedurally generated; treated as CC0-equivalent.
-
-## `iron-grain.png` — iron chassis substrate
-
-- **Role.** Procedurally generated tileable PNG used by the
-  `.iron::after` overlay (8% opacity, `mix-blend-mode: overlay`) so
-  dark chassis surfaces — `SaveLibrary`, future iron panels — read as
-  cast-iron rather than a flat tinted gradient.
-- **Source.** Locally generated with ImageMagick on the maintainer's
-  machine. Reproducible command:
-
-  ```sh
-  magick -size 192x192 xc:gray50 \
-    +noise gaussian \
-    -virtual-pixel tile \
-    -motion-blur 0x2+45 \
-    -blur 0x0.6 \
-    -level 35%,65% \
-    -colorspace Gray \
-    -depth 8 \
-    -define png:compression-level=9 \
-    iron-grain.png
-  ```
-
-- **License.** Generated noise has no underlying authored work, so we
-  treat the resulting PNG as CC0-equivalent for redistribution.
+- **Role.** `.parchment::before`, `multiply` blend at 22% opacity,
+  523x384 tile. The one texture layer on cream parchment, replacing
+  the earlier stacked procedural stain + grain pair. Multiply darkens
+  the cream paper naturally where the fibre is darker; the source
+  tile's tight tonal range (std ~3%) keeps body text fully legible.
+- **Source.** Transparent Textures (`natural-paper.png`),
+  https://www.transparenttextures.com/patterns/natural-paper.png —
+  Subtle Patterns collection.
+- **License.** Same permissive MIT-style as `dark-wood.png`.
+- **Modifications.** None.
 
 ## `knight-death-engraving.jpg` — frontispiece plate
 
@@ -129,3 +112,26 @@ lore set in the directives).
 
 Future additions should keep that constraint: if a candidate plate
 reads as celebratory medieval optimism, skip it.
+
+## Why three real textures, not procedural
+
+Earlier iterations of this CSS used procedurally-generated PNGs
+(`iron-grain.png`, `paper-stains.png`, plus several short-lived
+attempts at `ebony-grain` and `leather-grain`). Two reasons they were
+all retired:
+
+1. **Retina visibility vs. authenticity tradeoff.** Procedural Gaussian
+   noise looks "right" at 1x DPR but collapses to imperceptible
+   cross-hatch at 2x+, while real material photography retains
+   recognisable structure (knots, pore clusters, fibre direction) at
+   every pixel density.
+2. **Blend-mode debugging cycles.** Procedural mid-gray noise on a
+   near-black backdrop turns gray under almost every blend mode that
+   makes it register at all. Real wood / leather are inherently
+   dark-warm, so the same blends shift the page toward brown — which
+   is the visible payoff the dark backdrop needed.
+
+Transparent Textures' permissive license and CC0-equivalent treatment
+makes this a free win — the bundle is smaller (one PNG per surface
+instead of two layered procedurals) and the result is recognisable as
+the material it's supposed to be.

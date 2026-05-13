@@ -84,39 +84,106 @@ body {
 }
 
 /*
- * Substrate grain on the dark backdrop.
+ * Metallic scrollbars — tarnished-iron channel with a brushed-gold
+ * thumb. OS-default scrollbars (especially macOS' translucent grays)
+ * read as modern app chrome and break the grimoire frame. These
+ * pseudo-element styles only fire in WebKit/Chromium (so Tauri's
+ * WebKit shell + dev Chromium both get them); Firefox falls back to
+ * the cross-browser `scrollbar-color` / `scrollbar-width` properties
+ * which give a close-enough thin gold-on-iron approximation.
  *
- * The first version used `feTurbulence` SVG noise under `overlay` blend
- * at 10% — mathematically correct, visually invisible on near-black.
- * The second version cranked plain-alpha to 55% — visible, but read as
- * gray slate against the dark gradient and started competing with text
- * on adjacent parchment cards.
+ * Layered gradients on the thumb fake brushed-metal: a vertical light
+ * sweep (top highlight → mid → bottom shadow) gives it the rounded
+ * cylinder feel; the gold→tarnished base provides the pigment. The
+ * inset shadow seats the thumb in the channel so it doesn't float.
  *
- * The current tuning is in between: plain alpha (the transparent PNG's
- * own dark spots do the work) plus a `soft-light` blend mode so the
- * grain modulates the underlying gradient instead of stamping a gray
- * layer over it. `soft-light` is the right blend for substrate texture
- * specifically — it darkens where the source is dark and lightens
- * where light, but with much gentler contrast than `overlay`, so the
- * fibre reads as paper tooth without driving up the apparent lightness
- * of the page.
- *
- * Kept fixed-position + pointer-events: none so it's purely a substrate
- * decoration. Tile size matches the source PNG so neither axis stretches.
+ * Sized 10px because we're a serious dense-text reader UI; a fat
+ * Windows-95 scrollbar would be theme-correct but eats reading space.
  */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-tarnished) var(--ink-black);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.55) 0%,
+      rgba(0, 0, 0, 0.25) 50%,
+      rgba(0, 0, 0, 0.55) 100%
+    ),
+    var(--ink-black);
+  border-left: 1px solid color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  border: 1px solid color-mix(in oklab, var(--ink-black) 85%, var(--gold-tarnished));
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--gold-tarnished) 70%, var(--ink-black)) 0%,
+      var(--gold-candle) 45%,
+      var(--gold-tarnished) 55%,
+      color-mix(in oklab, var(--gold-tarnished) 55%, var(--ink-black)) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 150, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--gold-candle) 70%, var(--ink-black)) 0%,
+      var(--gold-bright) 45%,
+      var(--gold-candle) 55%,
+      color-mix(in oklab, var(--gold-candle) 55%, var(--ink-black)) 100%
+    );
+}
+::-webkit-scrollbar-corner {
+  background: var(--ink-black);
+}
+/* Horizontal scrollbar gets the gradient rotated 0 → 180deg. */
+::-webkit-scrollbar:horizontal {
+  height: 10px;
+}
+::-webkit-scrollbar-thumb:horizontal {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--gold-tarnished) 70%, var(--ink-black)) 0%,
+      var(--gold-candle) 45%,
+      var(--gold-tarnished) 55%,
+      color-mix(in oklab, var(--gold-tarnished) 55%, var(--ink-black)) 100%
+    );
+}
+
 /*
- * Body backdrop grain.
+ * Body backdrop — ebony wood substrate.
  *
- * After several rounds: visible texture on a near-black page is a
- * losing game. Every blend mode that makes grain register also lifts
- * the page toward gray (screen, high-alpha soft-light, plain alpha).
- * The dark page should stay dark — it's the "iron" of the grimoire,
- * not paper. The grain at low opacity under soft-light adds micro-
- * character at non-retina and a faint warmth at retina, which is the
- * right ceiling for this surface.
+ * The dark page is the deepest material layer in the grimoire fiction:
+ * the desk / cover the parchment sits on. Earlier rounds tried to make
+ * paper grain visible on near-black and consistently failed (every
+ * blend that registers also lifts the page to gray, because gray noise
+ * on near-black averages to gray). Wood is the correct material here:
+ * it's inherently dark and warm-toned, so the same blend that "lifts"
+ * it lifts toward brown, not gray.
  *
- * Visible substrate work lives on `.parchment` cards instead — cream
- * paper has the contrast headroom to show real stains and fibre.
+ * Texture is Transparent Textures' `dark-wood.png` (CC0-equivalent
+ * permissive license, see SOURCES.md). 512px tile, low-frequency
+ * vertical streak with subtle knots — tiles seamlessly and reads as
+ * wood even at the small visible delta we apply.
+ *
+ * `overlay` at 35% is chosen carefully: the PNG is already very dark
+ * (mean 19%), so overlay darkens the darks and barely touches the
+ * lights of the underlying radial gradient. The candle-warm radials at
+ * the top stay candle-warm; the deeper centre/bottom picks up the wood
+ * grain. No "gray slate" failure mode.
  */
 body::before {
   content: "";
@@ -124,10 +191,10 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  background-image: url("/textures/paper-grain.png");
-  background-size: 280px 280px;
+  background-image: url("/textures/dark-wood.png");
+  background-size: 512px 512px;
   background-repeat: repeat;
-  opacity: 0.12;
+  opacity: 0.35;
   mix-blend-mode: overlay;
 }
 
@@ -232,17 +299,17 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   padding: 1.4rem 1.6rem;
 }
 /*
- * Parchment substrate — this is where the texture investment pays off.
- * Cream paper has the contrast headroom that near-black doesn't, so
- * this is the one surface where real stains + fibre are visible at
- * retina without turning the whole card gray.
+ * Parchment substrate — real paper fibre, not procedural noise.
  *
- *   ::before — coarse stain plate at 1024px, multiply @ 0.35.
- *     Features are 50-200 logical pixels: age spots, water marks,
- *     uneven tone. Multiply darkens the cream paper naturally.
- *   ::after  — fine grain at 280px, multiply @ 0.25.
- *     Micro-fibre character underneath the stains. Subtle but
- *     perceptible up close; the stains do the heavy visible lifting.
+ * Texture is Transparent Textures' `natural-paper.png` — 523x384
+ * tileable PNG of authentic paper-fibre photography. Earlier rounds
+ * stacked procedurally-generated stain and grain layers; both were
+ * obviously fake at retina and forced multiple compromises. One real
+ * paper texture at gentle alpha + multiply does the same job better.
+ *
+ * `multiply` at 22% darkens cream paper naturally where the fibre is
+ * darker; doesn't compete with body text legibility because the source
+ * tile's standard deviation is tight (~3%).
  */
 .parchment::before {
   content: "";
@@ -250,22 +317,10 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/paper-stains.png");
-  background-size: 1024px 1024px;
+  background-image: url("/textures/natural-paper.png");
+  background-size: 523px 384px;
   background-repeat: repeat;
-  opacity: 0.35;
-  mix-blend-mode: multiply;
-}
-.parchment::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image: url("/textures/paper-grain.png");
-  background-size: 280px 280px;
-  background-repeat: repeat;
-  opacity: 0.25;
+  opacity: 0.22;
   mix-blend-mode: multiply;
 }
 .parchment > * {
@@ -292,15 +347,18 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
 }
 
 /*
- * Iron chassis.
+ * Iron chassis — the "front-ish" dark surface (above the ebony
+ * backdrop, below parchment cards). Fiction: leather-clad iron panels
+ * — desk blotter, codex cover, dossier folio. The base gradient does
+ * the iron part; the opt-in `.iron-grained` overlay adds the leather.
  *
- * Pure gradient — no auto-applied grain overlay. The first version of
- * this experiment attached `.iron::after` globally as a metal-grain
- * layer, which leaked into small surfaces like the SystemMenu dropdown
- * and broke Tauri/WebKit text rendering on those panels via the
- * mix-blend-mode pseudo. Grain is now opt-in via `.iron-grained` so
- * each surface decides whether the noise overlay is worth the
- * compositor cost. SaveLibrary opts in; SystemMenu does not.
+ * Pure gradient — no auto-applied texture overlay. The first version
+ * attached an `.iron::after` grain layer globally, which leaked into
+ * small surfaces like the SystemMenu dropdown and broke Tauri/WebKit
+ * text rendering on those panels via the mix-blend-mode pseudo. Grain
+ * is now opt-in via `.iron-grained` so each surface decides whether
+ * the texture overlay is worth the compositor cost. SaveLibrary opts
+ * in; SystemMenu does not.
  */
 .iron {
   background:
@@ -315,36 +373,32 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
 }
 
 /*
- * Opt-in metal-grain layer. Use on chassis surfaces that are large
- * enough to benefit from the noise (SaveLibrary, hero panels). Avoid
- * on small dropdown panels — the pseudo-element + mix-blend-mode
- * combo costs render-tree work that isn't earned at that scale, and
- * has hit WebKit text-rendering bugs in past versions.
+ * Opt-in dark-leather overlay. Use on chassis surfaces large enough
+ * to benefit from real pore texture (SaveLibrary, hero panels). Avoid
+ * on small dropdown panels — the pseudo + mix-blend-mode combo costs
+ * render-tree work that isn't earned at that scale.
+ *
+ * Texture is Transparent Textures' `leather.png` (300x300 tileable
+ * organic pore photography, see SOURCES.md). `overlay` blend at 40%
+ * lets the dark base show through while the leather grain darkens the
+ * darks and lifts the highlights into warm brown — exactly the
+ * "leather over iron" feel without going gray.
  */
 .iron-grained {
   position: relative;
   isolation: isolate;
 }
-/*
- * Same blend-and-alpha logic as `body::before` — `soft-light` makes
- * the metal grain feel like real surface modulation rather than a
- * gray noise stamp. The opacity is higher than the body's (55% vs
- * 35%) because `.iron-grained` sits on the deeper ink-deep/ink-black
- * chassis: there's less ambient page light competing for the noise's
- * attention, so a stronger source still reads as suggestion rather
- * than as a metal-plate photo.
- */
 .iron-grained::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/iron-grain.png");
-  background-size: 192px 192px;
+  background-image: url("/textures/leather.png");
+  background-size: 300px 300px;
   background-repeat: repeat;
-  mix-blend-mode: soft-light;
-  opacity: 0.55;
+  mix-blend-mode: overlay;
+  opacity: 0.40;
 }
 .iron-grained > * {
   position: relative;
