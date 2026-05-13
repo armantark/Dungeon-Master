@@ -52,6 +52,7 @@ class PlannedTurnOpKind(StrEnum):
     RANDOM_EVENT = "random_event"
     SCENE_CHECK = "scene_check"
     SAVE = "save"
+    BEGIN_ENCOUNTER = "begin_encounter"
     ATTACK = "attack"
     COORDINATED_ATTACK = "coordinated_attack"
     ENEMY_OPENER = "enemy_opener"
@@ -180,6 +181,12 @@ def _raise_empty_route_content_error() -> None:
     raise EmptyRouteContentError(message)
 
 
+def _fallback_harm_source(op: PlannedTurnOp) -> str | None:
+    if op.kind in {PlannedTurnOpKind.HARM, PlannedTurnOpKind.ENEMY_OPENER}:
+        return op.target_name
+    return None
+
+
 LIKELIHOOD_HINTS: dict[str, Likelihood] = {
     "impossible": Likelihood.IMPOSSIBLE,
     "very-unlikely": Likelihood.VERY_UNLIKELY,
@@ -212,6 +219,7 @@ Return only valid JSON.
 - random_event
 - scene_check
 - save
+- begin_encounter
 - attack
 - harm
 - recovery
@@ -230,6 +238,9 @@ Allowed op kinds:
   travel transition right now
 - save: the player is attempting one risky immediate action that should
   resolve as a Cairn-style save
+- begin_encounter: the player explicitly wants to start or frame tracked combat
+  against a present/established hostile foe or group, without resolving the
+  first attack or incoming blow yet
 - attack: the player is attacking or striking a concrete foe right now
 - coordinated_attack: the player and at least one named party member are
   making one coordinated offensive move against the same concrete foe now
@@ -282,13 +293,14 @@ Rules:
 - Preserve the player's meaning; clean wording lightly but do not rewrite
   it into a different action.
 - A broad request to seek, start, or enter danger/combat is not a concrete
-  attack by itself. Unless the player declares a concrete strike, target,
-  weapon use, ambush, or incoming blow, keep it as `narrate` or
-  immediate-situation setup rather than spending the player's first combat turn.
+  attack by itself. If the hostile foe/group is present or clearly named, emit
+  `begin_encounter` with `target_name` instead of spending the player's first
+  combat turn. If no foe/group is present or named, keep it as `narrate`,
+  `search_scene`, or immediate-situation setup.
 - You may emit preparatory ops before one primary deterministic op,
   e.g. `equip` then `attack`, or `inspect_inventory` then `scene_check`.
 - Emit at most one primary oracle/mechanical op from this set:
-  `yes_no`, `random_event`, `scene_check`, `save`, `attack`,
+  `yes_no`, `random_event`, `scene_check`, `save`, `begin_encounter`, `attack`,
   `coordinated_attack`, `enemy_opener`, `harm`, `recovery`, `setup_advantage`.
 - If ops contain one of those primary oracle/mechanical ops, `route` must match it.
 - Exception: if the primary op is `enemy_opener`, `route` must be `harm`
@@ -302,6 +314,9 @@ Rules:
   `player_action`.
 - Use `save` only when the player is attempting one concrete risky action right now.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
+- If kind is `begin_encounter`, include `target_name` naming the hostile
+  foe/group to seed into tracked combat. Do not invent a blow, weapon use, or
+  damage for this op.
 - If kind is `attack`, include `target_name`, and choose `stance` if clearly implied.
   Use `attack` only when the player declares a concrete offensive action now,
   not merely when they ask to begin or find a fight.
@@ -372,7 +387,8 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "survival_actions": ["eat | sleep", "..."],\n'
     '  "ops": [\n'
     "    {\n"
-    '      "kind": "narrate | yes_no | random_event | scene_check | save | attack | '
+    '      "kind": "narrate | yes_no | random_event | scene_check | save | '
+    'begin_encounter | attack | '
     'coordinated_attack | enemy_opener | harm | recovery | equip | retreat | '
     'setup_advantage | acquire_item | transfer_item | recruit_npc | '
     'inspect_inventory | search_scene | '
@@ -879,6 +895,9 @@ class TurnRouter:
         if op.kind == PlannedTurnOpKind.SAVE and op.ability is None:
             message = "Save ops require an ability."
             raise ValueError(message)
+        if op.kind == PlannedTurnOpKind.BEGIN_ENCOUNTER and op.target_name is None:
+            message = "begin_encounter ops require a target_name."
+            raise ValueError(message)
         if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is None:
             message = "Attack ops require a target_name."
             raise ValueError(message)
@@ -934,6 +953,7 @@ class TurnRouter:
             PlannedTurnOpKind.RECRUIT_NPC,
             PlannedTurnOpKind.DROP_ITEM,
             PlannedTurnOpKind.SETUP_ADVANTAGE,
+            PlannedTurnOpKind.BEGIN_ENCOUNTER,
             PlannedTurnOpKind.CLARIFY,
             PlannedTurnOpKind.NARRATE,
         ) and route != TurnRoute.PLAYER_ACTION:
@@ -957,7 +977,7 @@ class TurnRouter:
             target_actor_name=op.target_actor_name,
             equipped=op.equipped,
             harm_amount=op.harm_amount,
-            harm_source=op.harm_source or op.target_name,
+            harm_source=op.harm_source or _fallback_harm_source(op),
             armor_applies=op.armor_applies,
             in_combat=op.in_combat,
             advantage_payoff=op.advantage_payoff,

@@ -77,6 +77,13 @@ Hard boundaries:
 - You only narrate from the structured oracle outcome and state supplied by the app;
   canonical state changes happen elsewhere in the system.
 - If mechanics are unclear, make the fiction tense but do not invent new mechanical facts.
+- Canonical abilities and notes in `CHARACTER_JSON` are authoritative narrative
+  permissions. Do not invent a narrower limitation for an ability unless the
+  ability text, condition, item, or outcome explicitly says that limitation exists.
+- When a turn contains multiple declared actions but the structured outcome
+  resolves only one risk, scope success/failure to `ORACLE_OUTCOME_JSON.question`
+  and the receipt summary. Do not let a failed save make unrelated declared
+  actions fail.
 
 Discipline:
 - Keep narration compact: usually one paragraph, at most two unless the oracle
@@ -109,9 +116,9 @@ Discipline:
   is named in the outcome, use the actor's primary/equipped weapon from
   canonical inventory.
 - For party members, the compact `party_members` JSON is the authority for
-  names, roles, armor, and carried gear. Once a companion sheet exists, do not
-  keep using older transcript weapon color that conflicts with their
-  primary/equipped inventory.
+  names, roles, abilities, notes, armor, and carried gear. Once a companion sheet
+  exists, do not keep using older transcript weapon color or capability limits
+  that conflict with their primary/equipped inventory or abilities.
 - Static character facts, injuries, and recurring motifs are reference context,
   not mandatory prose beats; mention them only when they materially affect the
   immediate action or scene.
@@ -802,6 +809,8 @@ class NarrativeEngine:
                     "dead": cairn.dead,
                     "overloaded": cairn.overloaded,
                 },
+                "abilities": cairn.abilities,
+                "notes": self._clip_prompt_text(cairn.notes, 240),
             },
             "inventory": [
                 {
@@ -841,6 +850,8 @@ class NarrativeEngine:
                 "wil": [cairn.wil_score, cairn.max_wil_score],
                 "armor": cairn.armor,
                 "primary_weapon_item_id": cairn.primary_weapon_item_id,
+                "abilities": cairn.abilities,
+                "notes": self._clip_prompt_text(cairn.notes, 180),
             },
             "inventory": [
                 {

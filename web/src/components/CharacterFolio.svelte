@@ -167,9 +167,10 @@ readout is purely read-only here; no buttons mutate state from this rail.
   <div class="folio__col folio__col--identity">
     {#if actors.length > 1}
       <nav class="party-tabs" aria-label="Party folio">
-        {#each actors as actor (actor.id)}
+        {#each actors as actor, index (actor.id)}
           <button
             class:party-tabs__button--active={actor.id === selectedActor.id}
+            class:party-tabs__button--half={index === 2}
             type="button"
             aria-pressed={actor.id === selectedActor.id}
             onclick={() => {
@@ -376,6 +377,10 @@ readout is purely read-only here; no buttons mutate state from this rail.
         rgba(0, 0, 0, 0.38)
       );
     color: var(--paper-bone);
+  }
+  .party-tabs button.party-tabs__button--half {
+    flex-grow: 0;
+    flex-basis: calc(50% - 0.175rem);
   }
   .party-tabs button:hover,
   .party-tabs button:focus-visible {

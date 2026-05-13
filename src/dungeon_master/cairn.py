@@ -1179,6 +1179,53 @@ class CairnEngine:
             ),
         )
 
+    def begin_encounter(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        self._require_ready(state)
+        encounter = self._ensure_encounter(
+            state,
+            player_input=text,
+            target_name=target_name,
+            fallback_target_armor=0,
+            initiator=EncounterInitiator.PLAYER,
+            cancel_token=cancel_token,
+        )
+        encounter.active = self._has_active_enemies(encounter)
+        encounter.player_disengaged = False
+        encounter.pursuit_active = False
+        encounter.end_reason = None if encounter.active else EncounterEndReason.VICTORY
+        combatant_names = ", ".join(
+            combatant.name
+            for combatant in encounter.combatants
+            if not combatant.defeated and not combatant.fled
+        )
+        summary = (
+            f"Combat encounter started against {combatant_names or target_name}. "
+            f"Round {encounter.round_number} is ready; no attack has been resolved yet."
+        )
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=summary,
+            rolls=[],
+            question=text,
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=encounter.round_number,
+                combat_started=True,
+                combat_active=encounter.active,
+                combat_initiator=encounter.initiator,
+                player_acted=False,
+                target_name=combatant_names or target_name,
+                overloaded=state.character.cairn.overloaded,
+            ),
+        )
+
     def resolve_enemy_opener(
         self,
         state: GameState,

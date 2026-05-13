@@ -34,7 +34,9 @@ F-09 browsing behavior:
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import ChatMessage from "./ChatMessage.svelte";
+  import InlineCombatStrip from "./InlineCombatStrip.svelte";
   import StageChecklist from "./StageChecklist.svelte";
+  import { combatFromState } from "../lib/combat";
   import { canRegenerateMessage } from "../lib/message-actions";
   import { game } from "../lib/store.svelte";
   import type { GameState, GameEvent, OracleOutcome, StageTiming } from "../lib/types";
@@ -243,6 +245,19 @@ F-09 browsing behavior:
     return latest?.id ?? null;
   });
 
+  // The inline combat strip renders directly under the latest DM
+  // beat whenever a fight is being tracked. We surface it whether the
+  // encounter is active OR just-cleared-with-a-summary (the cleared
+  // case prints a single italic line and then vanishes once the next
+  // narrative scrolls past). Keeping the visibility decision out of
+  // the strip itself means we can keep all the layout / spacing
+  // decisions inside the chat feed where neighboring messages live.
+  const combatEncounter = $derived(combatFromState(gs));
+  const showCombatStrip = $derived(
+    combatEncounter !== null
+      && (combatEncounter.active || combatEncounter.summary !== null),
+  );
+
   let scroller: HTMLElement | undefined;
   let lastCount: number = $state(0);
   let lastPlayerCount: number = $state(0);
@@ -428,6 +443,20 @@ F-09 browsing behavior:
         />
       </div>
     {/each}
+    {#if showCombatStrip}
+      <!--
+        The inline combat strip rides between the last persisted DM
+        message and the provisional bubble (if any). We render it
+        here, not inside the per-message loop, because it's a single
+        state-derived surface — there is at most one tracked
+        encounter at a time and it always belongs to "right now",
+        not to a specific past beat. Pinning it under the latest
+        beat keeps the player's eye on the same column as the
+        narrative and means the Inspector no longer has to be open
+        to read the fight.
+      -->
+      <InlineCombatStrip state={gs} />
+    {/if}
     {#if provisional}
       <div class="anchor" data-event-id={provisional.id}>
         {#if game.streaming.stages.length > 0}

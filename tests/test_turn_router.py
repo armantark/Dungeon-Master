@@ -100,8 +100,8 @@ class CombatReviewRouterCompletion:
                 '"reason":"structured review verdict"}',
             )  # type: ignore[return-value]
         return _stream(
-            '{"route":"attack","text":"Let us find a fight.",'
-            '"ops":[{"kind":"attack","text":"Let us find a fight.",'
+            '{"route":"attack","text":"I swing my cudgel at the abbey ghoul.",'
+            '"ops":[{"kind":"attack","text":"I swing my cudgel at the abbey ghoul.",'
             '"likelihood":null,"ability":null,"target_name":"Abbey ghoul",'
             '"stance":"normal","rest_kind":null,"item_name":null,'
             '"equipped":null,"harm_amount":null,"harm_source":null,'
@@ -276,7 +276,57 @@ def test_turn_router_prompt_keeps_broad_combat_intent_out_of_attack() -> None:
     system_prompt = " ".join(completion.messages[0]["content"].split())
     assert "A broad request to seek, start, or enter danger/combat" in system_prompt
     assert "concrete attack by itself" in system_prompt
-    assert "spending the player's first combat turn" in system_prompt
+    assert "`begin_encounter` with `target_name`" in system_prompt
+
+
+def test_model_can_begin_encounter_without_spending_attack() -> None:
+    class BeginEncounterRouterCompletion:
+        def __call__(self, request: CompletionRequest) -> ModelResponse:
+            del request
+
+            def _stream() -> list[dict[str, object]]:
+                return [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "content": (
+                                        '{"route":"player_action",'
+                                        '"text":"Let us start an encounter with the horde.",'
+                                        '"ops":[{"kind":"begin_encounter",'
+                                        '"text":"Let us start an encounter with the horde.",'
+                                        '"likelihood":null,"ability":null,'
+                                        '"target_name":"Infected horde",'
+                                        '"stance":null,"rest_kind":null,"item_name":null,'
+                                        '"supporting_actor_names":[],"source_actor_name":null,'
+                                        '"target_actor_name":null,"equipped":null,'
+                                        '"harm_amount":null,"harm_source":null,'
+                                        '"armor_applies":null,"in_combat":null,'
+                                        '"advantage_payoff":null}]}'
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                ]
+
+            return _stream()  # type: ignore[return-value]
+
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=BeginEncounterRouterCompletion(),
+    )
+
+    planned = router.plan("Let us start an encounter with the horde.")
+
+    assert planned.route == TurnRoute.PLAYER_ACTION
+    assert planned.ops == (
+        PlannedTurnOp(
+            kind=PlannedTurnOpKind.BEGIN_ENCOUNTER,
+            text="Let us start an encounter with the horde.",
+            target_name="Infected horde",
+        ),
+    )
 
 
 def test_model_can_request_clarification_for_ambiguous_party_reference() -> None:

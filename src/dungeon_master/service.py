@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic import Field, ValidationError
+
 from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignGenerator,
@@ -17,6 +19,14 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.capability_oracle_guard import (
+    CapabilityOracleGuard,
+    CapabilityOracleGuardResult,
+)
+from dungeon_master.character_effect_updater import (
+    CharacterEffectUpdater,
+    CharacterEffectUpdateResult,
+)
 from dungeon_master.config import LLMRuntimeBundle, build_llm_runtime, single_llm_runtime
 from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
@@ -57,15 +67,21 @@ from dungeon_master.models import (
     SceneStatus,
     StageStatus,
     StageTiming,
+    StrictModel,
     utc_now,
 )
 from dungeon_master.narrative import (
+    LITELLM_RETRYABLE_ERRORS,
     CompletionDelta,
+    CompletionRequest,
     NarrativeConfig,
     NarrativeEngine,
     NarrativeResult,
     StreamStageStatus,
     StreamStageUpdate,
+    _completion,
+    complete_text,
+    extract_json_object,
 )
 from dungeon_master.npc_updater import (
     GeneratedNPCUpdateBatch,
@@ -98,7 +114,25 @@ TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
 PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}
 MIN_COORDINATED_ATTACK_PARTICIPANTS = 2
 RECENT_NPC_CONTEXT_LIMIT = 4
+RECENT_RECRUITMENT_SCENE_CONTEXT_LIMIT = 6
 CLARIFICATION_EVENT_TITLE = "Clarification needed"
+RECRUITMENT_RESOLVER_SYSTEM_PROMPT = """You resolve a requested recruitment target to one
+already-visible NPC in a solo tabletop RPG save.
+
+Return only valid JSON.
+
+Hard rules:
+- Choose only an exact npc_id from the supplied visible_npcs list.
+- Never choose hidden, invented, or merely implied people.
+- Use the player turn, planner label, current scene, and recent visible
+  transcript to map descriptors, titles, and roles to the visible roster.
+- If no visible NPC is clearly the target, return {"npc_id": null}.
+- If more than one visible NPC is plausible, return {"npc_id": null}.
+"""
+
+
+class RecruitmentResolution(StrictModel):
+    npc_id: str | None = Field(default=None, max_length=80)
 
 
 @dataclass(frozen=True)
@@ -187,6 +221,12 @@ class ExecutedTurn:
     oracle_title: str | None
     execution_context: str | None = None
     pre_narration_continuity: bool = True
+
+
+@dataclass(frozen=True)
+class GuardedYesNoOutcome:
+    outcome: OracleOutcome
+    execution_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -297,6 +337,16 @@ class CairnPort(Protocol):
         in_combat: bool,
         armor_applies: bool,
         actor_id: str | None = None,
+    ) -> OracleOutcome:
+        raise NotImplementedError
+
+    def begin_encounter(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
     ) -> OracleOutcome:
         raise NotImplementedError
 
@@ -602,6 +652,32 @@ class ContinuityClassifierPort(Protocol):
         raise NotImplementedError
 
 
+class CapabilityOracleGuardPort(Protocol):
+    def guard_yes_no(
+        self,
+        state: GameState,
+        *,
+        question: str,
+        requested_likelihood: Likelihood,
+        cancel_token: CancellationToken | None = None,
+    ) -> CapabilityOracleGuardResult:
+        raise NotImplementedError
+
+
+class CharacterEffectUpdaterPort(Protocol):
+    def update_character_effects(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterEffectUpdateResult:
+        raise NotImplementedError
+
+
 class GameService:
     def __init__(  # noqa: PLR0913
         self,
@@ -616,7 +692,9 @@ class GameService:
         memory_manager: MemoryManager | None = None,
         thread_updater: ThreadUpdaterPort | None = None,
         npc_updater: NPCUpdaterPort | None = None,
+        character_effect_updater: CharacterEffectUpdaterPort | None = None,
         continuity_classifier: ContinuityClassifierPort | None = None,
+        capability_oracle_guard: CapabilityOracleGuardPort | None = None,
         llm_runtime: LLMRuntimeBundle | None = None,
     ) -> None:
         self._store = store
@@ -636,7 +714,13 @@ class GameService:
         self._memory = memory_manager or MemoryManager()
         self._thread_updater = thread_updater or ThreadUpdater(config=resolved_runtime.structured)
         self._npc_updater = npc_updater or NPCUpdater(config=resolved_runtime.structured)
+        self._character_effect_updater = character_effect_updater or CharacterEffectUpdater(
+            config=resolved_runtime.structured,
+        )
         self._continuity_classifier = continuity_classifier or ContinuityClassifier(
+            config=resolved_runtime.structured,
+        )
+        self._capability_oracle_guard = capability_oracle_guard or CapabilityOracleGuard(
             config=resolved_runtime.structured,
         )
 
@@ -663,7 +747,9 @@ class GameService:
         self._turn_router = TurnRouter(config=runtime.structured)
         self._thread_updater = ThreadUpdater(config=runtime.structured)
         self._npc_updater = NPCUpdater(config=runtime.structured)
+        self._character_effect_updater = CharacterEffectUpdater(config=runtime.structured)
         self._continuity_classifier = ContinuityClassifier(config=runtime.structured)
+        self._capability_oracle_guard = CapabilityOracleGuard(config=runtime.structured)
 
     def bind_store(self, store: StateStore) -> None:
         """Rebind the service to a different save slot's StateStore.
@@ -1295,19 +1381,54 @@ class GameService:
     def ask_oracle(self, question: str, likelihood: Likelihood) -> GameState:
         state = self.load_state()
         self._ensure_active(state)
-        outcome = self._oracle.ask_yes_no(state, question, likelihood)
+        guarded = self._resolve_yes_no_oracle(
+            state,
+            question=question,
+            likelihood=likelihood,
+        )
         self._commit_oracle_turn(
             state=state,
             player_input=f"Oracle question: {question}",
-            outcome=outcome,
+            outcome=guarded.outcome,
             oracle_title="Oracle answer",
+            execution_context=guarded.execution_context,
         )
         return state
 
     def preview_oracle(self, question: str, likelihood: Likelihood) -> OracleOutcome:
         state = self._load_state_readonly()
         self._ensure_active(state)
-        return self._oracle.ask_yes_no(state, question, likelihood)
+        return self._resolve_yes_no_oracle(
+            state,
+            question=question,
+            likelihood=likelihood,
+        ).outcome
+
+    def _resolve_yes_no_oracle(
+        self,
+        state: GameState,
+        *,
+        question: str,
+        likelihood: Likelihood,
+        cancel_token: CancellationToken | None = None,
+    ) -> GuardedYesNoOutcome:
+        guarded = self._capability_oracle_guard.guard_yes_no(
+            state,
+            question=question,
+            requested_likelihood=likelihood,
+            cancel_token=cancel_token,
+        )
+        if guarded.outcome is not None:
+            return GuardedYesNoOutcome(
+                outcome=guarded.outcome,
+                execution_context=guarded.execution_summary,
+            )
+        resolved_likelihood = guarded.likelihood or likelihood
+        outcome = self._oracle.ask_yes_no(state, question, resolved_likelihood)
+        return GuardedYesNoOutcome(
+            outcome=outcome,
+            execution_context=guarded.execution_summary,
+        )
 
     def generate_random_event(self) -> GameState:
         state = self.load_state()
@@ -1801,6 +1922,7 @@ class GameService:
                     self._recruit_npc_to_party(
                         state,
                         npc_name=op.npc_name,
+                        player_input=plan.text,
                         cancel_token=cancel_token,
                     ),
                 )
@@ -1825,9 +1947,17 @@ class GameService:
 
             if op.kind == PlannedTurnOpKind.YES_NO:
                 likelihood = op.likelihood or Likelihood.EVEN
-                primary_outcome = self._oracle.ask_yes_no(state, op.text, likelihood)
+                guarded = self._resolve_yes_no_oracle(
+                    state,
+                    question=op.text,
+                    likelihood=likelihood,
+                    cancel_token=cancel_token,
+                )
+                primary_outcome = guarded.outcome
                 oracle_title = "Oracle answer"
                 step_summaries.append(f"Oracle resolved: {primary_outcome.summary}")
+                if guarded.execution_context is not None:
+                    step_summaries.append(guarded.execution_context)
                 continue
 
             if op.kind == PlannedTurnOpKind.RANDOM_EVENT:
@@ -1854,6 +1984,17 @@ class GameService:
                 )
                 oracle_title = "Cairn save"
                 step_summaries.append(f"Save resolved: {primary_outcome.summary}")
+                continue
+
+            if op.kind == PlannedTurnOpKind.BEGIN_ENCOUNTER and op.target_name is not None:
+                primary_outcome = self._cairn.begin_encounter(
+                    state,
+                    target_name=op.target_name,
+                    text=op.text,
+                    cancel_token=cancel_token,
+                )
+                oracle_title = "Encounter started"
+                step_summaries.append(f"Encounter started: {primary_outcome.summary}")
                 continue
 
             if op.kind == PlannedTurnOpKind.ATTACK and op.target_name is not None:
@@ -2046,9 +2187,15 @@ class GameService:
         state: GameState,
         *,
         npc_name: str,
+        player_input: str,
         cancel_token: CancellationToken | None,
     ) -> str:
-        npc = self._require_visible_npc_by_name(state, npc_name)
+        npc = self._require_visible_npc_for_recruitment(
+            state,
+            npc_name=npc_name,
+            player_input=player_input,
+            cancel_token=cancel_token,
+        )
         if any(member.npc_id == npc.id and member.active for member in state.party_members):
             message = f"{npc.display_label()} is already in the party."
             raise ValueError(message)
@@ -2081,25 +2228,164 @@ class GameService:
         npc.status = NPCStatus.RETIRED
         return f"Recruited {member.display_label()} into the party."
 
+    def _require_visible_npc_for_recruitment(
+        self,
+        state: GameState,
+        *,
+        npc_name: str,
+        player_input: str,
+        cancel_token: CancellationToken | None,
+    ) -> NPC:
+        npc = self._visible_npc_by_name(state, npc_name)
+        if npc is not None:
+            return npc
+        npc = self._resolve_recruitment_npc_with_model(
+            state,
+            npc_name=npc_name,
+            player_input=player_input,
+            cancel_token=cancel_token,
+        )
+        if npc is not None:
+            return npc
+        message = f"Unknown visible NPC: {npc_name}"
+        raise ValueError(message)
+
+    def _resolve_recruitment_npc_with_model(
+        self,
+        state: GameState,
+        *,
+        npc_name: str,
+        player_input: str,
+        cancel_token: CancellationToken | None,
+    ) -> NPC | None:
+        config = self._llm_runtime.structured
+        if not config.is_usable():
+            return None
+        active_npcs = [npc for npc in state.npcs if npc.status == NPCStatus.ACTIVE]
+        if not active_npcs:
+            return None
+        payload = {
+            "planner_npc_name": npc_name,
+            "player_turn": player_input,
+            "current_scene": state.current_scene,
+            "visible_npcs": [
+                {
+                    "npc_id": npc.id,
+                    "display_label": npc.display_label(),
+                    "canonical_name": npc.name,
+                    "player_label_kind": npc.player_label_kind.value,
+                    "role": npc.role,
+                    "disposition": npc.disposition,
+                }
+                for npc in active_npcs
+            ],
+            "recent_visible_transcript": self._recent_recruitment_context(state),
+        }
+        profile = config.profiles.recruitment_resolver
+        request = CompletionRequest(
+            model=config.model,
+            messages=[
+                {"role": "system", "content": RECRUITMENT_RESOLVER_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
+            timeout=config.timeout_seconds,
+            stream=True,
+            api_key=config.api_key,
+            base_url=config.base_url,
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=config.exclude_reasoning),
+            extra_headers=self._openrouter_headers(config),
+            response_format=None,
+            cancel_token=cancel_token,
+            trace_route="service.recruitment_resolver",
+            trace_profile="recruitment_resolver",
+        )
+        try:
+            completed = complete_text(request, _completion)
+            parsed = RecruitmentResolution.model_validate_json(
+                extract_json_object(completed.content),
+            )
+        except (
+            *LITELLM_RETRYABLE_ERRORS,
+            ValidationError,
+            json.JSONDecodeError,
+            ValueError,
+        ):
+            return None
+        if parsed.npc_id is None:
+            return None
+        return next((npc for npc in active_npcs if npc.id == parsed.npc_id), None)
+
+    def _recent_recruitment_context(self, state: GameState) -> str:
+        snippets: list[str] = []
+        for event in reversed(state.action_log):
+            content = event.content.strip()
+            if not content:
+                continue
+            snippets.append(f"- {event.title}: {self._clip_context_line(content, 420)}")
+            if len(snippets) >= RECENT_RECRUITMENT_SCENE_CONTEXT_LIMIT:
+                break
+        if not snippets:
+            return "(No recent visible transcript context.)"
+        return "\n".join(reversed(snippets))
+
+    def _openrouter_headers(self, config: NarrativeConfig) -> dict[str, str] | None:
+        if not config.model.startswith("openrouter/"):
+            return None
+        headers: dict[str, str] = {}
+        if config.site_url is not None:
+            headers["HTTP-Referer"] = config.site_url
+        if config.app_name is not None:
+            headers["X-Title"] = config.app_name
+        return headers or None
+
     def _recent_visible_context_for_npc(self, state: GameState, npc: NPC) -> str:
         labels = {
             npc.display_label().strip().lower(),
             npc.name.strip().lower(),
         }
         labels.discard("")
-        snippets: list[str] = []
+        direct_snippets: list[str] = []
+        recent_snippets: list[str] = []
         for event in reversed(state.action_log):
             content = event.content.strip()
             if not content:
                 continue
+            snippet = f"- {event.title}: {self._clip_context_line(content, 420)}"
+            if len(recent_snippets) < RECENT_RECRUITMENT_SCENE_CONTEXT_LIMIT:
+                recent_snippets.append(snippet)
             lowered = content.lower()
-            if labels and not any(label in lowered for label in labels):
-                continue
-            snippets.append(f"- {event.title}: {self._clip_context_line(content, 420)}")
-            if len(snippets) >= RECENT_NPC_CONTEXT_LIMIT:
+            if (
+                len(direct_snippets) < RECENT_NPC_CONTEXT_LIMIT
+                and labels
+                and any(label in lowered for label in labels)
+            ):
+                direct_snippets.append(snippet)
+            if (
+                len(direct_snippets) >= RECENT_NPC_CONTEXT_LIMIT
+                and len(recent_snippets) >= RECENT_RECRUITMENT_SCENE_CONTEXT_LIMIT
+            ):
                 break
-        if snippets:
-            return "\n".join(reversed(snippets))
+        sections: list[str] = []
+        if direct_snippets:
+            sections.append("Direct mentions:\n" + "\n".join(reversed(direct_snippets)))
+        direct_snippet_set = set(direct_snippets)
+        unmatched_recent_snippets = [
+            snippet
+            for snippet in reversed(recent_snippets)
+            if snippet not in direct_snippet_set
+        ]
+        if not unmatched_recent_snippets:
+            unmatched_recent_snippets = list(reversed(recent_snippets))
+        if unmatched_recent_snippets:
+            sections.append(
+                "Recent visible transcript window:\n"
+                + "\n".join(unmatched_recent_snippets)
+            )
+        if sections:
+            return "\n\n".join(sections)
         return "(No recent visible transcript context found for this recruit.)"
 
     def _clip_context_line(self, text: str, limit: int) -> str:
@@ -2109,6 +2395,13 @@ class GameService:
         return compact[: limit - 3].rstrip() + "..."
 
     def _require_visible_npc_by_name(self, state: GameState, npc_name: str) -> NPC:
+        npc = self._visible_npc_by_name(state, npc_name)
+        if npc is not None:
+            return npc
+        message = f"Unknown visible NPC: {npc_name}"
+        raise ValueError(message)
+
+    def _visible_npc_by_name(self, state: GameState, npc_name: str) -> NPC | None:
         cleaned = npc_name.strip().lower()
         for npc in state.npcs:
             label = npc.display_label()
@@ -2118,8 +2411,7 @@ class GameService:
                     message = f"NPC is not active: {label}"
                     raise ValueError(message)
                 return npc
-        message = f"Unknown visible NPC: {npc_name}"
-        raise ValueError(message)
+        return None
 
     def _character_for_actor_name(
         self,
@@ -2364,6 +2656,13 @@ class GameService:
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
             outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        self._apply_character_effects_from_narration(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            narrative_text=narration.content,
+        )
         if post_narration_continuity:
             working_memory = self._apply_post_narration_continuity_for_turn(
                 state,
@@ -2459,6 +2758,14 @@ class GameService:
             merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
             outcome.referenced_npc_ids = merged_npcs
             outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
+        self._apply_character_effects_from_narration(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            narrative_text=narration.content,
+            cancel_token=cancel_token,
+        )
         if post_narration_continuity:
             yield self._stage_delta(
                 "reconciling_continuity",
@@ -3274,6 +3581,25 @@ class GameService:
         self._apply_thread_references(outcome, touched_thread_ids)
         self._apply_npc_references(state, outcome, touched_npc_ids)
         return self._memory_for_state(state, existing_memory=memory)
+
+    def _apply_character_effects_from_narration(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterEffectUpdateResult:
+        return self._character_effect_updater.update_character_effects(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            narrative_text=narrative_text,
+            cancel_token=cancel_token,
+        )
 
     def _run_thread_updates_for_turn(  # noqa: PLR0913
         self,

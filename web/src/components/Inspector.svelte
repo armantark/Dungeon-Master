@@ -349,7 +349,17 @@ it into a drawer keeps that ceremony.
     </div>
 
     {#if hasCombat}
-      <Drawer title="Combat" open={true} maxHeight="22rem">
+      <!--
+        The active-combat readout lives inline with the chat now
+        (InlineCombatStrip under the latest DM message). The
+        inspector keeps the full tracker so the player can still
+        audit every number / weakness / tactic line on demand, but
+        it's collapsed by default and titled "Warden details" to
+        match the fiction-first protocol — the player sees diegetic
+        cues in the chat and only opens this drawer when they want
+        to peek behind the curtain.
+      -->
+      <Drawer title="Warden details — combat" open={false} maxHeight="22rem">
         <CombatTracker state={gs} />
       </Drawer>
     {/if}

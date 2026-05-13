@@ -42,6 +42,11 @@ Hard rules:
 - Do NOT reveal or invent a proper-name `player_label` unless the supplied
   context explicitly grants that name to the player (direct introduction,
   being told, a clue, divination/fortunetelling, etc.).
+- If final narration explicitly grants a proper name for an existing
+  descriptor-visible NPC ("call me X", "my name is X", "I am X"), update that
+  existing NPC by id instead of creating a duplicate. Set `name` to the revealed
+  identity, `player_label` to the same proper name, and
+  `player_label_kind="proper_name"`.
 - If the player should know the figure only by signs, office, clothing, scars,
   or some other non-name identifier, set `player_label_kind="descriptor"` and
   use that descriptor as `player_label`.

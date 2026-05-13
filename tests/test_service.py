@@ -14,6 +14,9 @@ from dungeon_master.campaign import (
     CharacterTemplatesResult,
 )
 from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
+from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
+from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
+from dungeon_master.config import LLMConfig, LLMRuntimeBundle, single_llm_runtime
 from dungeon_master.continuity_classifier import ContinuityUpdateScope
 from dungeon_master.memory import LocationMemory, MemoryState
 from dungeon_master.models import (
@@ -80,6 +83,12 @@ from dungeon_master.turn_router import (
     TurnRouter,
 )
 from tests.factories import sample_state
+
+
+def single_test_runtime() -> LLMRuntimeBundle:
+    return single_llm_runtime(
+        LLMConfig(model="test-model", api_key="test-key", base_url=None),
+    )
 
 
 class FakeNarrative:
@@ -537,6 +546,53 @@ class FakeContinuityClassifier:
         return self._scope
 
 
+class FakeCapabilityOracleGuard:
+    def __init__(
+        self,
+        result: CapabilityOracleGuardResult | None = None,
+    ) -> None:
+        self._result = result or CapabilityOracleGuardResult()
+        self.calls: list[tuple[str, Likelihood]] = []
+
+    def guard_yes_no(
+        self,
+        state: GameState,
+        *,
+        question: str,
+        requested_likelihood: Likelihood,
+        cancel_token: CancellationToken | None = None,
+    ) -> CapabilityOracleGuardResult:
+        del state, cancel_token
+        self.calls.append((question, requested_likelihood))
+        return self._result
+
+
+class FakeCharacterEffectUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, str], tuple[str, ...]] | None = None,
+    ) -> None:
+        self._mutate = mutate
+        self.calls: list[tuple[str, str, str]] = []
+
+    def update_character_effects(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> CharacterEffectUpdateResult:
+        del execution_context, cancel_token
+        self.calls.append((player_input, outcome.summary, narrative_text))
+        if self._mutate is None:
+            return CharacterEffectUpdateResult()
+        summaries = self._mutate(state, narrative_text)
+        return CharacterEffectUpdateResult(changed=bool(summaries), summaries=summaries)
+
+
 class CountingNarrative:
     _config = NarrativeConfig(model="", api_key=None, base_url=None)
 
@@ -835,6 +891,37 @@ class FakeCairnEngine:
                 str_after=state.character.cairn.str_score,
                 enemy_damage=1,
                 enemy_damage_source=source,
+            ),
+        )
+
+    def begin_encounter(
+        self,
+        state: GameState,
+        *,
+        target_name: str,
+        text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> OracleOutcome:
+        del cancel_token
+        state.encounter = EncounterState(
+            active=True,
+            round_number=1,
+            first_round_dex_gate_pending=True,
+            initiator=EncounterInitiator.PLAYER,
+            combatants=[EnemyCombatant(name=target_name, hp=4, max_hp=4)],
+            notes="The encounter was framed without resolving an attack.",
+        )
+        return OracleOutcome(
+            kind=OracleKind.PLAYER_ACTION,
+            summary=f"Combat encounter started against {target_name}: {text}",
+            chaos_factor=state.chaos_factor,
+            cairn=CairnResolution(
+                combat_round=1,
+                combat_started=True,
+                combat_active=True,
+                combat_initiator=EncounterInitiator.PLAYER,
+                player_acted=False,
+                target_name=target_name,
             ),
         )
 
@@ -1197,6 +1284,111 @@ def test_service_persists_memory_sidecar_after_committed_turn(tmp_path: Path) ->
     assert memory.current_scene_summary
 
 
+def test_capability_oracle_guard_blocks_unsupported_ability_roll(tmp_path: Path) -> None:
+    guard = FakeCapabilityOracleGuard(
+        CapabilityOracleGuardResult(
+            outcome=OracleOutcome(
+                kind=OracleKind.YES_NO,
+                summary=(
+                    "No: Does Ennius possess resurrection magic? "
+                    "(unsupported by canonical sheet)"
+                ),
+                question="Does Ennius possess resurrection magic?",
+                likelihood=Likelihood.IMPOSSIBLE,
+                answer="No",
+                probability=1,
+                chaos_factor=5,
+            ),
+            execution_summary=(
+                "Capability rejected as unsupported by canonical sheet: "
+                "No: Does Ennius possess resurrection magic?"
+            ),
+        ),
+    )
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        capability_oracle_guard=guard,
+    )
+
+    state = service.ask_oracle("Does Ennius possess resurrection magic?", Likelihood.EVEN)
+
+    outcome = state.oracle_history[0]
+    assert guard.calls == [("Does Ennius possess resurrection magic?", Likelihood.EVEN)]
+    assert outcome.answer == "No"
+    assert outcome.rolls == []
+    assert outcome.likelihood == Likelihood.IMPOSSIBLE
+    assert "unsupported by canonical sheet" in state.action_log[1].content
+
+
+def test_capability_oracle_guard_answers_established_ability_without_roll(
+    tmp_path: Path,
+) -> None:
+    guard = FakeCapabilityOracleGuard(
+        CapabilityOracleGuardResult(
+            outcome=OracleOutcome(
+                kind=OracleKind.YES_NO,
+                summary="Yes: Does Kalael have Telepathy? (Telepathy is on the sheet)",
+                question="Does Kalael have Telepathy?",
+                likelihood=Likelihood.NEARLY_CERTAIN,
+                answer="Yes",
+                probability=99,
+                chaos_factor=5,
+            ),
+            execution_summary="Capability answered from canonical sheet.",
+        ),
+    )
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        capability_oracle_guard=guard,
+    )
+
+    state = service.ask_oracle("Does Kalael have Telepathy?", Likelihood.EVEN)
+
+    outcome = state.oracle_history[0]
+    assert outcome.answer == "Yes"
+    assert outcome.rolls == []
+    assert outcome.likelihood == Likelihood.NEARLY_CERTAIN
+
+
+def test_capability_oracle_guard_constrains_latent_ability_roll(tmp_path: Path) -> None:
+    guard = FakeCapabilityOracleGuard(
+        CapabilityOracleGuardResult(
+            likelihood=Likelihood.UNLIKELY,
+            execution_summary=(
+                "Capability question constrained by canonical sheet context "
+                "to Unlikely: healing vial supports limited restorative rites."
+            ),
+        ),
+    )
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        capability_oracle_guard=guard,
+    )
+
+    state = service.ask_oracle("Does Ennius possess healing magic?", Likelihood.EVEN)
+
+    outcome = state.oracle_history[0]
+    assert outcome.likelihood == Likelihood.UNLIKELY
+    assert outcome.probability == 30
+    assert outcome.rolls[0].result == 18
+    assert "constrained by canonical sheet context" in state.action_log[1].content
+
+
 def test_narrator_context_rebuilds_from_checkpoints_not_stale_sidecar(
     tmp_path: Path,
 ) -> None:
@@ -1347,6 +1539,99 @@ def test_service_player_turn_routes_question_through_oracle(tmp_path: Path) -> N
     assert state.oracle_history[0].likelihood == Likelihood.LIKELY
 
 
+def test_service_player_turn_applies_narrated_character_effects(tmp_path: Path) -> None:
+    def mutate(state: GameState, narrative_text: str) -> tuple[str, ...]:
+        assert "blood-bond connects you" in narrative_text
+        state.character.cairn.max_hp -= 1
+        state.character.cairn.hp = min(state.character.cairn.hp, state.character.cairn.max_hp)
+        state.character.cairn.abilities.append("Telepathy")
+        return ("Max HP -1.", "Ability gained: Telepathy.")
+
+    updater = FakeCharacterEffectUpdater(mutate=mutate)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=SequencedNarrative(
+            [
+                (
+                    "The ritual takes hold, and the blood-bond connects you "
+                    "mind-to-mind forever."
+                ),
+            ],
+        ),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+        character_effect_updater=updater,
+    )
+
+    state = service.submit_player_turn("Is the abbey gate watched? [likely]")
+
+    assert state.character.cairn.hp == 3
+    assert state.character.cairn.max_hp == 3
+    assert state.character.cairn.abilities[-1] == "Telepathy"
+    assert updater.calls == [
+        (
+            "Is the abbey gate watched? [likely]",
+            state.oracle_history[0].summary,
+            "The ritual takes hold, and the blood-bond connects you mind-to-mind forever.",
+        ),
+    ]
+
+
+def test_service_player_turn_applies_narrated_party_member_effects(tmp_path: Path) -> None:
+    def mutate(state: GameState, narrative_text: str) -> tuple[str, ...]:
+        assert "blood-bond connects you" in narrative_text
+        companion = state.party_members[0].sheet
+        companion.cairn.max_hp -= 1
+        companion.cairn.hp = min(companion.cairn.hp, companion.cairn.max_hp)
+        companion.cairn.abilities.append("Telepathy")
+        return ("Vilerius Max HP -1.", "Vilerius gained ability: Telepathy.")
+
+    updater = FakeCharacterEffectUpdater(mutate=mutate)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=SequencedNarrative(
+            [
+                (
+                    "The ritual takes hold, and the blood-bond connects you "
+                    "mind-to-mind forever."
+                ),
+            ],
+        ),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+        character_effect_updater=updater,
+    )
+    seeded = service.load_state()
+    seeded.party_members.append(
+        PartyMember(
+            sheet=CharacterSheet(
+                name="Vilerius",
+                archetype="Companion",
+                cairn=CairnCharacterState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    hp=6,
+                    max_hp=6,
+                ),
+            ),
+        ),
+    )
+    service._save_state_commit(seeded, create_checkpoint=True)  # noqa: SLF001
+
+    state = service.submit_player_turn("Is the abbey gate watched? [likely]")
+    companion = state.party_members[0].sheet
+
+    assert companion.cairn.hp == 5
+    assert companion.cairn.max_hp == 5
+    assert companion.cairn.abilities == ["Telepathy"]
+    assert "Telepathy" not in state.character.cairn.abilities
+
+
 def test_service_player_turn_routes_scene_transition(tmp_path: Path) -> None:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
@@ -1404,6 +1689,44 @@ def test_service_player_turn_routes_attack(tmp_path: Path) -> None:
     assert state.oracle_history[0].kind == "attack"
     assert state.oracle_history[0].cairn is not None
     assert state.oracle_history[0].cairn.target_name == "Abbey ghoul"
+
+
+def test_service_player_turn_can_begin_encounter_without_attack(tmp_path: Path) -> None:
+    def begin_encounter_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.BEGIN_ENCOUNTER,
+                    text=text,
+                    target_name="Infected horde",
+                ),
+            ),
+        )
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=begin_encounter_classifier),
+    )
+
+    state = service.submit_player_turn("Let's start an encounter with the horde.")
+
+    assert state.action_log[1].title == "Encounter started"
+    assert state.encounter.active is True
+    assert state.encounter.round_number == 1
+    assert state.encounter.first_round_dex_gate_pending is True
+    assert state.oracle_history[0].kind == "player_action"
+    assert state.oracle_history[0].cairn is not None
+    assert state.oracle_history[0].cairn.combat_started is True
+    assert state.oracle_history[0].cairn.player_acted is False
+    assert state.oracle_history[0].cairn.target_name == "Infected horde"
 
 
 def test_service_player_turn_commits_clarification_without_mechanics(tmp_path: Path) -> None:
@@ -1852,6 +2175,77 @@ def test_service_player_turn_recruits_visible_npc_to_party(tmp_path: Path) -> No
     assert "Recruited Brother Sava into the party." in next_state.action_log[1].content
 
 
+def test_recruitment_resolves_misnamed_visible_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def recruit_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECRUIT_NPC,
+                    text=text,
+                    npc_name="Covenant Initiate",
+                ),
+            ),
+        )
+
+    captured_prompt: str | None = None
+
+    def fake_complete_text(request: object, completion: object) -> object:
+        del completion
+        nonlocal captured_prompt
+        captured_prompt = request.messages[1]["content"]  # type: ignore[attr-defined]
+        return type("Completion", (), {"content": '{"npc_id":"npc_hierarch"}'})()
+
+    monkeypatch.setattr("dungeon_master.service.complete_text", fake_complete_text)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=recruit_classifier),
+        llm_runtime=single_test_runtime(),
+    )
+    state = service.load_state()
+    state.current_scene = "The blood-hierarch waits beside his militant flock."
+    recruitable = NPC(
+        id="npc_hierarch",
+        name="Covenant Blood-hierarch",
+        role="High-ranking priest coordinating the hunt",
+        disposition="fanatical awe",
+        player_label="Blood-hierarch",
+        player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+    )
+    state.npcs.append(recruitable)
+    state.action_log.append(
+        GameEvent(
+            event_type=EventType.NARRATIVE,
+            title="Narrative response",
+            content=(
+                "The blood-hierarch offers a militant flock and waits for your command."
+            ),
+        ),
+    )
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    next_state = service.submit_player_turn("I ask the Hierarch if he will lend his abilities.")
+
+    assert len(next_state.party_members) == 1
+    member = next_state.party_members[0]
+    assert member.npc_id == "npc_hierarch"
+    assert member.display_label() == "Blood-hierarch"
+    assert next_state.npcs[-1].status == NPCStatus.RETIRED
+    assert captured_prompt is not None
+    assert "Covenant Initiate" in captured_prompt
+    assert "Blood-hierarch" in captured_prompt
+
+
 def test_recruitment_backfill_receives_recent_visible_gear_context(tmp_path: Path) -> None:
     captured_backstory: str | None = None
 
@@ -1923,9 +2317,94 @@ def test_recruitment_backfill_receives_recent_visible_gear_context(tmp_path: Pat
     next_state = service.submit_player_turn("I ask Brother Sava to join us.")
 
     assert captured_backstory is not None
-    assert "Recent player-visible context for this recruit" in captured_backstory
-    assert "rusted wood-axe ready" in captured_backstory
+    backstory = captured_backstory
+    assert "Recent player-visible context for this recruit" in backstory
+    assert "rusted wood-axe ready" in backstory
     assert next_state.party_members[0].sheet.inventory[0].name == "Rusted wood-axe"
+
+
+def test_recruitment_backfill_receives_recent_scene_context_without_label(
+    tmp_path: Path,
+) -> None:
+    captured_backstory: str | None = None
+
+    def recruit_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
+        del likelihood
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECRUIT_NPC,
+                    text=text,
+                    npc_name="the scarred deserter",
+                ),
+            ),
+        )
+
+    def companion_backfill(state: GameState) -> CharacterSheet:
+        nonlocal captured_backstory
+        captured_backstory = state.character.backstory
+        sheet = state.character.model_copy(deep=True)
+        sheet.cairn = CairnCharacterState(
+            source=CairnMechanicsSource.EXPLICIT,
+            hp=3,
+            max_hp=3,
+        )
+        sheet.inventory = [
+            InventoryItem(
+                name="Notched falchion",
+                details="The weapon was established by the recruitment scene.",
+                cairn=CairnItemState(
+                    source=CairnMechanicsSource.EXPLICIT,
+                    tags=[CairnItemTag.WEAPON],
+                    weapon_damage_die=6,
+                    equipped=True,
+                ),
+            ),
+        ]
+        return sheet
+
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=CairnEngine(
+            config=NarrativeConfig(model="", api_key=None, base_url=None),
+            backfill_function=companion_backfill,
+        ),
+        turn_router=TurnRouter(classifier=recruit_classifier),
+    )
+    state = service.load_state()
+    state.action_log.append(
+        GameEvent(
+            event_type=EventType.NARRATIVE,
+            title="Narrative response",
+            content=(
+                "The old soldier lowers his notched falchion and offers to guard "
+                "your retreat."
+            ),
+        ),
+    )
+    recruitable = NPC(
+        name="Scarred deserter",
+        role="Scarred deserter",
+        disposition="grimly loyal",
+        player_label="the scarred deserter",
+        player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+    )
+    state.npcs.append(recruitable)
+    service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
+
+    next_state = service.submit_player_turn("I ask the scarred deserter to join us.")
+
+    assert captured_backstory is not None
+    backstory = captured_backstory
+    assert "Recent visible transcript window" in backstory
+    assert "notched falchion" in backstory
+    assert next_state.party_members[0].sheet.inventory[0].name == "Notched falchion"
 
 
 def test_service_player_turn_uses_holy_relic_as_structured_outcome(tmp_path: Path) -> None:
@@ -3599,6 +4078,42 @@ def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
     assert by_id["reconciling_continuity"].status == StageStatus.SKIPPED
     assert by_id["reconciling_continuity"].started_at is None
     assert by_id["reconciling_continuity"].completed_at is None
+
+
+def test_streamed_player_turn_applies_narrated_character_effects(tmp_path: Path) -> None:
+    def mutate(state: GameState, narrative_text: str) -> tuple[str, ...]:
+        assert narrative_text.startswith("STREAMED:")
+        state.character.cairn.max_hp -= 1
+        state.character.cairn.hp = min(state.character.cairn.hp, state.character.cairn.max_hp)
+        state.character.cairn.abilities.append("Telepathy")
+        return ("Max HP -1.", "Ability gained: Telepathy.")
+
+    updater = FakeCharacterEffectUpdater(mutate=mutate)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=CapturingStreamingNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        turn_router=TurnRouter(classifier=scripted_classifier),
+        character_effect_updater=updater,
+    )
+
+    final = _consume_stream(
+        service.stream_submit_player_turn("Is the abbey gate watched? [likely]"),
+    )
+
+    assert final.character.cairn.hp == 3
+    assert final.character.cairn.max_hp == 3
+    assert final.character.cairn.abilities[-1] == "Telepathy"
+    assert updater.calls == [
+        (
+            "Is the abbey gate watched? [likely]",
+            final.oracle_history[0].summary,
+            "STREAMED: Is the abbey gate watched? [likely]",
+        ),
+    ]
 
 
 def test_streamed_player_turn_commits_clarification_without_mechanics(tmp_path: Path) -> None:

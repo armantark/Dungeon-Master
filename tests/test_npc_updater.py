@@ -1,6 +1,6 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import NPCPlayerLabelKind, NPCStatus, OracleKind, OracleOutcome
+from dungeon_master.models import NPC, NPCPlayerLabelKind, NPCStatus, OracleKind, OracleOutcome
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from dungeon_master.npc_updater import NPCUpdater
 from tests.factories import sample_state
@@ -238,6 +238,56 @@ def test_npc_updater_can_create_visible_descriptor_without_leaking_true_name() -
     assert created.display_label() == "The ash-veiled bellringer"
     assert created.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR
     assert created.player_knows_proper_name() is False
+
+
+def test_npc_updater_promotes_descriptor_when_narration_grants_name() -> None:
+    state = sample_state()
+    state.npcs = [
+        NPC(
+            id="npc_hierarch",
+            name="Covenant Blood-hierarch",
+            player_label="Blood-hierarch",
+            player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+            role="High-ranking Covenant priest",
+            disposition="fanatical awe",
+        ),
+    ]
+    updater = _updater(
+        """
+        {
+          "ops": [
+            {
+              "kind": "update",
+              "npc_id": "npc_hierarch",
+              "name": "Ennius",
+              "player_label": "Ennius",
+              "player_label_kind": "proper_name",
+              "role": "High-ranking Covenant priest",
+              "disposition": "fanatical awe",
+              "player_visible": true
+            }
+          ]
+        }
+        """,
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The blood-hierarch grants his name.",
+        chaos_factor=state.chaos_factor,
+    )
+
+    result = updater.update_npcs(
+        state,
+        player_input="I ask the blood-hierarch his name.",
+        outcome=outcome,
+        narrative_text="The priest murmurs, 'You may call me Ennius.'",
+    )
+
+    assert result.touched_npc_ids == ("npc_hierarch",)
+    assert len(state.npcs) == 1
+    assert state.npcs[0].name == "Ennius"
+    assert state.npcs[0].display_label() == "Ennius"
+    assert state.npcs[0].player_label_kind == NPCPlayerLabelKind.PROPER_NAME
 
 
 def test_npc_updater_can_reseed_legacy_roster() -> None:

@@ -322,6 +322,43 @@ export function combatantHpTier(c: CombatantState): CombatantHpTier {
   return "fresh";
 }
 
+// Player-facing wound label. The combat strip in the chat is meant to
+// read like Cairn — diegetic ("Fresh", "Bloodied") rather than
+// telemetric ("6/6 HP"). The Warden-details disclosure keeps the raw
+// numbers available for trust/audit, so this label is the only thing
+// the player sees by default.
+//
+// Bands map to Cairn's natural read of a fight:
+//   - Fresh    : at full HP
+//   - Bloodied : below max, more than half remains
+//   - Reeling  : half or less, still standing
+//   - Down     : zero or negative HP (matches `combatantHpTier === "down"`)
+//
+// We intentionally do NOT map onto `combatantHpTier` (which uses
+// thirds and colors the rail) because the player-facing copy and the
+// CSS tier exist for different jobs.
+export function combatantWoundLabel(c: CombatantState): "Fresh" | "Bloodied" | "Reeling" | "Down" {
+  if (c.hp <= 0) return "Down";
+  if (c.max_hp <= 0) return "Fresh";
+  const ratio = c.hp / c.max_hp;
+  if (ratio >= 1) return "Fresh";
+  if (ratio > 0.5) return "Bloodied";
+  return "Reeling";
+}
+
+// Player-facing armor label. Mirrors the Cairn 2e player's-guide
+// vocabulary: the player should read "unarmored" / "armored" /
+// "heavily armored" / "plated", not stare at a number. Cairn caps
+// Armor at 3; anything higher we still surface as "Plated" because
+// the cap is on the backend.
+export function combatantArmorLabel(c: CombatantState): "Unarmored" | "Armored" | "Heavily armored" | "Plated" {
+  const armor = c.armor;
+  if (armor <= 0) return "Unarmored";
+  if (armor === 1) return "Armored";
+  if (armor === 2) return "Heavily armored";
+  return "Plated";
+}
+
 // Ordered status priority so the chip stack reads "dead → fled →
 // incapacitated → active". Active is rendered as no chip — chips are
 // only worth screen real estate when they signal something abnormal.

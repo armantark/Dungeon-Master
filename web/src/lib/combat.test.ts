@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   advantagesForCombatant,
   combatFromState,
+  combatantArmorLabel,
   combatantHpTier,
   combatantStatusLabel,
+  combatantWoundLabel,
   enemyInitiated,
   encounterHeadline,
   firstRoundActionGated,
@@ -87,6 +89,59 @@ describe("combatantHpTier", () => {
     expect(combatantHpTier(makeFoe({ hp: 0, max_hp: 0 }))).toBe("down");
     expect(combatantHpTier(makeFoe({ hp: 1, max_hp: 0 }))).toBe("fresh");
   });
+});
+
+describe("combatantWoundLabel", () => {
+  // The inline combat strip in the chat surface reads diegetic
+  // labels ("Bloodied", "Reeling") instead of raw HP. We pin the
+  // bands here so a future redesign can't quietly flip the
+  // thresholds — the bands are part of the trust contract with the
+  // player.
+  it("returns 'Fresh' at exactly full HP", () => {
+    expect(combatantWoundLabel(makeFoe({ hp: 6, max_hp: 6 }))).toBe("Fresh");
+  });
+
+  it("returns 'Bloodied' between full and one-half HP", () => {
+    expect(combatantWoundLabel(makeFoe({ hp: 4, max_hp: 6 }))).toBe("Bloodied");
+    expect(combatantWoundLabel(makeFoe({ hp: 5, max_hp: 6 }))).toBe("Bloodied");
+  });
+
+  it("returns 'Reeling' at one-half HP or below while still standing", () => {
+    // 3/6 = exactly half → reeling band.
+    expect(combatantWoundLabel(makeFoe({ hp: 3, max_hp: 6 }))).toBe("Reeling");
+    expect(combatantWoundLabel(makeFoe({ hp: 1, max_hp: 6 }))).toBe("Reeling");
+  });
+
+  it("returns 'Down' at zero or negative HP regardless of max", () => {
+    expect(combatantWoundLabel(makeFoe({ hp: 0, max_hp: 6 }))).toBe("Down");
+    expect(combatantWoundLabel(makeFoe({ hp: -3, max_hp: 6 }))).toBe("Down");
+  });
+
+  it("defaults a degenerate max_hp of zero to 'Fresh' rather than dividing by zero", () => {
+    // A foe with max_hp 0 should never reach the divide. Down still
+    // wins if hp itself is non-positive.
+    expect(combatantWoundLabel(makeFoe({ hp: 1, max_hp: 0 }))).toBe("Fresh");
+    expect(combatantWoundLabel(makeFoe({ hp: 0, max_hp: 0 }))).toBe("Down");
+  });
+});
+
+describe("combatantArmorLabel", () => {
+  // Cairn caps Armor at 3, but we still want the label to degrade
+  // gracefully if a backend ever publishes a higher value (e.g. a
+  // boss with an authored exception).
+  const cases: ReadonlyArray<[number, string]> = [
+    [0, "Unarmored"],
+    [1, "Armored"],
+    [2, "Heavily armored"],
+    [3, "Plated"],
+    [4, "Plated"],
+    [-1, "Unarmored"],
+  ];
+  for (const [armor, label] of cases) {
+    it(`labels armor ${armor} as '${label}'`, () => {
+      expect(combatantArmorLabel(makeFoe({ armor }))).toBe(label);
+    });
+  }
 });
 
 describe("combatantStatusLabel", () => {

@@ -2,7 +2,7 @@ import pytest
 from litellm.types.utils import ModelResponse
 
 from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
-from dungeon_master.models import NPC, OracleKind, OracleOutcome
+from dungeon_master.models import NPC, NPCPlayerLabelKind, OracleKind, OracleOutcome
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
@@ -205,6 +205,40 @@ def test_continuity_classifier_prompt_uses_generated_narration_for_post_check() 
     assert "Saint Vyr" in user_prompt
     assert "judge the actual prose" in system_prompt
     assert "newly establishes durable lore" in system_prompt
+
+
+def test_continuity_classifier_prompt_mentions_descriptor_name_reveals() -> None:
+    completion = RecordingContinuityCompletion("npcs")
+    classifier = ContinuityClassifier(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None),
+        completion_function=completion,
+    )
+    state = sample_state()
+    state.npcs = [
+        NPC(
+            name="Covenant Blood-hierarch",
+            player_label="Blood-hierarch",
+            player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
+            role="High-ranking Covenant priest",
+        ),
+    ]
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=5,
+    )
+
+    scope = classifier.classify_update_scope(
+        state,
+        player_input="I ask the hierarch his name.",
+        outcome=outcome,
+        narrative_text="The priest murmurs, 'You may call me Ennius.'",
+    )
+
+    assert scope == ContinuityUpdateScope.NPCS
+    assert completion.request is not None
+    system_prompt = " ".join(completion.request.messages[0]["content"].split())
+    assert "newly revealed proper name for a descriptor-visible NPC" in system_prompt
 
 
 def test_continuity_classifier_logs_scope_and_traces_request(

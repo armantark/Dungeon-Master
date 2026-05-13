@@ -51,7 +51,8 @@ Clarification and lore-check questions:
 - If a post-narration check includes generated narration, judge the actual prose
   instead of speculating from the player question. Choose updater scope when the
   narration newly establishes durable lore, a named or recurring person/faction,
-  a concrete destination, a resolved secret, or a thread/NPC status change.
+  a concrete destination, a resolved secret, a thread/NPC status change, or a
+  newly revealed proper name for a descriptor-visible NPC.
   Choose `none` when the narration only says the answer is unknown, unconfirmed,
   subjective, atmospheric, or still a choice for later play.
 

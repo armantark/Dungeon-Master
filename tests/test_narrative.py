@@ -355,6 +355,9 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "Do not open narration by recapping" in system_prompt
     assert "Carry older context silently" in system_prompt
     assert "Avoid repeating the same static motif, injury, location" in system_prompt
+    assert "Canonical abilities and notes" in system_prompt
+    assert "Do not invent a narrower limitation for an ability" in system_prompt
+    assert "scope success/failure to `ORACLE_OUTCOME_JSON.question`" in system_prompt
     assert '<SUPPLEMENTAL_CONTEXT REFERENCE_ONLY="true"' in system_prompt
     assert "<LATEST_USER_MESSAGE>" in system_prompt
     assert "I check my supplies before leaving." in system_prompt
@@ -427,6 +430,8 @@ def test_narrative_prompt_includes_party_member_primary_weapons() -> None:
                 source=CairnMechanicsSource.EXPLICIT,
                 hp=3,
                 max_hp=3,
+                abilities=["Telepathy"],
+                notes="Can project thoughts to nearby conscious creatures.",
                 primary_weapon_item_id=weapon.id,
             ),
         },
@@ -450,6 +455,8 @@ def test_narrative_prompt_includes_party_member_primary_weapons() -> None:
     assert '"party_members":' in system_prompt
     assert "Rusted wood-axe" in system_prompt
     assert '"primary_weapon":true' in system_prompt
+    assert '"abilities":["Telepathy"]' in system_prompt
+    assert "Can project thoughts to nearby conscious creatures." in system_prompt
     assert "compact `party_members` JSON is the authority" in system_prompt
 
 

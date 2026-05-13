@@ -307,6 +307,33 @@ class LLMProfiles:
             reasoning_exclude=True,
         ),
     )
+    character_effect_updater: TaskProfile = field(
+        default_factory=lambda: TaskProfile(
+            temperature=0.05,
+            max_tokens=1800,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=96,
+            reasoning_exclude=True,
+        ),
+    )
+    recruitment_resolver: TaskProfile = field(
+        default_factory=lambda: TaskProfile(
+            temperature=0.0,
+            max_tokens=800,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=64,
+            reasoning_exclude=True,
+        ),
+    )
+    capability_oracle_guard: TaskProfile = field(
+        default_factory=lambda: TaskProfile(
+            temperature=0.0,
+            max_tokens=900,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=64,
+            reasoning_exclude=True,
+        ),
+    )
     legacy_npc_repair: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.1,
