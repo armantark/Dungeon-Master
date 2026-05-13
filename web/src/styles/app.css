@@ -104,29 +104,31 @@ body {
  * Kept fixed-position + pointer-events: none so it's purely a substrate
  * decoration. Tile size matches the source PNG so neither axis stretches.
  */
+/*
+ * Body backdrop grain.
+ *
+ * After several rounds: visible texture on a near-black page is a
+ * losing game. Every blend mode that makes grain register also lifts
+ * the page toward gray (screen, high-alpha soft-light, plain alpha).
+ * The dark page should stay dark — it's the "iron" of the grimoire,
+ * not paper. The grain at low opacity under soft-light adds micro-
+ * character at non-retina and a faint warmth at retina, which is the
+ * right ceiling for this surface.
+ *
+ * Visible substrate work lives on `.parchment` cards instead — cream
+ * paper has the contrast headroom to show real stains and fibre.
+ */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  /*
-   * Two stacked grain layers. `soft-light` modulates the underlying
-   * gradient (so the page stays dark) but at 0.35 it was below the
-   * visual threshold on a near-black backdrop. Stacking the same tile
-   * at a second scale (~480px vs 280px) gives the grain irregular
-   * frequency — fine fibre + larger blotchy fibre weave — which reads
-   * as real paper instead of as one uniform noise pattern, without
-   * cranking either layer high enough to flatten to slate.
-   */
-  background-image:
-    url("/textures/paper-grain.png"),
-    url("/textures/paper-grain.png");
-  background-size: 280px 280px, 480px 480px;
-  background-repeat: repeat, repeat;
-  background-blend-mode: normal, multiply;
-  opacity: 0.55;
-  mix-blend-mode: soft-light;
+  background-image: url("/textures/paper-grain.png");
+  background-size: 280px 280px;
+  background-repeat: repeat;
+  opacity: 0.12;
+  mix-blend-mode: overlay;
 }
 
 /* --- Typography ------------------------------------------------------- */
@@ -229,28 +231,41 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
     0 18px 36px -12px rgba(0, 0, 0, 0.65);
   padding: 1.4rem 1.6rem;
 }
+/*
+ * Parchment substrate — this is where the texture investment pays off.
+ * Cream paper has the contrast headroom that near-black doesn't, so
+ * this is the one surface where real stains + fibre are visible at
+ * retina without turning the whole card gray.
+ *
+ *   ::before — coarse stain plate at 1024px, multiply @ 0.35.
+ *     Features are 50-200 logical pixels: age spots, water marks,
+ *     uneven tone. Multiply darkens the cream paper naturally.
+ *   ::after  — fine grain at 280px, multiply @ 0.25.
+ *     Micro-fibre character underneath the stains. Subtle but
+ *     perceptible up close; the stains do the heavy visible lifting.
+ */
 .parchment::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  /*
-   * Same stacked-tiles trick as the body backdrop: same PNG at two
-   * scales gives irregular frequency. `multiply` darkens only where
-   * the source PNG is dark, so the grain reads as warm fibre threads
-   * in the parchment rather than as ink stipple over it. 0.55 is
-   * past the prior subtle pass — the user couldn't see 0.30 on the
-   * cream paper, so we push to clearly perceptible while keeping
-   * multiply doing the heavy lifting on tone.
-   */
-  background-image:
-    url("/textures/paper-grain.png"),
-    url("/textures/paper-grain.png");
-  background-size: 280px 280px, 460px 460px;
-  background-repeat: repeat, repeat;
-  background-blend-mode: normal, multiply;
-  opacity: 0.55;
+  background-image: url("/textures/paper-stains.png");
+  background-size: 1024px 1024px;
+  background-repeat: repeat;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+}
+.parchment::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/paper-grain.png");
+  background-size: 280px 280px;
+  background-repeat: repeat;
+  opacity: 0.25;
   mix-blend-mode: multiply;
 }
 .parchment > * {

@@ -84,11 +84,20 @@ on the trigger and `role="menu"` on the panel for screen readers.
     void game.openSettings();
   }
 
-  // We hide the "Switch save" item when there's only one save (or
-  // none), because the splash would render a one-tile shelf with no
-  // navigational value. The "New campaign" item still surfaces in
-  // both cases because it's the only way to grow the shelf.
-  const canSwitch = $derived(game.library.length > 1);
+  // Library entry copy adapts to whether there's anything to actually
+  // switch to. The prior version had two menu items ("Save library"
+  // and "Switch save") that both called `openLibrary()` — pure copy
+  // redundancy with no behavioural distinction, because the splash
+  // itself already handles both browse and pick. We keep one row and
+  // let the label/hint shift with the shelf state.
+  const libraryLabel = $derived(
+    game.library.length > 1 ? "Switch save" : "Save library",
+  );
+  const libraryHint = $derived(
+    game.library.length > 1
+      ? "Bind a different campaign — the active save stays archived."
+      : "Browse archived and active wanderers.",
+  );
 </script>
 
 <div class="system-menu">
@@ -110,15 +119,9 @@ on the trigger and `role="menu"` on the panel for screen readers.
   {#if open}
     <div bind:this={panelRef} class="panel iron" role="menu" aria-label="System menu">
       <button class="link item" type="button" role="menuitem" onclick={openLibrary}>
-        <span class="item__label">Save library</span>
-        <span class="item__hint">Browse archived and active wanderers.</span>
+        <span class="item__label">{libraryLabel}</span>
+        <span class="item__hint">{libraryHint}</span>
       </button>
-      {#if canSwitch}
-        <button class="link item" type="button" role="menuitem" onclick={openLibrary}>
-          <span class="item__label">Switch save</span>
-          <span class="item__hint">Bind a different campaign.</span>
-        </button>
-      {/if}
       <button
         class="link item"
         type="button"

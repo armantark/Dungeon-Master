@@ -29,6 +29,35 @@ pigment math stay derived from the `:root` palette.
   redistribution inside this single-user desktop app.
 - **Modifications.** None. Saved verbatim as `paper-grain.png`.
 
+## `paper-stains.png` — coarse low-frequency stain plate
+
+- **Role.** The *visible-at-retina* substrate layer for both the body
+  backdrop (`body::after`, screen blend) and parchment cards
+  (`.parchment::after`, multiply blend). The fine paper-grain.png tile
+  collapses to a sub-pixel cross-hatch at 2x DPR; this plate is at
+  1024px so its features land at 50-200 logical pixels and stay
+  perceptible regardless of pixel density.
+- **Source.** Locally generated with ImageMagick. Reproducible command:
+
+  ```sh
+  magick -size 1024x1024 xc:gray50 \
+    +noise gaussian \
+    -virtual-pixel tile \
+    -blur 0x22 \
+    -level 22%,78% \
+    -colorspace Gray \
+    -depth 8 \
+    -define png:compression-level=9 \
+    paper-stains.png
+  ```
+
+  Gaussian noise plus a heavy 22-pixel blur produces low-frequency
+  blotchy patches; the level remap compresses contrast so the result
+  is mid-gray noise rather than full black-and-white. Tileable
+  (`-virtual-pixel tile`).
+
+- **License.** Procedurally generated; treated as CC0-equivalent.
+
 ## `iron-grain.png` — iron chassis substrate
 
 - **Role.** Procedurally generated tileable PNG used by the
