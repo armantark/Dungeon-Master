@@ -84,17 +84,24 @@ body {
 }
 
 /*
- * Substrate grain.
+ * Substrate grain on the dark backdrop.
  *
  * The previous overlay used SVG `feTurbulence` to fake paper fibre. That
  * reads as filter noise more than as a real surface — uniform frequency,
  * no real fibres. The fixed paper-grain PNG is a CC0 scan-derived tile
- * (see `web/public/textures/SOURCES.md`); at 10% opacity under an
- * overlay blend it gives the dark page a real "tooth" at glancing angle
- * without competing with the typography or pixel chips above.
+ * (see `web/public/textures/SOURCES.md`). It's a transparent grayscale
+ * PNG: dark spots overlay onto the body's near-black gradient, the rest
+ * lets the gradient through unchanged.
  *
- * Kept fixed-position + pointer-events: none so it's purely a substrate.
- * Tile size matches the source PNG so neither axis stretches.
+ * No `mix-blend-mode` — the texture's own alpha channel does the work.
+ * The blend-mode version was effectively invisible on near-black at 10%,
+ * which made the whole experiment land as a no-op. Plain alpha at
+ * moderate opacity is honest: the grain reads as real fibre against the
+ * dark page wherever the body is visible (gutters around the chat
+ * column and the folio rail).
+ *
+ * Kept fixed-position + pointer-events: none so it's purely a substrate
+ * decoration. Tile size matches the source PNG so neither axis stretches.
  */
 body::before {
   content: "";
@@ -102,8 +109,7 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.10;
-  mix-blend-mode: overlay;
+  opacity: 0.55;
   background-image: url("/textures/paper-grain.png");
   background-size: 280px 280px;
   background-repeat: repeat;
@@ -157,8 +163,32 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
 
 /* --- Surfaces --------------------------------------------------------- */
 
+/*
+ * Parchment cards — the primary "paper" surface (DM messages, NPC and
+ * thread cards, receipts, save library tiles, etc.).
+ *
+ * Layers, bottom-up:
+ *   1. Three-stop radial-and-linear gradient that gives the page its
+ *      stained, warm-to-shadow falloff. This is the *colour* of paper.
+ *   2. A pseudo-element grain layer (`::before`) carrying the CC0 paper
+ *      tile from `web/public/textures/`. The tile is a transparent
+ *      grayscale PNG — its dark spots overlay the gradient through plain
+ *      alpha so we get real fibre irregularity without messing with the
+ *      pigment math. Multiply blend would darken too aggressively under
+ *      receipts' dense tag/dl rows; alpha at moderate opacity stays
+ *      readable. This is the *texture* of paper.
+ *   3. Actual content (kicker, headlines, body, child rails, etc.).
+ *
+ * `isolation: isolate` keeps the grain confined to this card's stacking
+ * context so it can't bleed into popovers anchored against it. The
+ * `position: relative; z-index: 1` rule on direct children guarantees
+ * content paints above the grain on every renderer (we hit a Tauri/
+ * WebKit rendering bug on small panels before; the explicit z-index
+ * sidesteps that whole class of compositor surprise).
+ */
 .parchment {
   position: relative;
+  isolation: isolate;
   background:
     radial-gradient(circle at 12% 18%, rgba(74, 38, 22, 0.16), transparent 45%),
     radial-gradient(circle at 88% 82%, rgba(74, 38, 22, 0.22), transparent 55%),
@@ -174,6 +204,21 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
     inset 0 0 60px rgba(60, 30, 10, 0.22),
     0 18px 36px -12px rgba(0, 0, 0, 0.65);
   padding: 1.4rem 1.6rem;
+}
+.parchment::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/paper-grain.png");
+  background-size: 280px 280px;
+  background-repeat: repeat;
+  opacity: 0.45;
+}
+.parchment > * {
+  position: relative;
+  z-index: 1;
 }
 
 .parchment .kicker {
@@ -197,20 +242,15 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
 /*
  * Iron chassis.
  *
- * The gradient is the structural backbone (ink-deep → ink-black, hint
- * of rust at the top). The pseudo-element grain is a procedurally
- * generated, drained, low-frequency PNG that gives the surface a real
- * cast-iron irregularity rather than reading as a flat tinted panel.
- * Opacity is intentionally low (~8%): we want the suggestion of metal
- * tooth at glancing angle, not a hammered-leather Skyrim plate.
- *
- * The grain layer sits behind content via `z-index: 0` + `isolation:
- * isolate`; children that don't set their own z-index naturally stack
- * above without needing per-child fixes.
+ * Pure gradient — no auto-applied grain overlay. The first version of
+ * this experiment attached `.iron::after` globally as a metal-grain
+ * layer, which leaked into small surfaces like the SystemMenu dropdown
+ * and broke Tauri/WebKit text rendering on those panels via the
+ * mix-blend-mode pseudo. Grain is now opt-in via `.iron-grained` so
+ * each surface decides whether the noise overlay is worth the
+ * compositor cost. SaveLibrary opts in; SystemMenu does not.
  */
 .iron {
-  position: relative;
-  isolation: isolate;
   background:
     linear-gradient(
       180deg,
@@ -222,7 +262,18 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   color: var(--paper-bone);
 }
 
-.iron::after {
+/*
+ * Opt-in metal-grain layer. Use on chassis surfaces that are large
+ * enough to benefit from the noise (SaveLibrary, hero panels). Avoid
+ * on small dropdown panels — the pseudo-element + mix-blend-mode
+ * combo costs render-tree work that isn't earned at that scale, and
+ * has hit WebKit text-rendering bugs in past versions.
+ */
+.iron-grained {
+  position: relative;
+  isolation: isolate;
+}
+.iron-grained::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -232,7 +283,11 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-size: 192px 192px;
   background-repeat: repeat;
   mix-blend-mode: overlay;
-  opacity: 0.08;
+  opacity: 0.10;
+}
+.iron-grained > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* --- Buttons ---------------------------------------------------------- */

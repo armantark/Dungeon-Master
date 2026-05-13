@@ -101,7 +101,7 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
 </script>
 
-<div class="library iron" class:frontispiece={mode === "empty"}>
+<div class="library iron iron-grained" class:frontispiece={mode === "empty"}>
   <header class="library__head">
     <span class="kicker">Oracle's Ledger</span>
     {#if mode === "empty"}
