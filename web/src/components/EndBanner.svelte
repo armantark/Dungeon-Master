@@ -76,7 +76,11 @@ Visual hierarchy mirrors the death-knell feel of a Cairn campaign:
   }
 </script>
 
-<aside class="end-banner end-banner--{reason}" role="region" aria-label="Campaign closed">
+<aside
+  class="end-banner end-banner--{reason} frontispiece"
+  role="region"
+  aria-label="Campaign closed"
+>
   <div class="banner-body">
     <span class="kicker pixel">{kicker}</span>
     <h2 class="headline">{headline}</h2>
@@ -129,6 +133,36 @@ Visual hierarchy mirrors the death-knell feel of a Cairn campaign:
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
+    overflow: hidden;
+
+    /*
+     * Plate tuning per banner role. The non-death variants get a quiet
+     * suggestion of the engraving (retirement/victory shouldn't read
+     * as funereal). Death gets a stronger plate plus a tighter
+     * position so the figure-of-death dominates the right edge.
+     */
+    --frontispiece-position: right -2rem center;
+    --frontispiece-opacity: 0.12;
+    --frontispiece-blend: screen;
+    --frontispiece-size: auto 220%;
+  }
+  .end-banner--death {
+    --frontispiece-opacity: 0.24;
+    --frontispiece-position: right -1rem center;
+    --frontispiece-size: auto 240%;
+  }
+  /*
+   * Keep the plate from running underneath the action row at narrow
+   * widths — once the banner wraps, the engraving stops being a
+   * tasteful suggestion and starts being a busy field behind a button.
+   */
+  @media (max-width: 720px) {
+    .end-banner {
+      --frontispiece-opacity: 0.08;
+    }
+    .end-banner--death {
+      --frontispiece-opacity: 0.14;
+    }
   }
   /* The death variant gets a deeper rust band along the top so the
    * lifecycle-shift cue lands without us having to put a screaming

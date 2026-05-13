@@ -101,7 +101,7 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
 </script>
 
-<div class="library iron">
+<div class="library iron" class:frontispiece={mode === "empty"}>
   <header class="library__head">
     <span class="kicker">Oracle's Ledger</span>
     {#if mode === "empty"}
@@ -213,6 +213,32 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     display: flex;
     flex-direction: column;
     gap: 1.2rem;
+  }
+
+  /*
+   * Empty-shelf frontispiece. The Dürer plate is anchored to the right
+   * so the headline + lead + CTA stack on the left without competing
+   * with the figure. We push min-height up so the engraving has actual
+   * room to live; without it the splash would be ~120px tall and the
+   * plate would render as a sliver.
+   *
+   * Plate opacity is bumped slightly above the default `.frontispiece`
+   * 18% because the iron chassis underneath is very dark — at 14-16%
+   * the figure essentially disappears.
+   */
+  .library.frontispiece {
+    --frontispiece-position: right -1rem center;
+    --frontispiece-opacity: 0.22;
+    --frontispiece-blend: screen;
+    --frontispiece-size: auto 130%;
+    min-height: 420px;
+    overflow: hidden;
+  }
+  .library.frontispiece .library__head {
+    max-width: 36ch;
+  }
+  .library.frontispiece .library__foot {
+    max-width: 40ch;
   }
   .library__head {
     display: flex;
