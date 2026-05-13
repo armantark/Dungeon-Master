@@ -40,18 +40,35 @@ blend modes so they read as substrate without competing with content.
   bundled redistribution inside this single-user desktop app.
 - **Modifications.** None. Saved verbatim.
 
-## `leather.png` — `.iron-grained` chassis surfaces
+## `leather.png` — `.iron` chassis surfaces
 
-- **Role.** `.iron-grained::after`, `overlay` blend at 40% opacity,
-  300px tile. The "front-ish" dark surface — leather-clad iron panels
-  used on SaveLibrary and other hero chassis. Overlay on the existing
-  iron gradient darkens the darks and shifts the highlights into warm
-  brown without graying the surface out.
+- **Role.** `.iron::after`, plain-alpha at full opacity, 300px tile.
+  The "front-ish" dark surface — leather-clad iron panels used on
+  every `.iron` chassis (CharacterFolio, Inspector, SaveLibrary, hero
+  panels, dropdown menus). The PNG is alpha-stamped on top of the iron
+  gradient: its mid-tan brown pixels with sparse alpha give the
+  surface its leather pores against the dark base.
 - **Source.** Transparent Textures (`leather.png`),
   https://www.transparenttextures.com/patterns/leather.png — Subtle
   Patterns collection.
 - **License.** Same permissive MIT-style as `dark-wood.png`.
 - **Modifications.** None.
+
+## `brushed-metal.png` — buttons and dropdowns
+
+- **Role.** `button::before` / `.btn::before` pseudo, plain-alpha at
+  55% (85% on hover), 200px tile. Stamps faint brushed-aluminium
+  scratch highlights onto the dark button gradient so clickable chrome
+  reads as a separate material from static iron panels. On hover the
+  pseudo brightens and a `sepia/saturate/hue-rotate` filter chain
+  warms the brushed marks toward gold — the affordance is the metal
+  "catching light" rather than a flat color swap.
+- **Source.** Transparent Textures (`brushed-alum-dark.png`),
+  https://www.transparenttextures.com/patterns/brushed-alum-dark.png —
+  Subtle Patterns collection.
+- **License.** Same permissive MIT-style as `dark-wood.png`.
+- **Modifications.** Renamed from `brushed-alum-dark.png` to
+  `brushed-metal.png` for clarity; otherwise verbatim.
 
 ## `natural-paper.png` — parchment fibre
 

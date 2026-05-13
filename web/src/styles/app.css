@@ -84,83 +84,250 @@ body {
 }
 
 /*
- * Metallic scrollbars — tarnished-iron channel with a brushed-gold
- * thumb. OS-default scrollbars (especially macOS' translucent grays)
- * read as modern app chrome and break the grimoire frame. These
- * pseudo-element styles only fire in WebKit/Chromium (so Tauri's
- * WebKit shell + dev Chromium both get them); Firefox falls back to
- * the cross-browser `scrollbar-color` / `scrollbar-width` properties
- * which give a close-enough thin gold-on-iron approximation.
+ * Win95-metallic scrollbars.
  *
- * Layered gradients on the thumb fake brushed-metal: a vertical light
- * sweep (top highlight → mid → bottom shadow) gives it the rounded
- * cylinder feel; the gold→tarnished base provides the pigment. The
- * inset shadow seats the thumb in the channel so it doesn't float.
+ * Hard 3D bevel (no border-radius), bright top/left edge, dark
+ * bottom/right edge — the same trick CSS used to fake raised buttons
+ * on Windows 95/98 before flat design. Track is a recessed dark
+ * channel; thumb and step-buttons are raised brass tiles with a
+ * brushed-vertical gradient and three grip ridges down the middle so
+ * the grab point reads clearly even at small sizes. Arrow glyphs on
+ * the step buttons are inline SVG data URIs so we don't ship extra
+ * assets.
  *
- * Sized 10px because we're a serious dense-text reader UI; a fat
- * Windows-95 scrollbar would be theme-correct but eats reading space.
+ * `appearance: none` on every pseudo is mandatory on macOS Chrome /
+ * WebKit — without it the browser draws the native overlay scrollbar
+ * shape (rounded, OS-sized) and only color-overrides through our
+ * styles, which is exactly the bug the user reported on the previous
+ * pass ("macOS default but gold, no hover").
+ *
+ * States:
+ *   default — tarnished brass, raised bevel
+ *   :hover  — candle-gold (brighter), keeps the raised bevel
+ *   :active — inverted bevel (dark top/left, light bottom/right)
+ *
+ * 14px width (chunkier than modern macOS thin bars) because the
+ * boxy/metallic look needs room for the bevel + grip ridges to read.
+ * Firefox falls back to the cross-browser `scrollbar-color` property;
+ * WebKit/Chromium (Tauri shell, Vite dev) get the full Win95 chrome.
  */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--gold-tarnished) var(--ink-black);
+html {
+  scrollbar-color: var(--gold-tarnished) #0a0806;
 }
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #0a0806;
 }
 ::-webkit-scrollbar-track {
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
   background:
     linear-gradient(
       90deg,
-      rgba(0, 0, 0, 0.55) 0%,
-      rgba(0, 0, 0, 0.25) 50%,
-      rgba(0, 0, 0, 0.55) 100%
+      rgba(0, 0, 0, 0.70) 0%,
+      rgba(20, 17, 13, 0.55) 50%,
+      rgba(0, 0, 0, 0.70) 100%
     ),
-    var(--ink-black);
-  border-left: 1px solid color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
-}
-::-webkit-scrollbar-thumb {
-  border-radius: 5px;
-  border: 1px solid color-mix(in oklab, var(--ink-black) 85%, var(--gold-tarnished));
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in oklab, var(--gold-tarnished) 70%, var(--ink-black)) 0%,
-      var(--gold-candle) 45%,
-      var(--gold-tarnished) 55%,
-      color-mix(in oklab, var(--gold-tarnished) 55%, var(--ink-black)) 100%
-    );
+    #0a0806;
   box-shadow:
-    inset 0 1px 0 rgba(255, 220, 150, 0.18),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(0, 0, 0, 0.4);
+    inset 1px 0 0 rgba(0, 0, 0, 0.85),
+    inset -1px 0 0 rgba(168, 133, 63, 0.18);
 }
-::-webkit-scrollbar-thumb:hover {
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in oklab, var(--gold-candle) 70%, var(--ink-black)) 0%,
-      var(--gold-bright) 45%,
-      var(--gold-candle) 55%,
-      color-mix(in oklab, var(--gold-candle) 55%, var(--ink-black)) 100%
-    );
-}
-::-webkit-scrollbar-corner {
-  background: var(--ink-black);
-}
-/* Horizontal scrollbar gets the gradient rotated 0 → 180deg. */
-::-webkit-scrollbar:horizontal {
-  height: 10px;
-}
-::-webkit-scrollbar-thumb:horizontal {
+::-webkit-scrollbar-track:horizontal {
   background:
     linear-gradient(
       180deg,
-      color-mix(in oklab, var(--gold-tarnished) 70%, var(--ink-black)) 0%,
-      var(--gold-candle) 45%,
-      var(--gold-tarnished) 55%,
+      rgba(0, 0, 0, 0.70) 0%,
+      rgba(20, 17, 13, 0.55) 50%,
+      rgba(0, 0, 0, 0.70) 100%
+    ),
+    #0a0806;
+  box-shadow:
+    inset 0 1px 0 rgba(0, 0, 0, 0.85),
+    inset 0 -1px 0 rgba(168, 133, 63, 0.18);
+}
+
+/*
+ * Thumb. The vertical (or horizontal) brushed-gold gradient + grip
+ * ridges + hard 3D bevel via box-shadow inset highlights/shadows.
+ * Grip ridges are a small `repeating-linear-gradient` stacked on top
+ * of the brushed base — three dark-and-light stripes across the
+ * narrow axis of the thumb, classic Win95 "grippy".
+ */
+::-webkit-scrollbar-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+  background:
+    /* grip ridges (three dark stripes across the narrow axis) */
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 4px,
+      rgba(0, 0, 0, 0.45) 4px,
+      rgba(0, 0, 0, 0.45) 5px,
+      rgba(255, 220, 150, 0.20) 5px,
+      rgba(255, 220, 150, 0.20) 6px,
+      transparent 6px,
+      transparent 10px
+    ),
+    /* brushed brass face */
+    linear-gradient(
+      90deg,
+      var(--gold-candle) 0%,
+      var(--gold-bright) 40%,
+      var(--gold-tarnished) 60%,
       color-mix(in oklab, var(--gold-tarnished) 55%, var(--ink-black)) 100%
     );
+  background-blend-mode: normal;
+  box-shadow:
+    /* outer hard 1px black frame */
+    inset 0 0 0 1px rgba(0, 0, 0, 0.85),
+    /* raised bevel: bright top/left, dark bottom/right */
+    inset 1px 1px 0 1px rgba(255, 230, 170, 0.55),
+    inset -1px -1px 0 1px rgba(40, 24, 12, 0.85);
+}
+/* Grip ridges run perpendicular to scroll axis for both orientations. */
+::-webkit-scrollbar-thumb:vertical {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 4px,
+      rgba(0, 0, 0, 0.45) 4px,
+      rgba(0, 0, 0, 0.45) 5px,
+      rgba(255, 220, 150, 0.20) 5px,
+      rgba(255, 220, 150, 0.20) 6px,
+      transparent 6px,
+      transparent 10px
+    ),
+    linear-gradient(
+      90deg,
+      var(--gold-candle) 0%,
+      var(--gold-bright) 40%,
+      var(--gold-tarnished) 60%,
+      color-mix(in oklab, var(--gold-tarnished) 55%, var(--ink-black)) 100%
+    );
+}
+::-webkit-scrollbar-thumb:hover {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 4px,
+      rgba(0, 0, 0, 0.55) 4px,
+      rgba(0, 0, 0, 0.55) 5px,
+      rgba(255, 240, 190, 0.32) 5px,
+      rgba(255, 240, 190, 0.32) 6px,
+      transparent 6px,
+      transparent 10px
+    ),
+    linear-gradient(
+      90deg,
+      #f0c95a 0%,
+      #ffe18a 40%,
+      var(--gold-candle) 60%,
+      var(--gold-tarnished) 100%
+    );
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.90),
+    inset 1px 1px 0 1px rgba(255, 240, 200, 0.75),
+    inset -1px -1px 0 1px rgba(40, 24, 12, 0.90);
+}
+::-webkit-scrollbar-thumb:hover:horizontal {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 4px,
+      rgba(0, 0, 0, 0.55) 4px,
+      rgba(0, 0, 0, 0.55) 5px,
+      rgba(255, 240, 190, 0.32) 5px,
+      rgba(255, 240, 190, 0.32) 6px,
+      transparent 6px,
+      transparent 10px
+    ),
+    linear-gradient(
+      180deg,
+      #f0c95a 0%,
+      #ffe18a 40%,
+      var(--gold-candle) 60%,
+      var(--gold-tarnished) 100%
+    );
+}
+::-webkit-scrollbar-thumb:active {
+  /* Inverted bevel for pressed state. */
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.90),
+    inset 1px 1px 0 1px rgba(40, 24, 12, 0.85),
+    inset -1px -1px 0 1px rgba(255, 220, 150, 0.40);
+}
+
+/*
+ * Step buttons (the Win95 up/down/left/right arrow squares at the
+ * scrollbar ends). Same metallic bevel as the thumb; the arrow glyph
+ * is an inline SVG with `currentColor`-styled stroke that reads as
+ * etched into the brass. `display: block` and explicit height/width
+ * keep them square on both axes.
+ */
+::-webkit-scrollbar-button {
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+  display: block;
+  height: 14px;
+  width: 14px;
+  background-color: var(--gold-tarnished);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 8px 8px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.85),
+    inset 1px 1px 0 1px rgba(255, 230, 170, 0.55),
+    inset -1px -1px 0 1px rgba(40, 24, 12, 0.85);
+}
+::-webkit-scrollbar-button:hover {
+  background-color: var(--gold-candle);
+}
+::-webkit-scrollbar-button:active {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.90),
+    inset 1px 1px 0 1px rgba(40, 24, 12, 0.85),
+    inset -1px -1px 0 1px rgba(255, 220, 150, 0.40);
+}
+::-webkit-scrollbar-button:vertical:start:decrement {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><path d='M1 5 L4 2 L7 5 Z' fill='%23120c06'/></svg>");
+}
+::-webkit-scrollbar-button:vertical:end:increment {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><path d='M1 3 L4 6 L7 3 Z' fill='%23120c06'/></svg>");
+}
+::-webkit-scrollbar-button:horizontal:start:decrement {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><path d='M5 1 L2 4 L5 7 Z' fill='%23120c06'/></svg>");
+}
+::-webkit-scrollbar-button:horizontal:end:increment {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><path d='M3 1 L6 4 L3 7 Z' fill='%23120c06'/></svg>");
+}
+/* Hide the duplicate buttons WebKit insists on rendering at the
+ * "wrong" end (start:increment and end:decrement) — Win95 had only
+ * one button per scrollbar end. */
+::-webkit-scrollbar-button:vertical:start:increment,
+::-webkit-scrollbar-button:vertical:end:decrement,
+::-webkit-scrollbar-button:horizontal:start:increment,
+::-webkit-scrollbar-button:horizontal:end:decrement {
+  display: none;
+}
+
+::-webkit-scrollbar-corner {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #0a0806;
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.85),
+    inset -1px -1px 0 rgba(168, 133, 63, 0.18);
 }
 
 /*
@@ -194,8 +361,16 @@ body::before {
   background-image: url("/textures/dark-wood.png");
   background-size: 512px 512px;
   background-repeat: repeat;
-  opacity: 0.35;
-  mix-blend-mode: overlay;
+  /*
+   * Plain alpha at full opacity. Transparent-textures' dark-wood PNG
+   * is sparse — its non-transparent pixels are already dark wood
+   * tones, so blending it as a plain alpha layer stamps the grain
+   * directly onto the warm radial gradient underneath. Earlier passes
+   * used `overlay` at 0.35 which was effectively invisible because
+   * overlay on a near-black surface with a near-black source barely
+   * moves a pixel.
+   */
+  opacity: 1;
 }
 
 /* --- Typography ------------------------------------------------------- */
@@ -320,8 +495,16 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-image: url("/textures/natural-paper.png");
   background-size: 523px 384px;
   background-repeat: repeat;
-  opacity: 0.22;
-  mix-blend-mode: multiply;
+  /*
+   * Plain alpha at full opacity. The PNG is white-RGB with alpha
+   * fibre — stamping that onto the cream paper adds slightly brighter
+   * fibre highlights, which reads as paper catching light (which is
+   * physically how paper fibres actually look when you look closely).
+   * Earlier `filter: invert(1)` flipped it to dark fibres but the
+   * result over-darkened the cards; the un-inverted version was
+   * the better look.
+   */
+  opacity: 1;
 }
 .parchment > * {
   position: relative;
@@ -349,18 +532,25 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
 /*
  * Iron chassis — the "front-ish" dark surface (above the ebony
  * backdrop, below parchment cards). Fiction: leather-clad iron panels
- * — desk blotter, codex cover, dossier folio. The base gradient does
- * the iron part; the opt-in `.iron-grained` overlay adds the leather.
+ * — desk blotter, codex cover, dossier folio.
  *
- * Pure gradient — no auto-applied texture overlay. The first version
- * attached an `.iron::after` grain layer globally, which leaked into
- * small surfaces like the SystemMenu dropdown and broke Tauri/WebKit
- * text rendering on those panels via the mix-blend-mode pseudo. Grain
- * is now opt-in via `.iron-grained` so each surface decides whether
- * the texture overlay is worth the compositor cost. SaveLibrary opts
- * in; SystemMenu does not.
+ * Texture is now globally applied via `.iron::after` (was opt-in via
+ * `.iron-grained` for a few rounds — see history). The earlier reason
+ * to make it opt-in was a Tauri/WebKit text-rendering bug triggered
+ * by `mix-blend-mode` on a global pseudo. Switching to plain-alpha
+ * compositing (no mix-blend-mode) removes that constraint, so leather
+ * can be on every `.iron` surface — which is what the user expects:
+ * if there's a front-ish dark panel, it should be leather-clad.
+ *
+ * `.iron-grained` is kept as an alias so existing components don't
+ * need to be updated, but the texture is now on the base class too.
+ *
+ * Source: Transparent Textures' `leather.png` (300x300, see
+ * SOURCES.md).
  */
 .iron {
+  position: relative;
+  isolation: isolate;
   background:
     linear-gradient(
       180deg,
@@ -371,24 +561,7 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   box-shadow: var(--shadow-deep), var(--shadow-leather);
   color: var(--paper-bone);
 }
-
-/*
- * Opt-in dark-leather overlay. Use on chassis surfaces large enough
- * to benefit from real pore texture (SaveLibrary, hero panels). Avoid
- * on small dropdown panels — the pseudo + mix-blend-mode combo costs
- * render-tree work that isn't earned at that scale.
- *
- * Texture is Transparent Textures' `leather.png` (300x300 tileable
- * organic pore photography, see SOURCES.md). `overlay` blend at 40%
- * lets the dark base show through while the leather grain darkens the
- * darks and lifts the highlights into warm brown — exactly the
- * "leather over iron" feel without going gray.
- */
-.iron-grained {
-  position: relative;
-  isolation: isolate;
-}
-.iron-grained::after {
+.iron::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -397,16 +570,39 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-image: url("/textures/leather.png");
   background-size: 300px 300px;
   background-repeat: repeat;
-  mix-blend-mode: overlay;
-  opacity: 0.40;
+  opacity: 1;
 }
-.iron-grained > * {
+.iron > * {
   position: relative;
   z-index: 1;
+}
+.iron-grained {
+  position: relative;
+  isolation: isolate;
 }
 
 /* --- Buttons ---------------------------------------------------------- */
 
+/*
+ * Buttons and dropdowns — dark brushed-metal chips.
+ *
+ * The base is the same iron-gradient as `.iron` panels so buttons
+ * read as cut-from-the-same-stock metal as the chassis. The
+ * brushed-metal effect comes from `brushed-metal.png` (Transparent
+ * Textures' brushed-alum-dark, see SOURCES.md), stamped as a `::before`
+ * pseudo at plain alpha — the PNG's mid-gray brush strokes appear as
+ * faint highlights on the dark gradient, giving the surface its
+ * recognisable brushed-aluminium grain without going modern-flat.
+ *
+ * `isolation: isolate` + explicit z-index on direct children keeps
+ * label text above the texture layer (same pattern as `.iron` and
+ * `.parchment`).
+ *
+ * Hover affordance: the brushed-metal layer brightens (opacity bumps
+ * + tint warms toward gold) and the border + label go full gold-bright.
+ * The transition runs on `opacity` and `filter` so it feels like the
+ * metal catches light, not just a flat color swap.
+ */
 button,
 .btn {
   --btn-bg: linear-gradient(
@@ -417,6 +613,8 @@ button,
   --btn-color: var(--paper-warm);
   --btn-border: color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
 
+  position: relative;
+  isolation: isolate;
   appearance: none;
   border: 1px solid var(--btn-border);
   background: var(--btn-bg);
@@ -435,11 +633,34 @@ button,
   -webkit-font-smoothing: none;
   font-smooth: never;
 }
+button::before,
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/brushed-metal.png");
+  background-size: 200px 200px;
+  background-repeat: repeat;
+  opacity: 0.55;
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+button > *,
+.btn > * {
+  position: relative;
+  z-index: 1;
+}
 
 button:hover:not(:disabled),
 .btn:hover:not(:disabled) {
   --btn-border: var(--gold-bright);
   color: var(--gold-bright);
+}
+button:hover:not(:disabled)::before,
+.btn:hover:not(:disabled)::before {
+  opacity: 0.85;
+  filter: sepia(0.55) saturate(1.6) hue-rotate(-12deg) brightness(1.15);
 }
 
 button:disabled,
