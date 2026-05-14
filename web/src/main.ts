@@ -1,6 +1,7 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
 import { initializeDesktopApiBase } from "./lib/desktop";
+import { initGlobalTextureRandomization } from "./lib/randomTexturePosition";
 import "./styles/app.css";
 
 const target = document.getElementById("app");
@@ -11,6 +12,9 @@ if (!target) {
 await initializeDesktopApiBase().catch((error: unknown) => {
   console.error("Failed to initialize desktop runtime.", error);
 });
+
+// Start randomizing --btn-tex-x and y on all buttons globally
+initGlobalTextureRandomization();
 
 const app = mount(App, { target });
 

@@ -1,62 +1,69 @@
 /*
- * `randomTexturePosition` — Svelte action that assigns a random
- * `background-position` to a button's cast-iron `::before` pseudo on
- * mount, then leaves the element alone. The button rule reads those
- * coordinates from CSS custom properties (`--btn-tex-x`, `--btn-tex-y`)
- * with sensible 50%/50% fallbacks for the global default.
+ * Global texture position randomizer.
+ * 
+ * Automatically assigns `--btn-tex-x` and `--btn-tex-y` custom properties
+ * to all cast-iron textured UI elements (`button`, `.btn`, `.scene`) 
+ * as they enter the DOM.
  *
- * Why this exists:
- *   The default `button::before { background-size: cover; }` scales the
- *   cast-iron texture to the button's exact bounds. For stacks of
- *   sibling buttons with identical dimensions (the Inspector's
- *   `Drawer` flaps, save-load chips, common-action pills, etc.), every
- *   sibling shows the same crop of the source image — the stack reads
- *   as wallpaper rather than a row of independent iron plates.
- *
- *   `background-attachment: fixed` looks tempting as a free way to get
- *   per-element variation (each element samples its viewport-relative
- *   slice of a single texture sheet), but it causes the "blank dark
- *   patch" bug: buttons that land on uniformly-dark regions of the
- *   texture appear to have no texture at all. See
- *   `memory-bank/systemPatterns.md` ("Texture / button rendering
- *   pitfalls", pitfall 3).
- *
- *   This action instead picks a stable random position per element on
- *   first mount and pins it via inline custom properties, so the
- *   sibling stack reads as varied without depending on viewport
- *   geometry.
+ * This ensures that stacks of sibling buttons with identical dimensions
+ * (like Inspector menus, save-load chips) don't show the exact same crop
+ * of the source texture image.
  */
 
-interface Options {
-  /**
-   * Optional deterministic seed. If provided, the same element + seed
-   * always picks the same offset (useful for tests). Default: a true
-   * `Math.random()` pair, freshly chosen per mount.
-   */
-  seed?: number;
+function assignRandomPosition(el: HTMLElement) {
+  if (el.hasAttribute("data-tex-assigned")) return;
+  const x = Math.floor(Math.random() * 100);
+  const y = Math.floor(Math.random() * 100);
+  el.style.setProperty("--btn-tex-x", `${x}%`);
+  el.style.setProperty("--btn-tex-y", `${y}%`);
+  el.setAttribute("data-tex-assigned", "true");
+}
+
+export function initGlobalTextureRandomization() {
+  // Apply to already existing elements
+  document.querySelectorAll("button, .btn, .scene").forEach((el) => {
+    assignRandomPosition(el as HTMLElement);
+  });
+
+  // Watch for new elements added to the DOM
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node as HTMLElement;
+          if (el.matches && el.matches("button, .btn, .scene")) {
+            assignRandomPosition(el);
+          }
+          if (el.querySelectorAll) {
+            el.querySelectorAll("button, .btn, .scene").forEach((child) => {
+              assignRandomPosition(child as HTMLElement);
+            });
+          }
+        }
+      }
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
 /**
- * Apply a per-instance random `background-position` to a button.
- * The CSS rule reads it from `--btn-tex-x` / `--btn-tex-y` custom
- * properties on the element, so the element must be the button
- * itself (not a wrapping div).
+ * Legacy Svelte action, kept for backwards compatibility if still used
+ * on a specific element.
  */
+interface Options {
+  seed?: number;
+}
+
 export function randomTexturePosition(
   el: HTMLElement,
   opts: Options = {},
 ): { destroy(): void } {
-  const seed = opts.seed;
-  const rand = typeof seed === "number" ? mulberry32(seed) : Math.random;
-  // Stay within 0–100% of the texture so we never expose its edges
-  // when paired with `background-size: cover` (cover always upscales
-  // to fit, so the texture is at least as large as the element on its
-  // shorter axis; picking a percentage shifts the crop window without
-  // exposing a seam).
-  const x = `${Math.floor(rand() * 100)}%`;
-  const y = `${Math.floor(rand() * 100)}%`;
-  el.style.setProperty("--btn-tex-x", x);
-  el.style.setProperty("--btn-tex-y", y);
+  const rand = opts.seed !== undefined ? mulberry32(opts.seed) : Math.random;
+  const x = Math.floor(rand() * 100);
+  const y = Math.floor(rand() * 100);
+  el.style.setProperty("--btn-tex-x", `${x}%`);
+  el.style.setProperty("--btn-tex-y", `${y}%`);
   return {
     destroy(): void {
       el.style.removeProperty("--btn-tex-x");
