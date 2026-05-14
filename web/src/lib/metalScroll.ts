@@ -129,19 +129,16 @@ function ensureStylesInjected(): void {
       filter: brightness(1.10) saturate(1.10);
     }
     /*
-     * Dragging used to invert the bevel (swap highlight + shadow
-     * sides), which made the thumb visibly "shift" when grabbed —
-     * jarring rather than tactile. Keep the same bevel direction
-     * during drag and only deepen the outer black ring + dim the
-     * thumb slightly so the cursor change still has visual support.
+     * Drag state changes only the cursor + the track opacity (handled
+     * via .is-active on the track). The thumb's own box-shadow,
+     * filter, and bevel stay identical to the default state — any
+     * difference reads as the thumb physically "wiggling" inside the
+     * track as the user drags. The grab/grabbing cursor swap is the
+     * only feedback users need; the position update during drag is
+     * the real signal.
      */
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
-      filter: brightness(0.92) saturate(1.05);
-      box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.95),
-        inset 1px 1px 0 1px rgba(255, 230, 170, 0.42),
-        inset -1px -1px 0 1px rgba(20, 12, 6, 0.95);
     }
   `;
   document.head.appendChild(style);

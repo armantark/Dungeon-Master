@@ -576,16 +576,22 @@ and add a Cairn-specific dl block with the resolution snapshot.
     align-items: center;
     gap: 0.6rem;
     padding: 0.4rem 0.6rem;
-    background: rgba(0, 0, 0, 0.22);
     color: var(--paper-shadow);
     text-transform: none;
     letter-spacing: 0;
     font-family: var(--font-pixel);
     font-size: 0.8rem;
-    border: 0;
-    box-shadow: none;
     cursor: pointer;
     text-align: left;
+    /*
+     * Inherit the cast-iron pseudo + bevel from the global `button`
+     * rule. Earlier the strip set `background: rgba(0,0,0,0.22)`
+     * (which the shorthand wipes the texture out via component
+     * override) and `box-shadow: none` (which killed the bevel
+     * entirely, leaving the edge harsh). Removing both restores
+     * the iron chip aesthetic so the receipt strip matches the rest
+     * of the button vocabulary.
+     */
   }
   .strip:hover {
     color: var(--gold-bright);

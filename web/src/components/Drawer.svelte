@@ -6,6 +6,7 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
 -->
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
+  import { randomTexturePosition } from "../lib/randomTexturePosition";
 
   type Props = {
     title: string;
@@ -34,7 +35,7 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
 </script>
 
 <section class="drawer iron" data-open={isOpen}>
-  <button class="flap" onclick={() => (isOpen = !isOpen)}>
+  <button class="flap" use:randomTexturePosition onclick={() => (isOpen = !isOpen)}>
     <span class="label">{title}</span>
     <span class="chevron" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
   </button>

@@ -296,6 +296,27 @@ Aesthetic conventions (codified in `web/src/styles/app.css`):
 - Two surface families: `.parchment` (warm bone, deckled edges, subtle stains) and `.iron` (oxidized cool black with a hairline gold rule). All cards must inherit one.
 - Mechanical animation only: dice tumble, wax distorts, drawer slides. No springy / shadows-on-hover lift.
 - A subtle SVG-noise overlay sits over the entire body via `body::before`.
+- **Material textures** (`web/public/textures/`): three AI-generated assets — `cast-iron.jpg` for buttons, `gold.jpg` for the custom scrollbar thumb, `linen.jpg` for the top strip + `.cloth` utility — plus parchment paper grain and ebony wood. The source images live in `memory-bank/` as PNGs (`cast_iron.png`, `gold.png`, `linen.png`); the deployed `.jpg`s are *pre-processed* on disk (resized + brightness baked in via `magick -modulate`) so we never need a CSS filter that would also dim text rendered above them. The pre-process command is recorded in `web/public/textures/SOURCES.md`.
+
+### Texture / button rendering pitfalls (have re-broken these multiple times)
+
+These are subtle CSS quirks worth re-stating because they keep biting on the texture-pass branches. Treat each one as a checklist before touching the global `button` rule:
+
+1. **Painting order: bare-text labels paint *under* a positioned pseudo at `z-index: 0`.** Per CSS 2.1 Appendix E inside a stacking context, inline text paints in step 7, then *positioned z-index: 0 descendants* paint in step 8. Buttons whose label is a bare text node (`<button>Send</button>`) — not a wrapping `<span>` — therefore disappear under any `::before { z-index: 0 }` overlay. The fix is **`isolation: isolate` on the button + `z-index: -1` on the texture pseudo**: that puts the texture between the button's own background (painted first) and the inline label (painted in step 7), so labels always show without needing a `<span>` wrapper everywhere.
+
+2. **`background:` shorthand resets *all* background properties, including any layered texture image.** If we put the cast-iron texture in the button shorthand directly (e.g. `background: url(...) center/cover, linear-gradient(...)`) and any component-level rule then sets `background: rgba(0,0,0,0.22)` (`.jump-latest`, `.action`, `.strip` in `MechanicalReceipt`, etc.), the texture is silently wiped on those buttons. **Always paint the texture through a `::before` pseudo**, not the shorthand, so component-level overrides of `background` can't erase it.
+
+3. **`background-attachment: fixed` samples relative to the viewport, not the element.** It's tempting as a free way to get per-button randomness (each button "windows" into a giant shared sheet), but buttons that land on uniformly-dark regions of the texture appear to have *no texture at all* — the recurring "you removed the cast iron again" complaint. The reliable default is `background-size: cover` with `background-attachment: scroll` (the default), so each button scales the full image to its own bounds. If you want non-identical positioning across siblings of the same dimensions (e.g. the inspector's stack of `Drawer` flaps), do it explicitly with a small Svelte action that sets `background-position-x/y` to a per-instance random value — do *not* rely on `fixed`.
+
+4. **`text-shadow` inherits.** A `text-shadow: 0 1px 0 rgba(0,0,0,0.9)` on the global `button` rule (added to keep cast-iron labels legible) cascades onto every text descendant of every button. That's fine on dark iron, but on light parchment surfaces — `SaveLibrary` cards in particular (which *are* buttons wearing `.parchment`) — it draws a black halo behind every serif and the text reads as smeared/blurry. Pair the global rule with an explicit `text-shadow: none` reset on any button that uses a light/parchment surface.
+
+5. **`-webkit-font-smoothing: antialiased` makes Cormorant Garamond visibly thinner on macOS Chrome.** Use `subpixel-antialiased` for body / serif text on warm parchment so we keep full sub-pixel coverage; reserve `antialiased` / `none` for the pixel font where stair-stepping is the point.
+
+6. **Bevels need to *read* as a stepped edge, not a soft glow.** When the user says "the bevel is too harsh / too rounded / less harsh light," they want lower highlight alpha but the same sharp 1px stepped inset — not a wide gaussian blur. Blurred bevels collapse to invisibility at small sizes (scrollbar thumbs, common-action pills) and read as "I removed the bevel" rather than "I softened it." Keep insets at `1-2px` spread with no blur, just dial the rgba alpha.
+
+7. **Inverting bevel direction on `:active` / drag states feels like the element physically shifted.** Swapping the highlight-corner and shadow-corner alphas during drag (a Win95-era pressed-button effect) reads as the thumb wiggling rather than depressing. For continuous-grab affordances (scrollbar thumb, draggable handles) keep the bevel direction stable and signal active state via brightness/saturation filter or outer-ring alpha only.
+
+8. **Inspector flaps and other stacks of same-sized buttons need explicit positional randomness, not blend-mode tricks.** With `background-size: cover` and identical bounding boxes, every sibling shows the exact same crop of the source texture and the stack reads as wallpaper. Use a Svelte action (`useTexturePosition` or similar) to assign each button a random `background-position` once on mount, and read those values from CSS variables on `::before`.
 
 Frontend state pattern:
 
