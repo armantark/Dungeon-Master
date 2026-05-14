@@ -39,6 +39,7 @@ F-09 browsing behavior:
   import { combatFromState } from "../lib/combat";
   import { canRegenerateMessage } from "../lib/message-actions";
   import { game } from "../lib/store.svelte";
+  import { metalScroll } from "../lib/metalScroll";
   import type { GameState, GameEvent, OracleOutcome, StageTiming } from "../lib/types";
   import type { ClientNote } from "../lib/store.svelte";
 
@@ -418,7 +419,7 @@ F-09 browsing behavior:
 </script>
 
 <div class="feed-shell">
-<section class="feed" bind:this={scroller} onscroll={handleScroll}>
+<section class="feed" bind:this={scroller} onscroll={handleScroll} use:metalScroll>
   {#if messages.length === 0 && provisional === null}
     <div class="empty muted">The DM is preparing the opening scene…</div>
   {:else}
@@ -534,7 +535,7 @@ F-09 browsing behavior:
   }
   .feed {
     flex: 1;
-    overflow-y: scroll; /* Force explicit scrollbar track so macOS honors custom ::-webkit-scrollbar */
+    overflow-y: auto;
     padding: 0.4rem 0.2rem 1rem;
     mask-image: linear-gradient(to bottom, transparent 0, black 14px);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px);

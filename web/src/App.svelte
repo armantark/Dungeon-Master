@@ -35,6 +35,7 @@ Everything else remains peekable reference in the Inspector.
   import SettingsModal from "./components/SettingsModal.svelte";
   import SystemMenu from "./components/SystemMenu.svelte";
   import { isCampaignEnded } from "./lib/end-campaign";
+  import { metalScroll } from "./lib/metalScroll";
 
   onMount(() => {
     // F-12: bootstrap the save library before fetching state. The
@@ -114,11 +115,11 @@ Everything else remains peekable reference in the Inspector.
       </div>
     </main>
   {:else if isLibrarySplash}
-    <main class="app__library">
+    <main class="app__library" use:metalScroll>
       <SaveLibrary mode={layout === "library-empty" ? "empty" : "selecting"} />
     </main>
   {:else if layout === "setup" && game.state}
-    <main class="app__setup">
+    <main class="app__setup" use:metalScroll>
       {#if game.error}
         <div class="error">{game.error}</div>
       {/if}

@@ -30,6 +30,7 @@ readout is purely read-only here; no buttons mutate state from this rail.
     PartyMember,
   } from "../lib/types";
   import CairnReadout from "./CairnReadout.svelte";
+  import { metalScroll } from "../lib/metalScroll";
 
   type Props = { state: GameState };
   const { state: gs }: Props = $props();
@@ -168,7 +169,7 @@ readout is purely read-only here; no buttons mutate state from this rail.
   <div class="folio__layout">
   <div class="folio__col folio__col--identity">
     {#if actors.length > 1}
-      <nav class="party-tabs" aria-label="Party folio">
+      <nav class="party-tabs" aria-label="Party folio" use:metalScroll>
         {#each actors as actor, index (actor.id)}
           <button
             class:party-tabs__button--active={actor.id === selectedActor.id}
@@ -218,7 +219,7 @@ readout is purely read-only here; no buttons mutate state from this rail.
 
     <section class="inventory">
       <span class="kicker">Inventory</span>
-      <ul>
+      <ul use:metalScroll>
       {#each inventory as item (item.id)}
         {@const tagLabels = itemTagLabels(item.cairn)}
         {@const showTags = showCairn && tagLabels.length > 0}

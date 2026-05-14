@@ -46,6 +46,7 @@ it into a drawer keeps that ceremony.
   import MechanicalReceipt from "./MechanicalReceipt.svelte";
   import CombatTracker from "./CombatTracker.svelte";
   import Drawer from "./Drawer.svelte";
+  import { metalScroll } from "../lib/metalScroll";
 
   type Props = { state: GameState };
   // Renamed to `gs` to avoid the Svelte 5 `$state` rune / `state`
@@ -319,7 +320,7 @@ it into a drawer keeps that ceremony.
     <button class="ghost" onclick={() => (game.inspectorOpen = false)}>Close</button>
   </header>
 
-  <div class="body">
+  <div class="body" use:metalScroll>
     <div class="block block--chaos">
       <span class="kicker">Chaos Factor</span>
       <div class="chaos-row">
