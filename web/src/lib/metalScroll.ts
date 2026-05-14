@@ -113,26 +113,28 @@ function ensureStylesInjected(): void {
       background-size: cover;
       background-position: center;
       /*
-       * Soft inner glow / shadow instead of the previous hard 2px
-       * inset stripes. The blurred edges read as candle-lit metal
-       * rather than the harsh chrome highlight we had before.
+       * Sharp 1px bevel edges (the angle has to be visible — this is
+       * what makes the thumb read as a raised tile rather than a flat
+       * rectangle), but the warm-highlight alpha is dialled down
+       * substantially so the light reads as candle on tarnished
+       * brass instead of bright chrome.
        */
       box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.75),
-        inset 0 1px 3px rgba(255, 230, 170, 0.18),
-        inset 0 -1px 3px rgba(40, 24, 12, 0.55);
+        inset 0 0 0 1px rgba(0, 0, 0, 0.85),
+        inset 1px 1px 0 1px rgba(255, 230, 170, 0.22),
+        inset -1px -1px 0 1px rgba(20, 12, 6, 0.85);
       cursor: grab;
       transition: filter 120ms ease;
     }
     .metal-scroll-thumb:hover {
-      filter: brightness(1.15) saturate(1.15);
+      filter: brightness(1.10) saturate(1.10);
     }
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
       box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 0 1px 3px rgba(40, 24, 12, 0.55),
-        inset 0 -1px 3px rgba(255, 220, 150, 0.18);
+        inset 0 0 0 1px rgba(0, 0, 0, 0.90),
+        inset 1px 1px 0 1px rgba(20, 12, 6, 0.85),
+        inset -1px -1px 0 1px rgba(255, 220, 150, 0.18);
     }
   `;
   document.head.appendChild(style);
