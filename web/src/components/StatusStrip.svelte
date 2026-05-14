@@ -116,8 +116,14 @@ Anything more would compete with the conversation below.
     background-image:
       linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.45)),
       url("/textures/linen.jpg");
-    background-size: cover, cover;
-    background-position: center, center;
+    /*
+     * `background-size: 100% auto` keeps the linen at full strip width
+     * while letting the natural drape extend off the top + bottom of
+     * the bar; pairing it with `background-position-y: 50%` shows the
+     * mid-y slice of the source image where the deepest folds sit.
+     */
+    background-size: cover, 100% auto;
+    background-position: center, center 50%;
     background-repeat: no-repeat, no-repeat;
   }
   .strip > * {
@@ -144,16 +150,52 @@ Anything more would compete with the conversation below.
   }
   .badge,
   .scene {
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 0.3rem 0.85rem;
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 50%, transparent);
-    background: rgba(0, 0, 0, 0.25);
+    /*
+     * Solid near-black iron plaque under the cast-iron pseudo. At the
+     * previous 0.25 alpha the linen drape behind the strip bled
+     * through and the SCENE / CHAOS pips read as "no background"; a
+     * dense fill plus the inset bevel locks them as distinct chips.
+     */
+    background: linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 220, 150, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.65);
     text-transform: none;
     letter-spacing: 0;
     cursor: default;
+    /* keep label spans above the plaque pseudo */
+  }
+  /*
+   * The CHAOS badge is a <button>, so the global button rule already
+   * paints cast iron on it via `button::before`. The SCENE chip is a
+   * <div>, so we re-add the same pseudo here so both plaques carry
+   * matching iron texture and the strip reads as a row of like
+   * material plates rather than one cast-iron button next to a flat
+   * black box.
+   */
+  .scene::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: url("/textures/cast-iron.jpg");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+  .scene > * {
+    position: relative;
+    z-index: 1;
   }
   .badge {
     cursor: pointer;

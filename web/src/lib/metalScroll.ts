@@ -80,7 +80,13 @@ function ensureStylesInjected(): void {
     }
     .metal-scroll-track {
       position: absolute;
-      z-index: 10;
+      /*
+       * z-index 5 keeps the track above ordinary scrolled content but
+       * below the inspector scrim (z-index 8) and the system menu
+       * panel (z-index 100). Without this, the custom scrollbar
+       * floated over the dismissive scrim/inspector overlay.
+       */
+      z-index: 5;
       background:
         linear-gradient(90deg, rgba(0, 0, 0, 0.72), rgba(20, 17, 13, 0.55), rgba(0, 0, 0, 0.72)),
         #0a0806;
@@ -106,22 +112,27 @@ function ensureStylesInjected(): void {
       background-image: url("/textures/gold.jpg");
       background-size: cover;
       background-position: center;
+      /*
+       * Soft inner glow / shadow instead of the previous hard 2px
+       * inset stripes. The blurred edges read as candle-lit metal
+       * rather than the harsh chrome highlight we had before.
+       */
       box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 2px 2px 0 1px rgba(255, 240, 190, 0.65),
-        inset -2px -2px 0 1px rgba(40, 24, 12, 0.95);
+        inset 0 0 0 1px rgba(0, 0, 0, 0.75),
+        inset 0 1px 3px rgba(255, 230, 170, 0.18),
+        inset 0 -1px 3px rgba(40, 24, 12, 0.55);
       cursor: grab;
       transition: filter 120ms ease;
     }
     .metal-scroll-thumb:hover {
-      filter: brightness(1.25) saturate(1.2);
+      filter: brightness(1.15) saturate(1.15);
     }
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
       box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.90),
-        inset 2px 2px 0 1px rgba(40, 24, 12, 0.95),
-        inset -2px -2px 0 1px rgba(255, 230, 170, 0.50);
+        inset 0 0 0 1px rgba(0, 0, 0, 0.85),
+        inset 0 1px 3px rgba(40, 24, 12, 0.55),
+        inset 0 -1px 3px rgba(255, 220, 150, 0.18);
     }
   `;
   document.head.appendChild(style);

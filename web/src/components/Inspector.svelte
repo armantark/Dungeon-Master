@@ -308,7 +308,7 @@ it into a drawer keeps that ceremony.
 {#if game.inspectorOpen}
   <button
     type="button"
-    class="scrim"
+    class="scrim no-iron"
     aria-label="Close inspector"
     onclick={() => (game.inspectorOpen = false)}
   ></button>
@@ -654,15 +654,17 @@ it into a drawer keeps that ceremony.
   .scrim {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    /*
+     * Sits above the scrolled content + custom scrollbar (z-index 5 in
+     * metalScroll) so the chat scrollbar stops floating over the
+     * inspector while the drawer is open, but below the inspector
+     * itself (z-index 9) so a click on the drawer doesn't dismiss it.
+     */
     z-index: 8;
+    background: rgba(0, 0, 0, 0.55);
     border: 0;
     padding: 0;
     cursor: pointer;
-    /*
-     * The scrim is a button so screen readers can dismiss it; we hide
-     * any default button chrome here without clobbering :focus-visible.
-     */
     box-shadow: none;
   }
   .scrim:focus-visible {
