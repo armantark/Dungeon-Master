@@ -666,20 +666,15 @@ button,
   border-radius: 0;
   transition: border-color 160ms ease, color 160ms ease, filter 160ms ease;
   /*
-   * Sharp stepped bevel. The stepped 1px+2px stack gives a two-tone
-   * highlight ramp (brighter inner pixel, softer outer pixel) on the
-   * top/left and a matching shadow ramp on bottom/right so the angle
-   * reads as a deeper chamfer rather than a flat line. Alpha values
-   * are tuned to be visible at 0.78rem common-action pill size but
-   * not chrome-glare at normal button sizes.
+   * Outer drop shadow lives on the button (outset, paints behind the
+   * element). The INSET bevel cannot live here — the `::before`
+   * pseudo at `z-index: -1` paints in step 2 of the stacking-context
+   * painting order, which is *after* the button's own background +
+   * inset box-shadow (step 1), so any inset bevel on the button is
+   * silently covered by the cast-iron pseudo and reads as "no bevel
+   * at all." The bevel instead sits on `::before` itself (below).
    */
-  box-shadow:
-    inset 1px 1px 0 rgba(255, 225, 165, 0.48),
-    inset 2px 2px 0 rgba(255, 225, 165, 0.20),
-    inset -1px -1px 0 rgba(0, 0, 0, 0.85),
-    inset -2px -2px 0 rgba(0, 0, 0, 0.45),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.4),
-    0 5px 12px -6px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 5px 12px -6px rgba(0, 0, 0, 0.9);
   -webkit-font-smoothing: none;
   font-smooth: never;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
@@ -719,6 +714,24 @@ button::before,
    */
   background-position: var(--btn-tex-x, 50%) var(--btn-tex-y, 50%);
   background-repeat: no-repeat;
+  /*
+   * Bevel lives on the pseudo itself, layered on top of the cast-iron
+   * texture. Doing this here (rather than on the button element) is
+   * required because the pseudo paints OVER any inset shadow the
+   * element draws — see the note on the parent rule's `box-shadow`.
+   *
+   * Stepped 1px + 2px highlight ramp on top/left, matching shadow
+   * ramp on bottom/right, with a thin black outer hairline so the
+   * chip stays crisply separated from whatever it sits on. Alpha
+   * values tuned to be visible at 0.78rem common-action pill size
+   * but not chrome-glare at normal button sizes.
+   */
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 225, 165, 0.55),
+    inset 2px 2px 0 rgba(255, 225, 165, 0.22),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.9),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.4);
   transition: opacity 160ms ease;
 }
 

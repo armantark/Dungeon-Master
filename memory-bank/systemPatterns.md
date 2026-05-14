@@ -318,6 +318,8 @@ These are subtle CSS quirks worth re-stating because they keep biting on the tex
 
 8. **Inspector flaps and other stacks of same-sized buttons need explicit positional randomness, not blend-mode tricks.** With `background-size: cover` and identical bounding boxes, every sibling shows the exact same crop of the source texture and the stack reads as wallpaper. Use a Svelte action (`useTexturePosition` or similar) to assign each button a random `background-position` once on mount, and read those values from CSS variables on `::before`.
 
+9. **`inset` box-shadow on the button is covered by a `::before` pseudo at `z-index: -1`.** Painting order inside the isolated stacking context renders the element's own background and `inset` box-shadow in step 1, then negative z-index descendants in step 2 — so any `inset` bevel you put on the button itself gets silently covered by the cast-iron texture pseudo and the button reads as having "no bevel at all." Put the inset bevel on `::before` (above the texture, below the text) and keep only outset drop shadows on the button. The bevel still has to be visible against dark iron, so step it as 1px+2px alpha ramps (highlight + shadow) rather than a single 1px line.
+
 Frontend state pattern:
 
 - One global runes-based `GameStore` (`web/src/lib/store.svelte.ts`). Owns `GameState`, `isLoading`, `error`, `rollPhase`, `pendingOracle`, ephemeral `notes` (slash help / errors), and `inspectorOpen`.
