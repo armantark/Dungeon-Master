@@ -120,6 +120,8 @@ html {
   width: 14px;
   height: 14px;
   background: #0a0806;
+  /* Forces macOS to use legacy non-overlay scrollbars when matched */
+  display: block;
 }
 ::-webkit-scrollbar-track {
   -webkit-appearance: none;
@@ -496,15 +498,12 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   background-size: 523px 384px;
   background-repeat: repeat;
   /*
-   * Plain alpha at full opacity. The PNG is white-RGB with alpha
-   * fibre — stamping that onto the cream paper adds slightly brighter
-   * fibre highlights, which reads as paper catching light (which is
-   * physically how paper fibres actually look when you look closely).
-   * Earlier `filter: invert(1)` flipped it to dark fibres but the
-   * result over-darkened the cards; the un-inverted version was
-   * the better look.
+   * 0.45 plain-alpha — visible paper-fibre highlights but not so
+   * dense that body text loses contrast. Bumped down from 1.0 after
+   * legibility feedback on Save Library cards (cream text on heavy
+   * fibre was unreadable).
    */
-  opacity: 1;
+  opacity: 0.45;
 }
 .parchment > * {
   position: relative;
@@ -545,8 +544,7 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
  * `.iron-grained` is kept as an alias so existing components don't
  * need to be updated, but the texture is now on the base class too.
  *
- * Source: Transparent Textures' `leather.png` (300x300, see
- * SOURCES.md).
+ * Source: Transparent Textures' `dark-leather.png` (see SOURCES.md).
  */
 .iron {
   position: relative;
@@ -578,18 +576,15 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/leather.png");
+  /*
+   * `dark-leather.png` is an inherently dark-gray/black texture with
+   * alpha transparency. It stamps cleanly onto the near-black iron
+   * gradient without needing filters, yielding black leather with
+   * visible pore highlights.
+   */
+  background-image: url("/textures/dark-leather.png");
   background-size: 300px 300px;
   background-repeat: repeat;
-  /*
-   * `brightness(0.18) contrast(1.25)` collapses the tan/brown source
-   * pixels to near-black while keeping the pore pattern's tonal
-   * relationships intact. Result: black leather with visible pore
-   * shadows, no warm-brown lift. Same texture file, just darkened
-   * through the filter pipe instead of fetching a separate dark
-   * leather PNG.
-   */
-  filter: brightness(0.18) contrast(1.25);
   opacity: 1;
 }
 .iron > * {
@@ -608,22 +603,16 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
  *
  * Cast iron, not brushed aluminium: matte, near-black, with subtle
  * pitted surface variation rather than directional brush strokes.
- * The `::before` pseudo stamps the leather PNG's pore pattern with a
- * heavy `brightness(0.10) contrast(1.4)` filter — collapsing the
- * tan/brown source into black-with-faint-pitting that reads as
- * sand-cast iron rather than tooled leather. Same texture file as
- * the chassis leather, different filter recipe — one PNG, two
- * materials, no extra asset.
+ * The `::before` pseudo stamps `concrete-wall.png` (a dark, highly
+ * textured pore map) at plain alpha to create the sand-cast iron
+ * pitting.
  *
  * Base gradient is darker than the chassis (`#1a1612` → `#0a0806`)
  * so buttons sit visually as a heavier, denser metal than the
  * leather-clad panels they live on.
  *
- * Hover: the pseudo brightens to `brightness(0.22)` (still dark, just
- * the iron catching slightly more light) and the border + label go
- * gold-bright. Intentionally NOT the sepia/saturate gold-wash from
- * the previous round — that read as polished brass, which is wrong
- * for cast iron.
+ * Hover: the pseudo brightens via opacity (iron catching slightly
+ * more light) and the border + label go gold-bright.
  */
 button,
 .btn {
@@ -659,11 +648,11 @@ button::before,
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/leather.png");
+  background-image: url("/textures/concrete-wall.png");
   background-size: 200px 200px;
   background-repeat: repeat;
-  filter: brightness(0.10) contrast(1.4);
-  transition: filter 160ms ease;
+  opacity: 0.6;
+  transition: opacity 160ms ease;
 }
 button > *,
 .btn > * {
@@ -678,7 +667,7 @@ button:hover:not(:disabled),
 }
 button:hover:not(:disabled)::before,
 .btn:hover:not(:disabled)::before {
-  filter: brightness(0.22) contrast(1.35);
+  opacity: 1;
 }
 
 button:disabled,

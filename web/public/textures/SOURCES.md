@@ -40,30 +40,49 @@ blend modes so they read as substrate without competing with content.
   bundled redistribution inside this single-user desktop app.
 - **Modifications.** None. Saved verbatim.
 
-## `leather.png` — chassis panels AND cast-iron buttons
+## `dark-leather.png` — chassis panels (.iron)
 
-- **Role 1 (panels).** `.iron::after`, plain alpha + `filter:
-  brightness(0.18) contrast(1.25)`, 300px tile. The tan-brown source
-  pixels are crushed near-black by the filter, leaving the pore
-  pattern's tonal relationships intact — so chassis surfaces read as
-  almost-black tooled leather rather than warm brown leather.
-- **Role 2 (buttons).** `button::before` / `.btn::before`, plain
-  alpha + `filter: brightness(0.10) contrast(1.4)`, 200px tile. The
-  same texture darkened further passes for sand-cast iron pitting:
-  near-black surface with faint randomised micro-variation. Hover
-  bumps the brightness filter to 0.22 — iron catching slightly more
-  light, no warm-brass shift.
-- **Why one texture for two materials.** Cast iron pitting and pressed
-  leather pores both have the same statistical character (random
-  small bumps on an otherwise uniform surface). Using a single source
-  PNG with two filter recipes keeps the bundle smaller and the
-  material logic in CSS instead of split across multiple assets.
-- **Source.** Transparent Textures (`leather.png`),
-  https://www.transparenttextures.com/patterns/leather.png — Subtle
+- **Role.** `.iron::after`, plain alpha at full opacity, 300px tile.
+  Tooled near-black leather on every dark chassis (CharacterFolio,
+  Inspector, SaveLibrary, chat container, dropdown menus). The PNG
+  is a dark-gray/black texture with sparse alpha — its pixels stamp
+  cleanly onto the iron gradient base without any CSS filter
+  manipulation. Previous attempts to use `leather.png` with a
+  `brightness(0.18)` filter crushed the texture to invisible (black
+  pores on a near-black base = nothing renders).
+- **Source.** Transparent Textures (`dark-leather.png`),
+  https://www.transparenttextures.com/patterns/dark-leather.png —
+  Subtle Patterns collection.
+- **License.** Permissive MIT-style.
+- **Modifications.** None.
+
+## `concrete-wall.png` — cast-iron buttons
+
+- **Role.** `button::before` / `.btn::before`, plain alpha at 60%
+  (100% on hover), 200px tile. Sand-cast iron pitting on every
+  clickable chip. The PNG is very dark (mean RGB ~15%) with sparse
+  alpha — stamping it onto the dark button gradient adds the
+  recognisable random pitting of cast iron without the linear scratches
+  that would imply machined or polished metal.
+- **Source.** Transparent Textures (`concrete-wall.png`),
+  https://www.transparenttextures.com/patterns/concrete-wall.png —
+  Subtle Patterns collection.
+- **License.** Permissive MIT-style.
+- **Modifications.** None.
+
+## `black-felt.png` — top bar (draped cloth)
+
+- **Role.** `.strip::after` override on the StatusStrip header,
+  plain alpha at 85%, 200px tile. Reads as black cloth/felt stretched
+  across the top of the workspace — different material from the
+  leather-clad chassis below it. Paired with a vertical-fold
+  `repeating-linear-gradient` on the `.strip` background to suggest
+  draped folds along the X axis.
+- **Source.** Transparent Textures (`black-felt.png`),
+  https://www.transparenttextures.com/patterns/black-felt.png — Subtle
   Patterns collection.
-- **License.** Same permissive MIT-style as `dark-wood.png`.
-- **Modifications.** None to the source PNG. The two-material effect
-  is achieved entirely through CSS `filter` chains, documented above.
+- **License.** Permissive MIT-style.
+- **Modifications.** None.
 
 ## `natural-paper.png` — parchment fibre
 

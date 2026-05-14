@@ -337,10 +337,11 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
   .card__kicker {
     font-family: var(--font-pixel);
-    font-size: 0.66rem;
-    letter-spacing: 0.06em;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: color-mix(in oklab, var(--rust-blood) 80%, var(--ink-black));
+    color: color-mix(in oklab, var(--rust-blood) 90%, var(--ink-black));
+    font-weight: bold;
   }
   .card__active-pip {
     font-size: 0.62rem;
@@ -354,15 +355,17 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
 
   .card__name {
     margin: 0.1rem 0 0;
-    font-size: 1.25rem;
-    line-height: 1.2;
-    color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
+    font-size: 1.65rem;
+    line-height: 1.15;
+    font-weight: 600;
+    color: var(--ink-black);
   }
   .card__epithet {
     margin: 0;
     font-style: italic;
-    font-size: 0.92rem;
-    color: color-mix(in oklab, var(--ink-bruise) 60%, var(--ink-black));
+    font-size: 1.1rem;
+    line-height: 1.35;
+    color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
   }
   /*
    * F-15 + F-19 seed badges sit between the epithet and the
@@ -380,8 +383,9 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
   .card__seed-preset {
     font-family: var(--font-display);
-    font-size: 0.86rem;
-    color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--ink-black);
   }
   .card__seed-danger {
     padding: 0.05rem 0.4rem;
@@ -403,10 +407,11 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     color: var(--rust-blood);
   }
   .card__line {
-    margin: 0.4rem 0 0;
-    font-size: 0.92rem;
-    line-height: 1.45;
-    color: color-mix(in oklab, var(--ink-bruise) 75%, var(--ink-black));
+    margin: 0.5rem 0 0;
+    font-size: 1.1rem;
+    line-height: 1.5;
+    color: color-mix(in oklab, var(--ink-bruise) 85%, var(--ink-black));
+    font-weight: 500;
     /*
      * Cap the identifying line at three lines so a wide-shelf grid stays
      * even — backstory blurbs vary wildly in length and an uncapped card

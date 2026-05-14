@@ -534,7 +534,7 @@ F-09 browsing behavior:
   }
   .feed {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: scroll; /* Force explicit scrollbar track so macOS honors custom ::-webkit-scrollbar */
     padding: 0.4rem 0.2rem 1rem;
     mask-image: linear-gradient(to bottom, transparent 0, black 14px);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px);

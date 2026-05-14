@@ -77,6 +77,17 @@ Anything more would compete with the conversation below.
 </header>
 
 <style>
+  /*
+   * Top bar styled as draped black cloth/felt instead of the leather
+   * chassis material. Felt has finer, more uniform fibre than leather
+   * pores — reads as fabric stretched across the top of the workspace
+   * rather than another panel of the codex.
+   *
+   * The `.strip` overrides `.iron::after`'s default leather PNG with
+   * black-felt.png. A subtle vertical draped-fold gradient adds
+   * dimension along the X axis so the cloth reads as hanging cloth,
+   * not flat fabric.
+   */
   .strip {
     display: flex;
     align-items: center;
@@ -86,6 +97,28 @@ Anything more would compete with the conversation below.
     border-left: 0;
     border-right: 0;
     border-top: 0;
+    background:
+      /* Vertical draped folds — uneven darker bands every ~120px */
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        rgba(0, 0, 0, 0.18) 60px,
+        transparent 120px,
+        rgba(0, 0, 0, 0.10) 180px,
+        transparent 240px
+      ),
+      /* Bottom-to-top falloff: top edge lighter (catches light), bottom darker */
+      linear-gradient(
+        180deg,
+        #161310 0%,
+        #0a0807 100%
+      );
+  }
+  .strip::after {
+    /* Override .iron::after with black-felt instead of dark-leather. */
+    background-image: url("/textures/black-felt.png") !important;
+    background-size: 200px 200px !important;
+    opacity: 0.85 !important;
   }
   .brand {
     display: flex;
