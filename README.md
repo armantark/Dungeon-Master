@@ -2,6 +2,18 @@
 
 A personal solo TTRPG harness where Python owns deterministic mechanics and a LiteLLM-routed model is restricted to narration. The frontend is a bespoke Svelte 5 grimoire UI; the backend is a FastAPI server.
 
+## Screenshots
+
+These captures use the isolated fixture save library (`dungeon-master-fixtures`) so the UI can be shown without mutating a live campaign.
+
+![Main campaign view with character folio, chat, receipt, and composer](docs/screenshots/readme-campaign.png)
+
+![Inspector drawer with chaos controls, continuity sections, and save controls](docs/screenshots/readme-inspector.png)
+
+![Save library with active and archived fixture campaigns](docs/screenshots/readme-save-library.png)
+
+![Archived campaign view after retirement](docs/screenshots/readme-archive.png)
+
 ## What It Does
 
 - Tracks canonical state in `data/game_state.json` and writes append-only events to `data/events.jsonl`.
