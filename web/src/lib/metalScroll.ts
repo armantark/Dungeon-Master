@@ -103,7 +103,7 @@ function ensureStylesInjected(): void {
       position: absolute;
       left: 1px;
       right: 1px;
-      background-image: url("/textures/bright-gold-metal.jpg");
+      background-image: url("/textures/gold.jpg");
       background-size: cover;
       background-position: center;
       box-shadow:

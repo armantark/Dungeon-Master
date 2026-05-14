@@ -562,21 +562,22 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
     inset 0 0 80px rgba(0, 0, 0, 0.55);
   color: var(--paper-bone);
 }
+/*
+ * `.cloth` — black linen drape used for the top status strip and any
+ * other surface that should read as fabric (vs. leather, parchment,
+ * cast iron). Sourced from an AI-generated linen photograph
+ * (see `memory-bank/linen.png`). The image is a wide drape, so we
+ * scale to cover the surface height and let the natural fold pattern
+ * read at the strip's own dimensions; no blend modes, no filters.
+ */
 .cloth {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(180deg, #161310 0%, #0a0807 100%);
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.35)),
+    url("/textures/linen.jpg") center/cover no-repeat,
+    #0c0a08;
   color: var(--paper-bone);
-}
-.cloth::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image: url("/textures/black-cloth-draped.jpg");
-  background-size: 800px auto;
-  background-repeat: repeat;
 }
 .cloth > * {
   position: relative;
@@ -665,12 +666,16 @@ button::before,
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/cast-iron-matte.jpg");
-  background-size: 256px 256px;
+  /*
+   * AI-generated cast iron photograph (see `memory-bank/cast_iron.png`).
+   * The image is already near-black with rusty highlights, so we apply
+   * it directly with plain alpha — no blend modes needed.
+   */
+  background-image: url("/textures/cast-iron.jpg");
+  background-size: 320px 320px;
   background-repeat: repeat;
-  /* Blend normal, the texture is already appropriately dark */
-  opacity: 0.9;
-  transition: opacity 160ms ease;
+  opacity: 0.95;
+  transition: opacity 160ms ease, filter 160ms ease;
 }
 button > *,
 .btn > * {

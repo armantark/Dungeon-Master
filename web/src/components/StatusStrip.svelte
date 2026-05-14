@@ -113,9 +113,12 @@ Anything more would compete with the conversation below.
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background-image: url("/textures/black-cloth-draped.jpg");
-    background-size: 800px auto;
-    background-repeat: repeat;
+    background-image:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.45)),
+      url("/textures/linen.jpg");
+    background-size: cover, cover;
+    background-position: center, center;
+    background-repeat: no-repeat, no-repeat;
   }
   .strip > * {
     position: relative;

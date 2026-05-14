@@ -299,6 +299,28 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     letter-spacing: 0;
     color: var(--ink-deep);
     font-family: var(--font-body);
+    /*
+     * The global <button> rule forces `-webkit-font-smoothing: none`
+     * to keep the pixel-font system chips crisp, but card text uses
+     * Cormorant Garamond and needs proper grayscale anti-aliasing or
+     * it renders as jagged stair-stepped serifs on top of parchment.
+     * Restore antialiased smoothing for the card body specifically.
+     */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-smooth: always;
+    text-rendering: optimizeLegibility;
+  }
+  /*
+   * Children inherit `font-smoothing: none` from the button cascade in
+   * some engines; force the antialiased value down the subtree
+   * explicitly so the title, epithet, and identifying line all render
+   * with proper sub-pixel coverage.
+   */
+  .card *:not(.pixel):not(.card__active-pip):not(.card__seed-danger) {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-smooth: always;
   }
   .card:hover:not(:disabled),
   .card:focus-visible:not(:disabled) {

@@ -130,33 +130,40 @@ blend modes so they read as substrate without competing with content.
     knight-death-engraving.jpg
   ```
 
-### 6. `black-cloth-draped.jpg`
+### 6. `linen.jpg`
 
-- **Purpose.** Texture overlay for the top header strip and reusable `.cloth` class, replacing flat gray gradients and an earlier broken texture attempt.
-- **Source.** User-provided URL: `https://ae-pic-a1.aliexpress-media.com/kf/Sa2484f77f509430e9bd260dac60c377fB.jpg_960x960q75.jpg_.avif`
-- **Modifications.** ImageMagick was used to compress the tonal range so the stark white cloth folds don't blow out the dark UI header, rendering it as a dark gray/black draped material.
+- **Purpose.** Texture for the top status strip (`.strip`) and the
+  reusable `.cloth` utility class. Reads as a dark draped fabric.
+- **Source.** AI-generated source asset at `memory-bank/linen.png`
+  (commissioned for this project, not from an external library).
+- **Modifications.** Resized to 1600px wide and JPEG-encoded at q=82
+  to keep bundle weight under 200 kB while preserving the natural
+  drape and fold structure.
   ```sh
-  magick cloth_source.avif -colorspace Gray -level 0%,85% -fill "#11100f" -tint 100 black-cloth-draped.jpg
+  magick memory-bank/linen.png -resize 1600x -quality 82 web/public/textures/linen.jpg
   ```
 
-### 7. `cast-iron-matte.jpg`
+### 7. `cast-iron.jpg`
 
-- **Purpose.** Background texture for interactive buttons, replacing an earlier pseudo-element/blend-mode attempt with a real material image.
-- **Source.** Wikimedia Commons ([Cast_Iron_Texture_Map_To.jpg](https://upload.wikimedia.org/wikipedia/commons/f/fc/Cast_Iron_Texture_Map_To.jpg)).
-- **License.** Public Domain (CC0 equivalent / No known copyright restrictions).
-- **Modifications.** Grayscale conversion, resized to 512x512, heavily darkened and tinted to match the near-black iron chassis while retaining pitted highlights.
+- **Purpose.** Surface texture for buttons / `.btn` chips. Reads as
+  pitted matte iron with traces of rust.
+- **Source.** AI-generated source asset at `memory-bank/cast_iron.png`
+  (commissioned for this project).
+- **Modifications.** Resized to 800x800 and JPEG-encoded at q=82.
   ```sh
-  magick cast_iron_source.jpg -colorspace Gray -resize 512x512 -level 0%,100%,0.2 -fill "#1a1612" -tint 100 cast-iron-matte.jpg
+  magick memory-bank/cast_iron.png -resize 800x800 -quality 82 web/public/textures/cast-iron.jpg
   ```
 
-### 8. `bright-gold-metal.jpg`
+### 8. `gold.jpg`
 
-- **Purpose.** Custom JS scrollbar thumb texture.
-- **Source.** Wikimedia Commons ([Clementine_-_Texture_Brushed_Metal_by_meiastar.jpg](https://upload.wikimedia.org/wikipedia/commons/a/a5/Clementine_-_Texture_Brushed_Metal_by_meiastar.jpg)).
-- **License.** CC BY 2.0.
-- **Modifications.** Resized to 512x512, brightened, and tinted gold.
+- **Purpose.** Texture for the metallic scrollbar thumb in
+  `web/src/lib/metalScroll.ts`. Reads as tarnished hammered brass /
+  gilt with pitting.
+- **Source.** AI-generated source asset at `memory-bank/gold.png`
+  (commissioned for this project).
+- **Modifications.** Resized to 1024px wide and JPEG-encoded at q=84.
   ```sh
-  magick brushed_metal_source.jpg -resize 512x512 -modulate 110,60,95 -fill "#d4af37" -tint 80 bright-gold-metal.jpg
+  magick memory-bank/gold.png -resize 1024x -quality 84 web/public/textures/gold.jpg
   ```
 
 ## Tone fit
