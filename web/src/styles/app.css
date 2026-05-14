@@ -704,34 +704,32 @@ button::before,
   z-index: -1;
   pointer-events: none;
   background-image: url("/textures/cast-iron.jpg");
-  background-size: cover;
-  /*
-   * `--btn-tex-x` / `--btn-tex-y` are set inline by
-   * `randomTexturePosition` (see `web/src/lib/randomTexturePosition.ts`)
-   * so stacks of identically-sized buttons (e.g. the inspector's
-   * `Drawer` flaps) don't all show the same crop of the texture.
-   * Falls back to centre when the action is absent.
+  /* 
+   * Fixed large size ensures that random background-position successfully 
+   * pans the texture across all axes, even for wide/short buttons 
+   * (where 'cover' would lock the X-axis panning).
    */
+  background-size: 800px 800px;
   background-position: var(--btn-tex-x, 50%) var(--btn-tex-y, 50%);
   background-repeat: no-repeat;
+  
   /*
-   * Bevel lives on the pseudo itself, layered on top of the cast-iron
-   * texture. Doing this here (rather than on the button element) is
-   * required because the pseudo paints OVER any inset shadow the
-   * element draws — see the note on the parent rule's `box-shadow`.
-   *
-   * Stepped 1px + 2px highlight ramp on top/left, matching shadow
-   * ramp on bottom/right, with a thin black outer hairline so the
-   * chip stays crisply separated from whatever it sits on. Alpha
-   * values tuned to be visible at 0.78rem common-action pill size
-   * but not chrome-glare at normal button sizes.
+   * Perfect 45-degree mitered chamfer.
+   * CSS borders naturally meet at diagonal 45-degree angles. By using 
+   * semi-transparent rgba colors for the border, the cast-iron 
+   * texture (which renders underneath the border because background-clip
+   * defaults to border-box) shows through.
+   * This creates lit and shadowed faces that look like sculpted iron 
+   * rather than flat painted plastic strips, and the miter gives a
+   * perfect 45-degree bevel angle at the corners.
    */
-  box-shadow:
-    inset 1px 1px 0 rgba(255, 225, 165, 0.55),
-    inset 2px 2px 0 rgba(255, 225, 165, 0.22),
-    inset -1px -1px 0 rgba(0, 0, 0, 0.9),
-    inset -2px -2px 0 rgba(0, 0, 0, 0.5),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+  border-style: solid;
+  border-width: 2px;
+  border-top-color: rgba(255, 225, 165, 0.40);
+  border-left-color: rgba(255, 225, 165, 0.15);
+  border-bottom-color: rgba(0, 0, 0, 0.90);
+  border-right-color: rgba(0, 0, 0, 0.65);
+
   transition: opacity 160ms ease;
 }
 

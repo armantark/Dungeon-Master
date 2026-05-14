@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { background: #111; color: white; font-family: sans-serif; padding: 50px; }
+  .btn {
+    position: relative;
+    display: inline-block;
+    padding: 10px 20px;
+    border: 1px solid #a8853f;
+    background: #000;
+    color: #e7d6b6;
+    text-transform: uppercase;
+    font-weight: bold;
+    isolation: isolate;
+  }
+  .btn::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: url("public/textures/cast-iron.jpg") center/cover;
+    
+    /* Mitered border chamfer */
+    border-style: solid;
+    border-width: 3px;
+    border-top-color: rgba(255, 225, 165, 0.45);
+    border-left-color: rgba(255, 225, 165, 0.25);
+    border-bottom-color: rgba(0, 0, 0, 0.85);
+    border-right-color: rgba(0, 0, 0, 0.65);
+    
+    /* Optional: to ensure background is painted under the border */
+    background-clip: border-box;
+  }
+  
+  .btn2 {
+    position: relative;
+    display: inline-block;
+    padding: 10px 20px;
+    border: 1px solid #a8853f;
+    background: #000;
+    color: #e7d6b6;
+    text-transform: uppercase;
+    font-weight: bold;
+    isolation: isolate;
+  }
+  .btn2::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: 
+      linear-gradient(180deg, rgba(255, 225, 165, 0.45) 0, rgba(255,225,165,0.45) 3px, transparent 3px),
+      linear-gradient(90deg, rgba(255, 225, 165, 0.25) 0, rgba(255,225,165,0.25) 3px, transparent 3px),
+      url("public/textures/cast-iron.jpg") center/cover;
+  }
+</style>
+</head>
+<body>
+  <div class="btn">Border Chamfer</div>
+  <div class="btn2">Gradient Overlaps</div>
+</body>
+</html>

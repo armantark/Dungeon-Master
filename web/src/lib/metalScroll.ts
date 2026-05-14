@@ -109,39 +109,37 @@ function ensureStylesInjected(): void {
       position: absolute;
       left: 1px;
       right: 1px;
+      border: 1px solid rgba(0, 0, 0, 0.85);
       background-image: url("/textures/gold.jpg");
-      background-size: cover;
+      background-size: 400px 400px;
       background-position: center;
-      /*
-       * Two-tone stepped bevel — bright inner pixel + softer outer
-       * pixel on the highlight side, deep+softer on the shadow side,
-       * so the chamfer reads as a real angle rather than a flat
-       * stripe. Outer black ring keeps the thumb crisply separated
-       * from the track.
-       */
-      box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 1px 1px 0 1px rgba(255, 235, 180, 0.58),
-        inset 2px 2px 0 2px rgba(255, 235, 180, 0.22),
-        inset -1px -1px 0 1px rgba(20, 12, 6, 0.92),
-        inset -2px -2px 0 2px rgba(20, 12, 6, 0.45);
       cursor: grab;
       transition: filter 120ms ease;
+    }
+    .metal-scroll-thumb::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      /*
+       * Perfect 45-degree mitered chamfer.
+       * CSS borders naturally meet at 45-degree angles. A semi-transparent
+       * border tints the gold texture underneath it, creating lit and
+       * shadowed faces of the same metal rather than flat plastic strips.
+       */
+      border-style: solid;
+      border-width: 2px;
+      border-top-color: rgba(255, 245, 200, 0.65);
+      border-left-color: rgba(255, 245, 200, 0.25);
+      border-bottom-color: rgba(30, 15, 5, 0.90);
+      border-right-color: rgba(30, 15, 5, 0.60);
+      pointer-events: none;
     }
     .metal-scroll-thumb:hover {
       filter: brightness(1.10) saturate(1.10);
     }
-    /*
-     * Drag state changes only the cursor + the track opacity (handled
-     * via .is-active on the track). The thumb's own box-shadow,
-     * filter, and bevel stay identical to the default state — any
-     * difference reads as the thumb physically "wiggling" inside the
-     * track as the user drags. The grab/grabbing cursor swap is the
-     * only feedback users need; the position update during drag is
-     * the real signal.
-     */
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
+      filter: brightness(0.85) saturate(1.10);
     }
   `;
   document.head.appendChild(style);

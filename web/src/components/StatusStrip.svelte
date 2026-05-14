@@ -160,21 +160,41 @@ Anything more would compete with the conversation below.
     text-transform: none;
     letter-spacing: 0;
     cursor: default;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 220, 150, 0.08),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.65);
   }
   /*
    * `.scene` is a <div>, so it does NOT inherit the global button
-   * cast-iron background. Re-apply it directly here so the SCENE
-   * chip matches the CHAOS / Combat badges (which are <button>) as a
-   * row of identically-clad iron plaques rather than one cast-iron
-   * button next to a flat black box.
+   * cast-iron background or its `::before` bevel pseudo. We replicate
+   * the same beveled-iron lighting here as stacked background
+   * layers: four edge-gradient strips (highlight on top/left,
+   * shadow on bottom/right) painted on top of the cast-iron
+   * texture and the dark base gradient. This matches the SCENE
+   * pill visually to the CHAOS / Combat <button> badges next to it.
    */
   .scene {
     background:
-      url("/textures/cast-iron.jpg") center / cover no-repeat,
+      url("/textures/cast-iron.jpg") center / 800px 800px no-repeat,
       linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
+  }
+  /*
+   * .scene doesn't inherit the global button::before, so we apply 
+   * the exact same border-chamfer here using a dedicated pseudo.
+   */
+  .scene::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-style: solid;
+    border-width: 2px;
+    border-top-color: rgba(255, 225, 165, 0.40);
+    border-left-color: rgba(255, 225, 165, 0.15);
+    border-bottom-color: rgba(0, 0, 0, 0.90);
+    border-right-color: rgba(0, 0, 0, 0.65);
+  }
+  .scene > * {
+    position: relative;
+    z-index: 1;
   }
   .badge {
     cursor: pointer;
