@@ -110,26 +110,27 @@ function ensureStylesInjected(): void {
       left: 1px;
       right: 1px;
       border: 1px solid rgba(0, 0, 0, 0.85);
-      background-image: url("/textures/gold.jpg");
-      background-size: 400px 400px;
-      background-position: center;
+      background: transparent;
       cursor: grab;
       transition: filter 120ms ease;
     }
-    .metal-scroll-thumb::after {
+    .metal-scroll-thumb::before {
       content: "";
       position: absolute;
       inset: 0;
+      background-image: url("/textures/gold.jpg");
+      background-size: 400px 400px;
+      background-position: center;
       /*
        * Perfect 45-degree mitered chamfer.
-       * CSS borders naturally meet at 45-degree angles. A semi-transparent
-       * border tints the gold texture underneath it, creating lit and
-       * shadowed faces of the same metal rather than flat plastic strips.
+       * Applied to the exact same element as the background-image so that
+       * background-clip: border-box (the default) perfectly tucks the
+       * texture under the semi-transparent border, mirroring the cast-iron.
        */
       border-style: solid;
       border-width: 2px;
-      border-top-color: rgba(255, 245, 200, 0.65);
-      border-left-color: rgba(255, 245, 200, 0.25);
+      border-top-color: rgba(255, 255, 240, 0.50);
+      border-left-color: rgba(255, 255, 240, 0.20);
       border-bottom-color: rgba(30, 15, 5, 0.90);
       border-right-color: rgba(30, 15, 5, 0.60);
       pointer-events: none;
