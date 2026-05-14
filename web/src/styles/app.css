@@ -633,15 +633,34 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
  */
 button,
 .btn {
-  --btn-bg: linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
   --btn-color: var(--paper-warm);
   --btn-border: color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
 
   position: relative;
-  isolation: isolate;
   appearance: none;
   border: 1px solid var(--btn-border);
-  background: var(--btn-bg);
+  /*
+   * Cast iron as a layered background directly on the button (not a
+   * `::before` pseudo). The earlier pseudo approach broke text
+   * rendering on buttons that contained a bare text node instead of
+   * a wrapping <span>: per the CSS painting-order spec, inline text
+   * paints *before* positioned descendants with z-index:0, so the
+   * cast-iron pseudo silently covered the labels of small action
+   * pills. Putting the texture in the `background` shorthand instead
+   * keeps it below the text content unconditionally.
+   *
+   * The texture is pre-baked at ~50% brightness on disk
+   * (`memory-bank/cast_iron.png` → `web/public/textures/cast-iron.jpg`)
+   * so no CSS filter is needed and the inheritance is robust.
+   *
+   * `background-attachment: fixed` anchors the texture to the viewport
+   * so every button samples a different unique "window" — no visible
+   * tile seams without per-button JS — and `cover` scales the source
+   * up to viewport dimensions so the seam is always off-screen.
+   */
+  background:
+    url("/textures/cast-iron.jpg") center / cover no-repeat fixed,
+    linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
   color: var(--btn-color);
   font-family: var(--font-pixel);
   font-size: 0.95rem;
@@ -650,12 +669,11 @@ button,
   padding: 0.55rem 0.9rem;
   cursor: pointer;
   border-radius: 0;
-  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+  transition: border-color 160ms ease, color 160ms ease, filter 160ms ease;
   /*
-   * Soft beveled edge — bright candle highlight at top-left fades
-   * into shadow at bottom-right, layered over a wider outer drop so
-   * the chip feels lifted off the panel rather than stamped flat.
-   * The blurred inset shadows replace the hard 1px lines.
+   * Soft beveled edge — bright candle highlight at top fades into
+   * shadow at bottom, layered over a wider outer drop so the chip
+   * feels lifted off the panel rather than stamped flat.
    */
   box-shadow:
     inset 0 1px 2px rgba(255, 220, 160, 0.18),
@@ -665,54 +683,19 @@ button,
     0 6px 14px -8px rgba(0, 0, 0, 0.85);
   -webkit-font-smoothing: none;
   font-smooth: never;
-  /* Soft outer text shadow keeps labels legible even where the cast
-   * iron texture has lighter rust highlights — the dark halo
-   * separates the label from the speckled background. */
-  text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.85),
-    0 0 4px rgba(0, 0, 0, 0.55);
-}
-button::before,
-.btn::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
   /*
-   * AI-generated cast iron photograph (see `memory-bank/cast_iron.png`),
-   * already pre-darkened to ~25% brightness on disk so we never have to
-   * rely on a CSS filter (which would also dim text rendered above it).
-   *
-   * Two tricks make the tile invisible without any visible repeat:
-   *   - `background-attachment: fixed` anchors the image to the viewport,
-   *     so each individual button shows a different "window" into the
-   *     same dark sheet (free per-button randomness, no JS).
-   *   - `background-size: cover` scales the texture to at least viewport
-   *     dimensions, so its edges never appear inside any button.
+   * Hard 1px drop shadow only — a blurred halo on small pixel labels
+   * smears them into illegibility (see common-actions pills at
+   * 0.78rem).
    */
-  background-image: url("/textures/cast-iron.jpg");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  opacity: 1;
-  transition: opacity 160ms ease, filter 160ms ease;
-}
-button > *,
-.btn > * {
-  position: relative;
-  z-index: 1;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
 }
 
 button:hover:not(:disabled),
 .btn:hover:not(:disabled) {
   --btn-border: var(--gold-bright);
   color: var(--gold-bright);
-}
-button:hover:not(:disabled)::before,
-.btn:hover:not(:disabled)::before {
-  opacity: 1.0;
+  filter: brightness(1.12);
 }
 
 button:disabled,
@@ -721,16 +704,26 @@ button:disabled,
   cursor: not-allowed;
 }
 
+/*
+ * `.ghost` — transparent (no cast iron, no fill) chips for "secondary"
+ * actions that should recede visually (e.g. inspector close, chaos +/−
+ * steppers). Resets the layered background to none + drops the
+ * shadow / shadow halo so the chip reads as gold-outline-only.
+ */
 button.ghost {
-  --btn-bg: transparent;
   --btn-border: color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+  background: transparent;
+  text-shadow: none;
+  box-shadow: none;
 }
 
 button.link {
-  --btn-bg: transparent;
   --btn-border: transparent;
+  background: transparent;
+  border-color: transparent;
   padding: 0.2rem 0.4rem;
   box-shadow: none;
+  text-shadow: none;
   font-size: 0.8rem;
 }
 
