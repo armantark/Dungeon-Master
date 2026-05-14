@@ -1,6 +1,6 @@
 [project]
 name = "dungeon-master"
-version = "0.1.0"
+version = "0.1.1"
 description = "A solo AI game master with a deterministic oracle backend and a bespoke Svelte UI."
 readme = "README.md"
 requires-python = ">=3.12"

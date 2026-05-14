@@ -2,6 +2,10 @@
 
 A personal solo TTRPG harness where Python owns deterministic mechanics and a LiteLLM-routed model is restricted to narration. The frontend is a bespoke Svelte 5 grimoire UI; the backend is a FastAPI server.
 
+[![Latest desktop release](https://img.shields.io/github/v/release/armantark/Dungeon-Master?include_prereleases&label=desktop%20release)](https://github.com/armantark/Dungeon-Master/releases/latest)
+[![macOS, Windows, Linux builds](https://img.shields.io/badge/downloads-macOS%20%7C%20Windows%20%7C%20Linux-b08a36)](https://github.com/armantark/Dungeon-Master/releases/latest)
+[![Release notes](https://img.shields.io/badge/release%20notes-GitHub-6f5f2f)](https://github.com/armantark/Dungeon-Master/releases)
+
 ## Screenshots
 
 These captures use the isolated fixture save library (`dungeon-master-fixtures`) so the UI can be shown without mutating a live campaign.
