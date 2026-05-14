@@ -113,15 +113,18 @@ function ensureStylesInjected(): void {
       background-size: cover;
       background-position: center;
       /*
-       * Sharp 1px stepped bevel — the angle MUST read, otherwise the
-       * thumb looks like a flat rectangle. The highlight alpha is
-       * moderate (warm but not chrome-glare bright), and the shadow
-       * side is deep so the contrast direction is unambiguous.
+       * Two-tone stepped bevel — bright inner pixel + softer outer
+       * pixel on the highlight side, deep+softer on the shadow side,
+       * so the chamfer reads as a real angle rather than a flat
+       * stripe. Outer black ring keeps the thumb crisply separated
+       * from the track.
        */
       box-shadow:
         inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 1px 1px 0 1px rgba(255, 230, 170, 0.42),
-        inset -1px -1px 0 1px rgba(20, 12, 6, 0.85);
+        inset 1px 1px 0 1px rgba(255, 235, 180, 0.58),
+        inset 2px 2px 0 2px rgba(255, 235, 180, 0.22),
+        inset -1px -1px 0 1px rgba(20, 12, 6, 0.92),
+        inset -2px -2px 0 2px rgba(20, 12, 6, 0.45);
       cursor: grab;
       transition: filter 120ms ease;
     }

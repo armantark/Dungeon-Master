@@ -666,17 +666,20 @@ button,
   border-radius: 0;
   transition: border-color 160ms ease, color 160ms ease, filter 160ms ease;
   /*
-   * Sharp stepped bevel — visible angle, dialled-down highlight alpha.
-   * 1px steps (no blur) so the edge reads on small chips at 0.78rem;
-   * warm-gold candle highlight on top/left, near-black shadow on
-   * bottom/right; an outer drop adds depth off the panel without
-   * floating the button.
+   * Sharp stepped bevel. The stepped 1px+2px stack gives a two-tone
+   * highlight ramp (brighter inner pixel, softer outer pixel) on the
+   * top/left and a matching shadow ramp on bottom/right so the angle
+   * reads as a deeper chamfer rather than a flat line. Alpha values
+   * are tuned to be visible at 0.78rem common-action pill size but
+   * not chrome-glare at normal button sizes.
    */
   box-shadow:
-    inset 1px 1px 0 rgba(255, 220, 160, 0.32),
-    inset -1px -1px 0 rgba(0, 0, 0, 0.72),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 4px 10px -6px rgba(0, 0, 0, 0.85);
+    inset 1px 1px 0 rgba(255, 225, 165, 0.48),
+    inset 2px 2px 0 rgba(255, 225, 165, 0.20),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.85),
+    inset -2px -2px 0 rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 5px 12px -6px rgba(0, 0, 0, 0.9);
   -webkit-font-smoothing: none;
   font-smooth: never;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
