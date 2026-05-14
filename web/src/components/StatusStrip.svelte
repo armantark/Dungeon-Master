@@ -173,7 +173,7 @@ Anything more would compete with the conversation below.
    */
   .scene {
     background:
-      url("/textures/cast-iron.jpg") center / cover no-repeat fixed,
+      url("/textures/cast-iron.jpg") center / cover no-repeat,
       linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
   }
   .badge {

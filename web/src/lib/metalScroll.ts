@@ -113,15 +113,14 @@ function ensureStylesInjected(): void {
       background-size: cover;
       background-position: center;
       /*
-       * Sharp 1px bevel edges (the angle has to be visible — this is
-       * what makes the thumb read as a raised tile rather than a flat
-       * rectangle), but the warm-highlight alpha is dialled down
-       * substantially so the light reads as candle on tarnished
-       * brass instead of bright chrome.
+       * Sharp 1px stepped bevel — the angle MUST read, otherwise the
+       * thumb looks like a flat rectangle. The highlight alpha is
+       * moderate (warm but not chrome-glare bright), and the shadow
+       * side is deep so the contrast direction is unambiguous.
        */
       box-shadow:
         inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 1px 1px 0 1px rgba(255, 230, 170, 0.22),
+        inset 1px 1px 0 1px rgba(255, 230, 170, 0.42),
         inset -1px -1px 0 1px rgba(20, 12, 6, 0.85);
       cursor: grab;
       transition: filter 120ms ease;
@@ -129,12 +128,20 @@ function ensureStylesInjected(): void {
     .metal-scroll-thumb:hover {
       filter: brightness(1.10) saturate(1.10);
     }
+    /*
+     * Dragging used to invert the bevel (swap highlight + shadow
+     * sides), which made the thumb visibly "shift" when grabbed —
+     * jarring rather than tactile. Keep the same bevel direction
+     * during drag and only deepen the outer black ring + dim the
+     * thumb slightly so the cursor change still has visual support.
+     */
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
+      filter: brightness(0.92) saturate(1.05);
       box-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.90),
-        inset 1px 1px 0 1px rgba(20, 12, 6, 0.85),
-        inset -1px -1px 0 1px rgba(255, 220, 150, 0.18);
+        inset 0 0 0 1px rgba(0, 0, 0, 0.95),
+        inset 1px 1px 0 1px rgba(255, 230, 170, 0.42),
+        inset -1px -1px 0 1px rgba(20, 12, 6, 0.95);
     }
   `;
   document.head.appendChild(style);
