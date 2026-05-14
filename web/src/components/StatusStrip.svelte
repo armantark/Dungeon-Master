@@ -113,11 +113,9 @@ Anything more would compete with the conversation below.
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background-image: url("/textures/draped-cloth.jpg") !important;
-    background-size: 800px auto !important;
-    background-repeat: repeat !important;
-    mix-blend-mode: normal !important;
-    opacity: 0.95 !important;
+    background-image: url("/textures/black-cloth-draped.jpg");
+    background-size: 800px auto;
+    background-repeat: repeat;
   }
   .strip > * {
     position: relative;

@@ -130,6 +130,35 @@ blend modes so they read as substrate without competing with content.
     knight-death-engraving.jpg
   ```
 
+### 6. `black-cloth-draped.jpg`
+
+- **Purpose.** Texture overlay for the top header strip and reusable `.cloth` class, replacing flat gray gradients and an earlier broken texture attempt.
+- **Source.** User-provided URL: `https://ae-pic-a1.aliexpress-media.com/kf/Sa2484f77f509430e9bd260dac60c377fB.jpg_960x960q75.jpg_.avif`
+- **Modifications.** ImageMagick was used to compress the tonal range so the stark white cloth folds don't blow out the dark UI header, rendering it as a dark gray/black draped material.
+  ```sh
+  magick cloth_source.avif -colorspace Gray -level 0%,85% -fill "#11100f" -tint 100 black-cloth-draped.jpg
+  ```
+
+### 7. `cast-iron-matte.jpg`
+
+- **Purpose.** Background texture for interactive buttons, replacing an earlier pseudo-element/blend-mode attempt with a real material image.
+- **Source.** Wikimedia Commons ([Cast_Iron_Texture_Map_To.jpg](https://upload.wikimedia.org/wikipedia/commons/f/fc/Cast_Iron_Texture_Map_To.jpg)).
+- **License.** Public Domain (CC0 equivalent / No known copyright restrictions).
+- **Modifications.** Grayscale conversion, resized to 512x512, heavily darkened and tinted to match the near-black iron chassis while retaining pitted highlights.
+  ```sh
+  magick cast_iron_source.jpg -colorspace Gray -resize 512x512 -level 0%,100%,0.2 -fill "#1a1612" -tint 100 cast-iron-matte.jpg
+  ```
+
+### 8. `bright-gold-metal.jpg`
+
+- **Purpose.** Custom JS scrollbar thumb texture.
+- **Source.** Wikimedia Commons ([Clementine_-_Texture_Brushed_Metal_by_meiastar.jpg](https://upload.wikimedia.org/wikipedia/commons/a/a5/Clementine_-_Texture_Brushed_Metal_by_meiastar.jpg)).
+- **License.** CC BY 2.0.
+- **Modifications.** Resized to 512x512, brightened, and tinted gold.
+  ```sh
+  magick brushed_metal_source.jpg -resize 512x512 -modulate 110,60,95 -fill "#d4af37" -tint 80 bright-gold-metal.jpg
+  ```
+
 ## Tone fit
 
 Why Dürer instead of an illuminated-manuscript scan: the campaign tone

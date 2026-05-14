@@ -329,6 +329,11 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     opacity: 0.85;
   }
 
+  /* Make cards more readable by suppressing the global parchment texture opacity slightly. */
+  :global(.card.parchment::before) {
+    opacity: 0.25 !important;
+  }
+
   .card__head {
     display: flex;
     align-items: center;
@@ -337,34 +342,36 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
   .card__kicker {
     font-family: var(--font-pixel);
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: color-mix(in oklab, var(--rust-blood) 90%, var(--ink-black));
     font-weight: bold;
   }
   .card__active-pip {
-    font-size: 0.62rem;
+    font-size: 0.72rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: color-mix(in oklab, var(--ink-bruise) 60%, var(--ink-black));
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 70%, transparent);
     padding: 0.05rem 0.35rem;
     background: color-mix(in oklab, var(--gold-bright) 25%, transparent);
+    font-weight: bold;
   }
 
   .card__name {
     margin: 0.1rem 0 0;
-    font-size: 1.65rem;
+    font-size: 1.85rem;
     line-height: 1.15;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--ink-black);
   }
   .card__epithet {
     margin: 0;
     font-style: italic;
-    font-size: 1.1rem;
+    font-size: 1.25rem;
     line-height: 1.35;
+    font-weight: 600;
     color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
   }
   /*
@@ -383,16 +390,17 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
   .card__seed-preset {
     font-family: var(--font-display);
-    font-size: 1.05rem;
-    font-weight: 600;
+    font-size: 1.25rem;
+    font-weight: 700;
     color: var(--ink-black);
   }
   .card__seed-danger {
     padding: 0.05rem 0.4rem;
     border: 1px solid currentColor;
-    font-size: 0.62rem;
+    font-size: 0.72rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+    font-weight: bold;
   }
   .card__seed-danger--story {
     color: color-mix(in oklab, var(--gold-bright) 60%, var(--ink-black));
@@ -408,10 +416,10 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   }
   .card__line {
     margin: 0.5rem 0 0;
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     line-height: 1.5;
-    color: color-mix(in oklab, var(--ink-bruise) 85%, var(--ink-black));
-    font-weight: 500;
+    color: var(--ink-black);
+    font-weight: 600;
     /*
      * Cap the identifying line at three lines so a wide-shelf grid stays
      * even — backstory blurbs vary wildly in length and an uncapped card

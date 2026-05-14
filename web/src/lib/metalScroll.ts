@@ -80,7 +80,7 @@ function ensureStylesInjected(): void {
     }
     .metal-scroll-track {
       position: absolute;
-      z-index: 20;
+      z-index: 10;
       background:
         linear-gradient(90deg, rgba(0, 0, 0, 0.72), rgba(20, 17, 13, 0.55), rgba(0, 0, 0, 0.72)),
         #0a0806;
@@ -93,7 +93,7 @@ function ensureStylesInjected(): void {
       transition: opacity 200ms ease;
     }
     .metal-scroll-track.is-visible {
-      opacity: 0.75;
+      opacity: 0.85;
     }
     .metal-scroll-track.is-hovered,
     .metal-scroll-track.is-active {
@@ -101,27 +101,27 @@ function ensureStylesInjected(): void {
     }
     .metal-scroll-thumb {
       position: absolute;
-      left: 0;
-      right: 0;
-      background-image: url("/textures/gold-metal.jpg");
+      left: 1px;
+      right: 1px;
+      background-image: url("/textures/bright-gold-metal.jpg");
       background-size: cover;
       background-position: center;
       box-shadow:
         inset 0 0 0 1px rgba(0, 0, 0, 0.85),
-        inset 1px 1px 0 1px rgba(255, 230, 170, 0.55),
-        inset -1px -1px 0 1px rgba(40, 24, 12, 0.85);
+        inset 2px 2px 0 1px rgba(255, 240, 190, 0.65),
+        inset -2px -2px 0 1px rgba(40, 24, 12, 0.95);
       cursor: grab;
       transition: filter 120ms ease;
     }
     .metal-scroll-thumb:hover {
-      filter: brightness(1.18) saturate(1.1);
+      filter: brightness(1.25) saturate(1.2);
     }
     .metal-scroll-thumb.is-dragging {
       cursor: grabbing;
       box-shadow:
         inset 0 0 0 1px rgba(0, 0, 0, 0.90),
-        inset 1px 1px 0 1px rgba(40, 24, 12, 0.85),
-        inset -1px -1px 0 1px rgba(255, 220, 150, 0.40);
+        inset 2px 2px 0 1px rgba(40, 24, 12, 0.95),
+        inset -2px -2px 0 1px rgba(255, 230, 170, 0.50);
     }
   `;
   document.head.appendChild(style);
@@ -278,8 +278,8 @@ export function metalScroll(
 ): { destroy(): void; update(o: MetalScrollOptions): void } {
   ensureStylesInjected();
 
-  const width = options.width ?? 12;
-  const minThumb = options.minThumb ?? 28;
+  const width = options.width ?? 18;
+  const minThumb = options.minThumb ?? 36;
 
   viewport.classList.add("metal-scroll-host");
 
@@ -291,10 +291,6 @@ export function metalScroll(
   thumb.className = "metal-scroll-thumb";
   track.appendChild(thumb);
   positioned.appendChild(track);
-
-  // Pad the viewport on the right so content doesn't flow under the overlay track
-  const currentPadding = window.getComputedStyle(viewport).paddingRight;
-  viewport.style.paddingRight = `calc(${currentPadding} + ${width}px)`;
 
   const state: MetalScrollState = {
     viewport,

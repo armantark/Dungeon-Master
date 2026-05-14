@@ -562,6 +562,26 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
     inset 0 0 80px rgba(0, 0, 0, 0.55);
   color: var(--paper-bone);
 }
+.cloth {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, #161310 0%, #0a0807 100%);
+  color: var(--paper-bone);
+}
+.cloth::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/black-cloth-draped.jpg");
+  background-size: 800px auto;
+  background-repeat: repeat;
+}
+.cloth > * {
+  position: relative;
+  z-index: 1;
+}
 .iron::after {
   content: "";
   position: absolute;
@@ -645,14 +665,11 @@ button::before,
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url("/textures/concrete-wall.png");
-  background-size: 200px 200px;
+  background-image: url("/textures/cast-iron-matte.jpg");
+  background-size: 256px 256px;
   background-repeat: repeat;
-  /* Screen blend with brightness boost to make the dark texture
-   * visible as highlight pitting on the black button surface. */
-  mix-blend-mode: screen;
-  filter: brightness(2);
-  opacity: 0.6;
+  /* Blend normal, the texture is already appropriately dark */
+  opacity: 0.9;
   transition: opacity 160ms ease;
 }
 button > *,
@@ -668,7 +685,7 @@ button:hover:not(:disabled),
 }
 button:hover:not(:disabled)::before,
 .btn:hover:not(:disabled)::before {
-  opacity: 0.9;
+  opacity: 1.0;
 }
 
 button:disabled,
