@@ -142,6 +142,7 @@ on the trigger and `role="menu"` on the panel for screen readers.
 <style>
   .system-menu {
     position: relative;
+    z-index: 100;
   }
   .trigger {
     display: inline-flex;
@@ -179,7 +180,7 @@ on the trigger and `role="menu"` on the panel for screen readers.
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
-    z-index: 30;
+    z-index: 100;
     min-width: 240px;
     padding: 0.45rem 0.4rem;
     display: flex;

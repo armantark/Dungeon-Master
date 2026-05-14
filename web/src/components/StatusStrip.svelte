@@ -97,17 +97,10 @@ Anything more would compete with the conversation below.
     border-left: 0;
     border-right: 0;
     border-top: 0;
+    position: relative;
+    z-index: 900; /* force strip to sit above everything else */
     background:
-      /* Vertical draped folds — uneven darker bands every ~120px */
-      repeating-linear-gradient(
-        90deg,
-        transparent 0,
-        rgba(0, 0, 0, 0.18) 60px,
-        transparent 120px,
-        rgba(0, 0, 0, 0.10) 180px,
-        transparent 240px
-      ),
-      /* Bottom-to-top falloff: top edge lighter (catches light), bottom darker */
+      /* Top bar gradient */
       linear-gradient(
         180deg,
         #161310 0%,
@@ -115,10 +108,20 @@ Anything more would compete with the conversation below.
       );
   }
   .strip::after {
-    /* Override .iron::after with black-felt instead of dark-leather. */
-    background-image: url("/textures/black-felt.png") !important;
-    background-size: 200px 200px !important;
-    opacity: 0.85 !important;
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: url("/textures/draped-cloth.jpg") !important;
+    background-size: 800px auto !important;
+    background-repeat: repeat !important;
+    mix-blend-mode: normal !important;
+    opacity: 0.95 !important;
+  }
+  .strip > * {
+    position: relative;
+    z-index: 1;
   }
   .brand {
     display: flex;

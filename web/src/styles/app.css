@@ -556,14 +556,6 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
       var(--ink-black) 100%
     );
   border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
-  /*
-   * Three-layer shadow for "tasteful shading" on near-black leather:
-   *   1. Outer drop shadow (panel sits above page).
-   *   2. Hairline edge-light at top (catches imaginary candle).
-   *   3. Wide inset bloom (centre stays darkest, edges fall to deeper black).
-   * The inset bloom gives the panel a subtle "tooled" look — like
-   * pressed leather where the centre is recessed slightly.
-   */
   box-shadow:
     var(--shadow-deep),
     inset 0 1px 0 rgba(255, 220, 150, 0.06),
@@ -576,16 +568,20 @@ em { color: color-mix(in oklab, var(--paper-bone) 90%, var(--gold-bright)); }
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  /*
-   * `dark-leather.png` is an inherently dark-gray/black texture with
-   * alpha transparency. It stamps cleanly onto the near-black iron
-   * gradient without needing filters, yielding black leather with
-   * visible pore highlights.
-   */
   background-image: url("/textures/dark-leather.png");
   background-size: 300px 300px;
   background-repeat: repeat;
-  opacity: 1;
+  /*
+   * The texture is a highly transparent dark-gray PNG. On a
+   * near-black background, plain alpha blending makes it invisible.
+   * `screen` blend mode forces the texture's faint gray pixels to
+   * lighten the black background slightly, revealing the pore pattern.
+   * We apply a `brightness` boost so the pores actually register
+   * visibly as specular highlights on the black leather.
+   */
+  mix-blend-mode: screen;
+  filter: brightness(2.5) contrast(1.2);
+  opacity: 0.6;
 }
 .iron > * {
   position: relative;
@@ -635,9 +631,10 @@ button,
   border-radius: 0;
   transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
   box-shadow:
-    inset 0 1px 0 rgba(255, 220, 140, 0.05),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-    0 6px 14px -8px rgba(0, 0, 0, 0.65);
+    /* Raised bevel edge for cast-iron buttons */
+    inset 1px 1px 0 rgba(255, 255, 255, 0.05),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.8),
+    0 4px 8px -4px rgba(0, 0, 0, 0.8);
   -webkit-font-smoothing: none;
   font-smooth: never;
 }
@@ -651,6 +648,10 @@ button::before,
   background-image: url("/textures/concrete-wall.png");
   background-size: 200px 200px;
   background-repeat: repeat;
+  /* Screen blend with brightness boost to make the dark texture
+   * visible as highlight pitting on the black button surface. */
+  mix-blend-mode: screen;
+  filter: brightness(2);
   opacity: 0.6;
   transition: opacity 160ms ease;
 }
@@ -667,7 +668,7 @@ button:hover:not(:disabled),
 }
 button:hover:not(:disabled)::before,
 .btn:hover:not(:disabled)::before {
-  opacity: 1;
+  opacity: 0.9;
 }
 
 button:disabled,

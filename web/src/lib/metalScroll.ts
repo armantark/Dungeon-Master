@@ -103,25 +103,9 @@ function ensureStylesInjected(): void {
       position: absolute;
       left: 0;
       right: 0;
-      background:
-        repeating-linear-gradient(
-          0deg,
-          transparent 0,
-          transparent 4px,
-          rgba(0, 0, 0, 0.45) 4px,
-          rgba(0, 0, 0, 0.45) 5px,
-          rgba(255, 220, 150, 0.20) 5px,
-          rgba(255, 220, 150, 0.20) 6px,
-          transparent 6px,
-          transparent 10px
-        ),
-        linear-gradient(
-          90deg,
-          #c39a4a 0%,
-          #d9b15a 40%,
-          #a8853f 60%,
-          #6e5828 100%
-        );
+      background-image: url("/textures/gold-metal.jpg");
+      background-size: cover;
+      background-position: center;
       box-shadow:
         inset 0 0 0 1px rgba(0, 0, 0, 0.85),
         inset 1px 1px 0 1px rgba(255, 230, 170, 0.55),
@@ -308,6 +292,10 @@ export function metalScroll(
   track.appendChild(thumb);
   positioned.appendChild(track);
 
+  // Pad the viewport on the right so content doesn't flow under the overlay track
+  const currentPadding = window.getComputedStyle(viewport).paddingRight;
+  viewport.style.paddingRight = `calc(${currentPadding} + ${width}px)`;
+
   const state: MetalScrollState = {
     viewport,
     track,
@@ -321,11 +309,17 @@ export function metalScroll(
     dragStartScrollTop: 0,
   };
 
+  // Add right padding to viewport to prevent content from flowing under the scrollbar
+  const originalPadding = viewport.style.paddingRight;
+  const computedPadding = window.getComputedStyle(viewport).paddingRight;
+  viewport.style.paddingRight = `calc(${computedPadding} + ${width}px)`;
+
   const detach = attach(state);
 
   return {
     destroy(): void {
       detach();
+      viewport.style.paddingRight = originalPadding;
       viewport.classList.remove("metal-scroll-host");
       track.remove();
     },
