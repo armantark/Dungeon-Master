@@ -316,6 +316,15 @@ class LLMProfiles:
             reasoning_exclude=True,
         ),
     )
+    inventory_updater: TaskProfile = field(
+        default_factory=lambda: TaskProfile(
+            temperature=0.05,
+            max_tokens=1800,
+            reasoning_effort="minimal",
+            reasoning_max_tokens=96,
+            reasoning_exclude=True,
+        ),
+    )
     recruitment_resolver: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.0,

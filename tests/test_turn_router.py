@@ -13,6 +13,8 @@ from dungeon_master.models import (
 )
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from dungeon_master.turn_router import (
+    SAVE_MECHANICS_REVIEW_SYSTEM_PROMPT,
+    TURN_ROUTER_SYSTEM_PROMPT,
     PlannedTurnOp,
     PlannedTurnOpKind,
     RoutedTurn,
@@ -109,6 +111,33 @@ class CombatReviewRouterCompletion:
         )  # type: ignore[return-value]
 
 
+class SaveReviewRouterCompletion:
+    def __init__(self, *, review_allows: bool) -> None:
+        self.review_allows = review_allows
+        self.requests: list[CompletionRequest] = []
+
+    def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.requests.append(request)
+
+        def _stream(content: str) -> list[dict[str, object]]:
+            return [{"choices": [{"delta": {"content": content}}]}]
+
+        if request.trace_route == "turn_router.save_review":
+            return _stream(
+                '{"allow_save_mechanics":'
+                f"{str(self.review_allows).lower()},"
+                '"reason":"structured save review verdict"}',
+            )  # type: ignore[return-value]
+        return _stream(
+            '{"route":"save","text":"I keep the persona going.",'
+            '"ops":[{"kind":"save","text":"I keep the persona going.",'
+            '"likelihood":null,"ability":"WIL","target_name":null,'
+            '"stance":null,"rest_kind":null,"item_name":null,'
+            '"equipped":null,"harm_amount":null,"harm_source":null,'
+            '"armor_applies":null,"in_combat":null}]}',
+        )  # type: ignore[return-value]
+
+
 def test_preserves_explicit_likelihood_hint_for_classifier() -> None:
     router = TurnRouter(
         classifier=lambda text, likelihood: RoutedTurn(
@@ -158,6 +187,20 @@ def test_unconfigured_router_falls_back_to_player_action() -> None:
 
     assert routed.route == TurnRoute.PLAYER_ACTION
     assert routed.likelihood is None
+
+
+def test_router_prompt_avoids_saves_when_context_already_grants_opening() -> None:
+    save_review_prompt = " ".join(SAVE_MECHANICS_REVIEW_SYSTEM_PROMPT.split())
+
+    assert "clear opening, access, or permission" in TURN_ROUTER_SYSTEM_PROMPT
+    assert "remaining danger, pressure, resistance, or meaningful uncertainty" in (
+        TURN_ROUTER_SYSTEM_PROMPT
+    )
+    assert "making someone like/dislike the player is usually `narrate`" in (
+        TURN_ROUTER_SYSTEM_PROMPT
+    )
+    assert "ordinary social exchange lands" in save_review_prompt
+    assert "exposure with durable consequences" in TURN_ROUTER_SYSTEM_PROMPT
 
 
 def test_model_can_emit_coordinated_attack_plan() -> None:
@@ -411,6 +454,85 @@ def test_structured_combat_review_can_allow_explicit_attack_plan() -> None:
         "turn_router.plan",
         "turn_router.combat_review",
     ]
+
+
+def test_model_save_plan_requires_structured_save_review_approval() -> None:
+    completion = SaveReviewRouterCompletion(review_allows=False)
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    routed = router.route("I keep the persona going.")
+
+    assert routed.route == TurnRoute.PLAYER_ACTION
+    assert routed.plan is not None
+    assert [op.kind for op in routed.plan.ops] == [PlannedTurnOpKind.NARRATE]
+    assert [request.trace_route for request in completion.requests] == [
+        "turn_router.plan",
+        "turn_router.save_review",
+    ]
+
+
+def test_structured_save_review_can_allow_risky_save_plan() -> None:
+    completion = SaveReviewRouterCompletion(review_allows=True)
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    routed = router.route("I keep my nerve under pressure.")
+
+    assert routed.route == TurnRoute.SAVE
+    assert routed.ability == CairnAbility.WIL
+    assert [request.trace_route for request in completion.requests] == [
+        "turn_router.plan",
+        "turn_router.save_review",
+    ]
+
+
+def test_save_review_payload_includes_memory_context() -> None:
+    captured: list[str] = []
+
+    class RecordingSaveReviewCompletion:
+        def __call__(self, request: CompletionRequest) -> ModelResponse:
+            def _stream(content: str) -> list[dict[str, object]]:
+                return [{"choices": [{"delta": {"content": content}}]}]
+
+            if request.trace_route == "turn_router.save_review":
+                payload = request.messages[-1]["content"]
+                assert isinstance(payload, str)
+                captured.append(payload)
+                return _stream(
+                    '{"allow_save_mechanics":false,"reason":"ordinary social beat"}',
+                )  # type: ignore[return-value]
+            return _stream(
+                '{"route":"save","text":"I keep the bit going.",'
+                '"ops":[{"kind":"save","text":"I keep the bit going.",'
+                '"likelihood":null,"ability":"WIL","target_name":null,'
+                '"stance":null,"rest_kind":null,"item_name":null,'
+                '"npc_name":null,"actor_name":null,"supporting_actor_names":[],'
+                '"source_actor_name":null,"target_actor_name":null,"equipped":null,'
+                '"harm_amount":null,"harm_source":null,"armor_applies":null,'
+                '"in_combat":null,"advantage_payoff":null}]}',
+            )  # type: ignore[return-value]
+
+    router = TurnRouter(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=RecordingSaveReviewCompletion(),
+    )
+
+    router.plan(
+        "I keep the bit going.",
+        memory_context="Recent scene: Chloe thinks the persona is a joke.",
+    )
+
+    assert len(captured) == 1
+    payload = json.loads(captured[0])
+    assert payload["bounded_memory_context"] == (
+        "Recent scene: Chloe thinks the persona is a joke."
+    )
+    assert payload["proposed_plan"]["ops"][0]["ability"] == "WIL"
 
 
 def test_combat_review_payload_includes_canonical_active_encounter_hint() -> None:

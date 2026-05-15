@@ -165,6 +165,11 @@ class GeneratedCombatMechanicsReview(StrictModel):
     reason: str = Field(min_length=1)
 
 
+class GeneratedSaveMechanicsReview(StrictModel):
+    allow_save_mechanics: bool
+    reason: str = Field(min_length=1)
+
+
 RouterClassifier = Callable[[str, Likelihood | None], RoutedTurn | TurnPlan]
 
 
@@ -320,6 +325,17 @@ Rules:
   `transfer_item`, `recruit_npc`, `drop_item`, or `narrate`, route must be
   `player_action`.
 - Use `save` only when the player is attempting one concrete risky action right now.
+- Do not use `save` merely because an action could go better or worse. If
+  canonical state, recent narration, or the immediate scene already gives the
+  player a clear opening, access, or permission for the attempted beat, prefer
+  `narrate` and let the narrator play out the interaction. A save is for
+  remaining danger, pressure, resistance, or meaningful uncertainty after those
+  established advantages are accounted for.
+- Social interaction, embarrassment, awkwardness, losing face, failing to keep
+  up a persona, or making someone like/dislike the player is usually `narrate`.
+  Use `save` for social scenes only when the fiction has concrete coercion,
+  danger, pursuit, binding commitment, exposure with durable consequences, or
+  other stakes that should be resolved by the rules chassis rather than by prose.
 - If kind is `save`, choose exactly one ability: `STR`, `DEX`, or `WIL`.
 - If kind is `begin_encounter`, include `target_name` naming the hostile
   foe/group to seed into tracked combat. Do not invent a blow, weapon use, or
@@ -475,6 +491,33 @@ Decision rule:
   player intent to the proposed mechanical plan.
 """
 
+SAVE_MECHANICS_REVIEW_SYSTEM_PROMPT = """You are a strict validator for a solo
+TTRPG backend's proposed save mechanics.
+
+Return only valid JSON with this shape:
+{
+  "allow_save_mechanics": true,
+  "reason": "brief explanation"
+}
+
+Decision rule:
+- Return true only when the original player turn, current scene context, and
+  proposed plan describe a concrete risky action with meaningful stakes that
+  should be resolved by a Cairn-style STR, DEX, or WIL save.
+- Return false when the proposed save is only deciding how well a conversation,
+  joke, flirtation, performance, persona, apology, etiquette beat, or ordinary
+  social exchange lands. A bad reaction, embarrassment, lost rapport, or changed
+  tone can be narrated without rolling.
+- Return false when recent established fiction already gives the player a clear
+  opening, access, cooperation, or permission for the attempted beat and the
+  proposed save only tests whether that opening remains true.
+- Return true for social scenes only when the fiction adds concrete coercion,
+  danger, pursuit, binding commitment, exposure with durable consequences, or
+  other immediate pressure that belongs in the rules chassis.
+- Judge meaning, not wording. Do not use keyword matching; compare the original
+  player intent and supplied context to the proposed save.
+"""
+
 
 class TurnRouter:
     def __init__(
@@ -567,6 +610,12 @@ class TurnRouter:
                     combat_encounter_hint=combat_encounter_hint,
                     cancel_token=cancel_token,
                 )
+                plan = self._review_save_mechanics_plan(
+                    plan,
+                    normalized_text=normalized,
+                    memory_context=memory_context,
+                    cancel_token=cancel_token,
+                )
                 self._log_plan_decision(plan, source="model")
             except (
                 *LITELLM_RETRYABLE_ERRORS,
@@ -593,6 +642,12 @@ class TurnRouter:
                 repaired,
                 normalized_text=normalized,
                 combat_encounter_hint=combat_encounter_hint,
+                cancel_token=cancel_token,
+            )
+            repaired = self._review_save_mechanics_plan(
+                repaired,
+                normalized_text=normalized,
+                memory_context=memory_context,
                 cancel_token=cancel_token,
             )
             self._log_plan_decision(repaired, source="repair")
@@ -754,6 +809,97 @@ class TurnRouter:
             completed = complete_text(request, self._completion)
             payload_json = extract_json_object(completed.content)
             return GeneratedCombatMechanicsReview.model_validate_json(payload_json)
+        except (
+            *LITELLM_RETRYABLE_ERRORS,
+            ValidationError,
+            json.JSONDecodeError,
+            EmptyRouteContentError,
+            ValueError,
+        ):
+            return None
+
+    def _review_save_mechanics_plan(
+        self,
+        plan: TurnPlan,
+        *,
+        normalized_text: str,
+        memory_context: str | None,
+        cancel_token: CancellationToken | None,
+    ) -> TurnPlan:
+        if not self._requires_save_mechanics_review(plan):
+            return plan
+        review = self._generate_save_mechanics_review(
+            plan,
+            normalized_text=normalized_text,
+            memory_context=memory_context,
+            cancel_token=cancel_token,
+        )
+        if review is not None and review.allow_save_mechanics:
+            return plan
+        return TurnPlan(
+            route=TurnRoute.PLAYER_ACTION,
+            text=plan.text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=plan.text),),
+            time_advance=plan.time_advance,
+            survival_actions=plan.survival_actions,
+        )
+
+    def _requires_save_mechanics_review(self, plan: TurnPlan) -> bool:
+        return any(op.kind is PlannedTurnOpKind.SAVE for op in plan.ops)
+
+    def _generate_save_mechanics_review(
+        self,
+        plan: TurnPlan,
+        *,
+        normalized_text: str,
+        memory_context: str | None,
+        cancel_token: CancellationToken | None,
+    ) -> GeneratedSaveMechanicsReview | None:
+        if self._classifier is not None or not self._config.is_usable():
+            return None
+        profile = self._config.profiles.turn_router
+        payload = {
+            "original_player_turn": normalized_text,
+            "bounded_memory_context": memory_context or "(none)",
+            "proposed_plan": {
+                "route": plan.route.value,
+                "text": plan.text,
+                "ops": [
+                    {
+                        "kind": op.kind.value,
+                        "text": op.text,
+                        "ability": None if op.ability is None else op.ability.value,
+                        "target_name": op.target_name,
+                        "actor_name": op.actor_name,
+                    }
+                    for op in plan.ops
+                ],
+            },
+        }
+        request = CompletionRequest(
+            model=self._config.model,
+            messages=[
+                {"role": "system", "content": SAVE_MECHANICS_REVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            temperature=0.0,
+            max_tokens=profile.max_tokens,
+            timeout=self._config.timeout_seconds,
+            stream=True,
+            api_key=self._config.api_key,
+            base_url=self._config.base_url,
+            reasoning_effort=profile.reasoning_effort,
+            reasoning=profile.reasoning(default_exclude=self._config.exclude_reasoning),
+            extra_headers=self._openrouter_headers(),
+            response_format=None,
+            cancel_token=cancel_token,
+            trace_route="turn_router.save_review",
+            trace_profile="turn_router",
+        )
+        try:
+            completed = complete_text(request, self._completion)
+            payload_json = extract_json_object(completed.content)
+            return GeneratedSaveMechanicsReview.model_validate_json(payload_json)
         except (
             *LITELLM_RETRYABLE_ERRORS,
             ValidationError,

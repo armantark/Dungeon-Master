@@ -4,7 +4,17 @@ from typing import cast
 
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.campaign import CampaignGenerator
+from dungeon_master.campaign import CampaignGenerator, CharacterGenerator
+from dungeon_master.models import (
+    CampaignGenre,
+    CampaignMagicLevel,
+    CampaignSeed,
+    CampaignStakesScale,
+    CampaignTechLevel,
+    CampaignTimePeriod,
+    CampaignToneDarkBright,
+    CampaignToneGrimNoble,
+)
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
@@ -90,6 +100,21 @@ class CampaignCompletion:
         )
 
 
+class CharacterCompletion:
+    def __init__(self, body: dict[str, object]) -> None:
+        self.body = body
+        self.request: CompletionRequest | None = None
+
+    def __call__(self, request: CompletionRequest) -> ModelResponse:
+        self.request = request
+        body = json.dumps(self.body)
+        if request.stream:
+            return cast("ModelResponse", _streamed_chunks(body))
+        return ModelResponse(
+            choices=[{"message": {"role": "assistant", "content": body}}],
+        )
+
+
 def test_campaign_generator_builds_state_from_model_json() -> None:
     completion = CampaignCompletion()
     generator = CampaignGenerator(
@@ -133,3 +158,99 @@ def test_campaign_generator_trims_extra_npcs_from_model_json() -> None:
     assert state.current_scene == "A generated opening scene."
     assert len(state.hidden_npcs) == 3
     assert [npc.name for npc in state.hidden_npcs] == ["NPC 1", "NPC 2", "NPC 3"]
+
+
+def test_campaign_generator_system_prompt_defers_to_campaign_seed() -> None:
+    completion = CampaignCompletion()
+    generator = CampaignGenerator(
+        config=NarrativeConfig(
+            model="openrouter/moonshotai/kimi-k2.6",
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+        ),
+        completion_function=completion,
+    )
+    seed = CampaignSeed(
+        preset="Mid 2020s real life romance",
+        time_period=CampaignTimePeriod.MODERN,
+        tone_grim_noble=CampaignToneGrimNoble.MIXED,
+        tone_dark_bright=CampaignToneDarkBright.BRIGHT,
+        genres=[CampaignGenre.HEARTH_AND_HOMESTEAD],
+        magic_level=CampaignMagicLevel.NONE,
+        tech_level=CampaignTechLevel.MODERN,
+        stakes_scale=CampaignStakesScale.PERSONAL_LOCAL,
+        inspirations="mid 2020s, basically real life",
+        restrictions="No supernatural, horror, medieval, plague, relic, or necromantic content.",
+    )
+
+    generator.generate(sample_state().character, seed=seed)
+
+    assert completion.request is not None
+    system_prompt = completion.request.messages[0]["content"]
+    user_prompt = completion.request.messages[1]["content"]
+    assert "campaign seed supplied by the user is authoritative" in system_prompt
+    assert "Oppressive medieval dark fantasy" not in system_prompt
+    assert "Era/technology: modern with modern technology." in user_prompt
+
+
+def test_character_quiz_uses_campaign_seed_creative_direction() -> None:
+    completion = CharacterCompletion(
+        {
+            "questions": [
+                {
+                    "prompt": "What keeps you from asking directly for companionship?",
+                    "options": [
+                        {"label": "I hide behind work."},
+                        {"label": "I assume rejection before trying."},
+                        {"label": "I keep choosing the wrong apps."},
+                    ],
+                },
+                {
+                    "prompt": "Which ordinary routine reveals your loneliness?",
+                    "options": [
+                        {"label": "Late grocery runs."},
+                        {"label": "Muted group chats."},
+                        {"label": "Sunday afternoon walks."},
+                    ],
+                },
+                {
+                    "prompt": "What would make a first connection feel real?",
+                    "options": [
+                        {"label": "A practical kindness."},
+                        {"label": "An unforced conversation."},
+                        {"label": "Remembering a small detail."},
+                    ],
+                },
+            ],
+        },
+    )
+    generator = CharacterGenerator(
+        config=NarrativeConfig(
+            model="openrouter/moonshotai/kimi-k2.6",
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+        ),
+        completion_function=completion,
+    )
+    seed = CampaignSeed(
+        preset="Mid 2020s real life romance",
+        time_period=CampaignTimePeriod.MODERN,
+        tone_grim_noble=CampaignToneGrimNoble.MIXED,
+        tone_dark_bright=CampaignToneDarkBright.BRIGHT,
+        genres=[CampaignGenre.HEARTH_AND_HOMESTEAD],
+        magic_level=CampaignMagicLevel.NONE,
+        tech_level=CampaignTechLevel.MODERN,
+        stakes_scale=CampaignStakesScale.PERSONAL_LOCAL,
+        inspirations="mid 2020s, basically real life",
+        restrictions="No supernatural, horror, medieval, plague, relic, or necromantic content.",
+    )
+
+    quiz = generator.generate_quiz("a lonely software engineer looking for love", seed=seed)
+
+    assert quiz.questions[0].prompt == "What keeps you from asking directly for companionship?"
+    assert completion.request is not None
+    system_prompt = completion.request.messages[0]["content"]
+    assert "Preset: Mid 2020s real life romance." in system_prompt
+    assert "Era/technology: modern with modern technology." in system_prompt
+    assert "Genre: hearth and homestead. Magic: none. Stakes: personal local." in system_prompt
+    assert "Oppressive medieval dark fantasy" not in system_prompt

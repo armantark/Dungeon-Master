@@ -360,8 +360,9 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
-        del mode, prompt, template
+        del mode, prompt, template, seed
         return sample_state().character
 
     def generate_draft_result(
@@ -370,9 +371,10 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         return CharacterDraftResult(
-            draft=self.generate_draft(mode=mode, prompt=prompt, template=template),
+            draft=self.generate_draft(mode=mode, prompt=prompt, template=template, seed=seed),
         )
 
     def iter_generate_draft(
@@ -381,14 +383,21 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         del cancel_token
-        result = self.generate_draft_result(mode=mode, prompt=prompt, template=template)
+        result = self.generate_draft_result(
+            mode=mode,
+            prompt=prompt,
+            template=template,
+            seed=seed,
+        )
         yield CompletionDelta(content=result.draft.model_dump_json())
         return result
 
-    def generate_quiz(self, concept: str) -> CharacterQuiz:
+    def generate_quiz(self, concept: str, seed: CampaignSeed | None = None) -> CharacterQuiz:
+        del seed
         return CharacterQuiz(
             concept=concept,
             questions=[
@@ -419,17 +428,22 @@ class FakeCharacterGenerator:
             ],
         )
 
-    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
-        return CharacterQuizResult(quiz=self.generate_quiz(concept))
+    def generate_quiz_result(
+        self,
+        concept: str,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterQuizResult:
+        return CharacterQuizResult(quiz=self.generate_quiz(concept, seed=seed))
 
     def iter_generate_quiz(
         self,
         concept: str,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
         del cancel_token
-        result = self.generate_quiz_result(concept)
+        result = self.generate_quiz_result(concept, seed=seed)
         yield CompletionDelta(content=result.quiz.model_dump_json())
         return result
 
@@ -439,7 +453,9 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
+        del seed
         sheet = sample_state().character.model_copy(deep=True)
         sheet.epithet = concept
         sheet.backstory = "; ".join(answer.value for answer in answers) or "no answers"
@@ -453,12 +469,14 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         return CharacterDraftResult(
             draft=self.generate_quizzed_draft(
                 concept=concept,
                 answers=answers,
                 final_note=final_note,
+                seed=seed,
             ),
         )
 
@@ -468,6 +486,7 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         del cancel_token
@@ -475,6 +494,7 @@ class FakeCharacterGenerator:
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=seed,
         )
         yield CompletionDelta(content=result.draft.model_dump_json())
         return result
@@ -2209,13 +2229,13 @@ def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     assert ("planning_turn", "done") in stage_statuses
     assert ("resolving_mechanics", "active") in stage_statuses
     assert ("resolving_mechanics", "done") in stage_statuses
-    assert ("classifying_continuity", "active") in stage_statuses
-    assert ("classifying_continuity", "done") in stage_statuses
+    assert ("classifying_continuity", "skipped") in stage_statuses
     assert ("preparing_narration", "active") in stage_statuses
     assert ("preparing_narration", "done") in stage_statuses
     assert ("streaming_narration", "active") in stage_statuses
     assert ("streaming_narration", "done") in stage_statuses
-    assert ("reconciling_continuity", "skipped") in stage_statuses
+    assert ("reconciling_continuity", "active") in stage_statuses
+    assert ("reconciling_continuity", "done") in stage_statuses
     final = parsed[-1]
     assert final["state"]["action_log"][-1]["title"] == "Narrative response"
     assert final["thinking"] == "Thought about attack."

@@ -408,7 +408,7 @@ def test_narrator_memory_uses_native_scene_transcript_without_duplicate_summarie
     assert all("Resolved outcome:" not in message.content for message in narrator.scene_messages)
 
 
-def test_narrator_memory_compacts_older_scene_turns_into_timeline() -> None:
+def test_narrator_memory_keeps_full_current_scene_transcript() -> None:
     state = sample_state()
     manager = MemoryManager()
     memory = None
@@ -472,16 +472,62 @@ def test_narrator_memory_compacts_older_scene_turns_into_timeline() -> None:
         "assistant",
         "user",
         "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
     ]
-    assert narrator.scene_messages[0].content == "I keep walking toward the spires."
+    assert narrator.scene_messages[0].content == "Has this chapel been my dwelling place?"
     assert narrator.scene_messages[-2].content == "I pause to listen for pursuit."
-    assert narrator.recent_turns == [
-        (
-            "Turns 1-4: Has this chapel been my dwelling place? -> This chapel was a shelter, "
-            "not a home.. Latest: I study the bootprints in the ash. -> Fresh prints run ahead "
-            "of you toward the vale.."
-        )
-    ]
+    assert narrator.recent_turns == []
+
+
+def test_npc_updater_memory_includes_current_scene_transcript() -> None:
+    state = sample_state()
+    manager = MemoryManager()
+    memory = None
+    first = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="The descriptor-visible student reveals her name.",
+        chaos_factor=state.chaos_factor,
+        referenced_npc_ids=[state.npcs[0].id],
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+    memory = manager.update_from_turn(
+        state,
+        CommittedTurnMemory(
+            player_input="I return the note to the blue-haired student.",
+            outcome=first,
+            narrative_text="The blue-haired student laughs and says, 'I'm Mira.'",
+        ),
+        memory=memory,
+    )
+    second = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+        scene_number_snapshot=1,
+        scene_label_snapshot=state.current_scene,
+        scene_status_snapshot=SceneStatus.EXPECTED,
+    )
+
+    context = manager.retrieve_for_npc_updater(
+        state,
+        memory,
+        "I ask Mira about the note.",
+        second,
+    )
+
+    assert len(context.scene_transcript) == 1
+    assert "blue-haired student laughs" in context.scene_transcript[0]
+    assert "I'm Mira" in context.scene_transcript[0]
+    assert "Current scene transcript:" in context.render()
 
 
 def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:

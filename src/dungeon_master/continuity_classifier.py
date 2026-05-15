@@ -53,8 +53,10 @@ Clarification and lore-check questions:
   narration newly establishes durable lore, a named or recurring person/faction,
   a concrete destination, a resolved secret, a thread/NPC status change, or a
   newly revealed proper name for a descriptor-visible NPC.
-  Choose `none` when the narration only says the answer is unknown, unconfirmed,
-  subjective, atmospheric, or still a choice for later play.
+  Choose `none` only when the narration stays local and non-durable: the answer
+  is unknown, unconfirmed, subjective, atmospheric, cosmetic, or still a choice
+  for later play. If committed prose appears to settle an ongoing matter or pin
+  down a recurring person, choose the safer updater scope instead of skipping.
 
 Be conservative.
 If you are uncertain whether the turn will materially change durable continuity,

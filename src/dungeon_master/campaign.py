@@ -42,9 +42,10 @@ from dungeon_master.narrative import (
 
 logger = logging.getLogger(__name__)
 
-SETTING_DIRECTION = """Oppressive medieval dark fantasy, adjacent to Berserk, Dark Souls,
-and Fear & Hunger. No copied characters, locations, factions, or lore.
-Avoid heroic power fantasy, modern slang, cozy safety, and generic tavern openings."""
+BASE_CREATIVE_DIRECTION = (
+    "Use the supplied campaign seed as the authority for genre, era, tone, magic, "
+    "technology, stakes, inspirations, and restrictions."
+)
 
 
 GENRE_LABELS: dict[CampaignGenre, str] = {
@@ -84,7 +85,6 @@ def render_creative_direction(seed: CampaignSeed) -> str:
         lines.append(f"Inspirations for flavor only: {seed.inspirations.strip()}.")
     if seed.restrictions.strip():
         lines.append(f"Restrictions: {seed.restrictions.strip()}.")
-    lines.append("Do not copy named characters, locations, factions, or lore from inspirations.")
     return "\n".join(f"- {line}" for line in lines)
 
 
@@ -115,25 +115,25 @@ def render_danger_guidance(danger_profile: CampaignDangerProfile) -> str:
         )
     return f"{shared} {detail}"
 
-CHARACTER_SYSTEM_PROMPT = f"""You generate player-character drafts for a solo dark-fantasy TTRPG.
+CHARACTER_SYSTEM_PROMPT = f"""You generate player-character drafts for a solo TTRPG.
 
 Return only valid JSON. The application will persist your JSON as structured state.
 
 Creative direction:
-- {SETTING_DIRECTION}
-- Characters must be archetypal to this setting: including but not limited to
-  scarred pilgrims, failed squires,
-  gutter mystics, plague-haunted hunters, relic smugglers, deserters, grave-robbers,
-  and other desperate medieval survivors.
+- {BASE_CREATIVE_DIRECTION}
+- Characters must belong to the supplied setting, era, genre, magic level,
+  technology level, and stakes.
+- Treat the supplied creative direction as binding.
 - Make them playable, pressured, and specific without deciding any future actions.
 
 Design constraints:
 - Do not roll dice.
 - Do not generate the wider campaign, scene, or oracle tables here.
-- Inventory should be concrete, grimy, limited, and practically usable in play.
-- Do not literalize every body-horror or biographical detail into carried gear.
-- Prefer a practical starting bundle (weapon, clothing/armor, light, supplies, tools)
-  plus at most one or two signature biography-derived items.
+- Inventory should be concrete, limited, era-appropriate, and practically usable
+  in play.
+- Do not literalize every symbolic or biographical detail into carried gear.
+- Prefer a practical starting bundle appropriate to the setting plus at most one
+  or two signature biography-derived items.
 """
 
 CHARACTER_TEMPLATES_USER_PROMPT = """Return JSON with this shape:
@@ -141,7 +141,7 @@ CHARACTER_TEMPLATES_USER_PROMPT = """Return JSON with this shape:
   "templates": [
     {
       "name": "short character name",
-      "archetype": "archetypal dark-fantasy role",
+      "archetype": "setting-appropriate role",
       "epithet": "one-line identity pitch",
       "backstory": "2-4 sentence backstory",
       "drive": "what they want right now",
@@ -160,7 +160,7 @@ Return exactly 4 templates.
 DRAFT_SCRATCH_PROMPT = """Return JSON for one playable custom character with this shape:
 {
   "name": "short character name",
-  "archetype": "archetypal dark-fantasy role",
+  "archetype": "setting-appropriate role",
   "epithet": "one-line identity pitch",
   "backstory": "2-4 sentence backstory",
   "drive": "what they want right now",
@@ -171,7 +171,7 @@ DRAFT_SCRATCH_PROMPT = """Return JSON for one playable custom character with thi
   ]
 }
 
-If the user prompt is sparse, fill the gaps with a plausible archetypal survivor.
+If the user prompt is sparse, fill the gaps with a plausible character who fits the campaign seed.
 Return 3-6 practical inventory items.
 Most biography should influence backstory, condition, flaw, and abilities rather than
 becoming literal inventory objects.
@@ -184,7 +184,7 @@ inventory, and return the same JSON shape as above.
 Inventory guidance:
 - Choose a practical starting loadout that fits the archetype.
 - At most one or two items should be directly biography-derived keepsakes or relics.
-- Put grotesque or symbolic flavor into backstory/condition more than gear.
+- Put symbolic or biographical flavor into backstory/condition more than gear.
 """
 
 # Quiz path: the player gives a one-line concept, the LLM designs a
@@ -194,18 +194,20 @@ Inventory guidance:
 # specific committed answers makes the resulting draft impossible to
 # write generically.
 CHARACTER_QUIZ_SYSTEM_PROMPT = f"""You design a 4-6 question interview that helps a
-player commit to a specific dark-fantasy character.
+player commit to a specific character for this campaign.
 
 Return only valid JSON.
 
-Setting:
-- {SETTING_DIRECTION}
+Creative direction:
+- {BASE_CREATIVE_DIRECTION}
+- Treat the supplied creative direction as binding.
 
 Question constraints:
 - Every question must serve the player's stated character concept.
 - Questions are short and answerable in one sentence.
-- Ideas: The body / condition, what was lost or done, what is carried,
-  who or what is hunting them, and what sin they keep committing.
+- Ask about pressures that fit the campaign seed: relationships, obligations,
+  habits, secrets, losses, responsibilities, fears, desires, and what the
+  character keeps choosing despite the cost.
   Do not ask about combat stats, classes, or skill points.
 - Each question gets 3-5 multiple-choice options. Each option is a
   one-line sentence the character could plausibly think or say.
@@ -239,7 +241,7 @@ the player into making the concept specific and consequential.
 DRAFT_FROM_QUIZ_PROMPT = """Return JSON for one playable custom character with this shape:
 {
   "name": "short character name appropriate to the player's concept",
-  "archetype": "archetypal dark-fantasy role consistent with the concept",
+  "archetype": "setting-appropriate role consistent with the concept",
   "epithet": "one-line identity pitch grounded in the answers below",
   "backstory": "2-4 sentence backstory that uses the concrete details below",
   "drive": "what they want right now",
@@ -269,6 +271,9 @@ Player interview:
 
 Final note from the player (optional, may be empty):
 <<FINAL_NOTE>>
+
+Campaign creative direction:
+<<CREATIVE_DIRECTION>>
 """
 
 CAMPAIGN_SYSTEM_PROMPT = """You generate the initial world state for a solo TTRPG after the player
@@ -277,10 +282,10 @@ character has already been chosen.
 Return only valid JSON. The application will persist your JSON as state, so be specific.
 
 Creative direction:
-- Oppressive medieval dark fantasy, with a mood adjacent to Berserk, Dark Souls, and Fear & Hunger.
-- No copied characters, named locations, factions, or lore from those works.
-- Avoid heroic power fantasy, modern slang, cozy safety, and generic tavern openings.
-- The world must feel built around the supplied character, their gear, their drive, and their flaw.
+- The campaign seed supplied by the user is authoritative for genre, era,
+  technology, magic, tone, stakes, inspirations, and restrictions.
+- The world must feel built around the supplied character, their gear, their
+  drive, and their flaw while staying inside the seed.
 
 Design constraints:
 - Do not roll dice.
@@ -639,39 +644,39 @@ def _fallback_quiz(concept: str) -> CharacterQuiz:
         concept=concept,
         questions=[
             CharacterQuizQuestion(
-                prompt="What does your body carry into the first scene?",
+                prompt="What pressure do you carry into the first scene?",
                 options=[
-                    CharacterQuizOption(label="A wound someone refused to dress."),
-                    CharacterQuizOption(label="A festering thing you cannot show."),
-                    CharacterQuizOption(label="An old discipline that survived your faith."),
-                    CharacterQuizOption(label="Hunger that has stopped feeling like hunger."),
+                    CharacterQuizOption(label="A private fear you keep managing alone."),
+                    CharacterQuizOption(label="An obligation that shapes your daily choices."),
+                    CharacterQuizOption(label="A habit that protects you and limits you."),
+                    CharacterQuizOption(label="A longing you are tired of explaining away."),
                 ],
             ),
             CharacterQuizQuestion(
-                prompt="What did you take from the place that broke you?",
+                prompt="What did you bring from the life that shaped you?",
                 options=[
-                    CharacterQuizOption(label="A relic you should not be holding."),
-                    CharacterQuizOption(label="A name you can no longer say aloud."),
-                    CharacterQuizOption(label="A debt written into your skin."),
-                    CharacterQuizOption(label="Only the road, and the habit of leaving."),
+                    CharacterQuizOption(label="A keepsake whose meaning is hard to admit."),
+                    CharacterQuizOption(label="A skill you learned for practical reasons."),
+                    CharacterQuizOption(label="A memory that changes how you trust people."),
+                    CharacterQuizOption(label="A routine that keeps your life from drifting."),
                 ],
             ),
             CharacterQuizQuestion(
-                prompt="Who is still looking for you?",
+                prompt="Who or what still has a claim on your attention?",
                 options=[
-                    CharacterQuizOption(label="An order that does not forgive desertion."),
-                    CharacterQuizOption(label="Something dead that finishes your prayers."),
-                    CharacterQuizOption(label="A creditor with a writ and no patience."),
-                    CharacterQuizOption(label="Family who no longer recognize the word mercy."),
+                    CharacterQuizOption(label="Family expectations I have not settled."),
+                    CharacterQuizOption(label="Work that expands to fill every quiet hour."),
+                    CharacterQuizOption(label="A friendship I let become awkward."),
+                    CharacterQuizOption(label="An old attachment I keep comparing against."),
                 ],
             ),
             CharacterQuizQuestion(
-                prompt="What sin will you not stop committing?",
+                prompt="What pattern do you keep repeating despite the cost?",
                 options=[
-                    CharacterQuizOption(label="Mercy at the wrong moment."),
-                    CharacterQuizOption(label="Bargains with things that do not honor them."),
-                    CharacterQuizOption(label="Hope, which keeps you stupid."),
-                    CharacterQuizOption(label="Theft, which keeps you fed."),
+                    CharacterQuizOption(label="I wait for certainty before acting."),
+                    CharacterQuizOption(label="I over-explain when I feel exposed."),
+                    CharacterQuizOption(label="I choose solitude and call it discernment."),
+                    CharacterQuizOption(label="I test people instead of asking plainly."),
                 ],
             ),
         ],
@@ -944,14 +949,24 @@ class CharacterGenerator:
 
     def _character_system_prompt(self, seed: CampaignSeed) -> str:
         return CHARACTER_SYSTEM_PROMPT.replace(
-            f"- {SETTING_DIRECTION}",
+            f"- {BASE_CREATIVE_DIRECTION}",
             render_creative_direction(seed),
         )
 
-    def generate_quiz(self, concept: str) -> CharacterQuiz:
-        return self.generate_quiz_result(concept).quiz
+    def _character_quiz_system_prompt(self, seed: CampaignSeed) -> str:
+        return CHARACTER_QUIZ_SYSTEM_PROMPT.replace(
+            f"- {BASE_CREATIVE_DIRECTION}",
+            render_creative_direction(seed),
+        )
 
-    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
+    def generate_quiz(self, concept: str, seed: CampaignSeed | None = None) -> CharacterQuiz:
+        return self.generate_quiz_result(concept, seed=seed).quiz
+
+    def generate_quiz_result(
+        self,
+        concept: str,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterQuizResult:
         """Produce an interview tailored to the player's concept.
 
         On any LLM failure we return the static fallback quiz so the
@@ -962,6 +977,7 @@ class CharacterGenerator:
         if not cleaned or not self.config.is_usable():
             return CharacterQuizResult(quiz=_fallback_quiz(cleaned or "An unspecified survivor."))
 
+        campaign_seed = seed or CampaignSeed()
         user_prompt = CHARACTER_QUIZ_USER_PROMPT_TEMPLATE.replace("<<CONCEPT>>", cleaned)
         # Quiz generation is structured authoring (fixed JSON shape,
         # short one-line strings). See `generate_templates` above for
@@ -973,7 +989,10 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_QUIZ_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": self._character_quiz_system_prompt(campaign_seed),
+                },
                 {"role": "user", "content": user_prompt},
             ],
             temperature=quiz_profile.temperature,
@@ -1002,6 +1021,7 @@ class CharacterGenerator:
         self,
         concept: str,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
         cleaned = concept.strip()
@@ -1012,12 +1032,16 @@ class CharacterGenerator:
             yield CompletionDelta(content=json.dumps({"quiz": fallback.quiz.model_dump()}))
             return fallback
 
+        campaign_seed = seed or CampaignSeed()
         user_prompt = CHARACTER_QUIZ_USER_PROMPT_TEMPLATE.replace("<<CONCEPT>>", cleaned)
         quiz_profile = self.config.profiles.character_quiz
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_QUIZ_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": self._character_quiz_system_prompt(campaign_seed),
+                },
                 {"role": "user", "content": user_prompt},
             ],
             temperature=quiz_profile.temperature,
@@ -1051,11 +1075,13 @@ class CharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
         return self.generate_quizzed_draft_result(
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=seed,
         ).draft
 
     def generate_quizzed_draft_result(
@@ -1064,6 +1090,7 @@ class CharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         """Draft a character using the concept + interview answers.
 
@@ -1084,10 +1111,12 @@ class CharacterGenerator:
             )
 
         interview_block = _format_interview(answers)
+        campaign_seed = seed or CampaignSeed()
         user_prompt = (
             DRAFT_FROM_QUIZ_PROMPT.replace("<<CONCEPT>>", cleaned_concept)
             .replace("<<INTERVIEW>>", interview_block)
             .replace("<<FINAL_NOTE>>", cleaned_note or "(none)")
+            .replace("<<CREATIVE_DIRECTION>>", render_creative_direction(campaign_seed))
         )
         # Drafting from a quiz benefits more from creativity than from
         # reasoning depth, and the answers already supply most of the
@@ -1098,7 +1127,7 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "system", "content": self._character_system_prompt(campaign_seed)},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=quizzed_draft_profile.temperature,
@@ -1138,6 +1167,7 @@ class CharacterGenerator:
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
         cancel_token: CancellationToken | None = None,
+        seed: CampaignSeed | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         cleaned_concept = concept.strip() or "An unspecified survivor."
         cleaned_note = (final_note or "").strip()
@@ -1153,16 +1183,18 @@ class CharacterGenerator:
             return fallback
 
         interview_block = _format_interview(answers)
+        campaign_seed = seed or CampaignSeed()
         user_prompt = (
             DRAFT_FROM_QUIZ_PROMPT.replace("<<CONCEPT>>", cleaned_concept)
             .replace("<<INTERVIEW>>", interview_block)
             .replace("<<FINAL_NOTE>>", cleaned_note or "(none)")
+            .replace("<<CREATIVE_DIRECTION>>", render_creative_direction(campaign_seed))
         )
         quizzed_draft_profile = self.config.profiles.quizzed_character_draft
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "system", "content": self._character_system_prompt(campaign_seed)},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=quizzed_draft_profile.temperature,
@@ -1204,8 +1236,14 @@ class CharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
-        return self.generate_draft_result(mode=mode, prompt=prompt, template=template).draft
+        return self.generate_draft_result(
+            mode=mode,
+            prompt=prompt,
+            template=template,
+            seed=seed,
+        ).draft
 
     def generate_draft_result(
         self,
@@ -1213,6 +1251,7 @@ class CharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         if not self.config.is_usable():
             return CharacterDraftResult(
@@ -1224,6 +1263,7 @@ class CharacterGenerator:
             if template is not None
             else "No template provided."
         )
+        campaign_seed = seed or CampaignSeed()
         user_prompt = (
             f"{DRAFT_SCRATCH_PROMPT}\n\nUser prompt:\n{prompt or 'No extra guidance supplied.'}"
             if mode == CharacterDraftMode.SCRATCH
@@ -1238,7 +1278,7 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "system", "content": self._character_system_prompt(campaign_seed)},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=draft_profile.temperature,
@@ -1271,6 +1311,7 @@ class CharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         if not self.config.is_usable():
@@ -1285,6 +1326,7 @@ class CharacterGenerator:
             if template is not None
             else "No template provided."
         )
+        campaign_seed = seed or CampaignSeed()
         user_prompt = (
             f"{DRAFT_SCRATCH_PROMPT}\n\nUser prompt:\n{prompt or 'No extra guidance supplied.'}"
             if mode == CharacterDraftMode.SCRATCH
@@ -1298,7 +1340,7 @@ class CharacterGenerator:
         request = CompletionRequest(
             model=self.config.model,
             messages=[
-                {"role": "system", "content": CHARACTER_SYSTEM_PROMPT},
+                {"role": "system", "content": self._character_system_prompt(campaign_seed)},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=draft_profile.temperature,

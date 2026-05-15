@@ -165,6 +165,34 @@ curl -s -X POST http://127.0.0.1:8000/api/cairn/recover \
 
 Confirm the latest `oracle_history` entry has `kind: "recovery"` and HP is restored if the character is not deprived.
 
+## Continuity / Inventory Smoke
+
+Use a live model-backed save for this pass, because the thread/NPC/item
+reconcilers are structured LLM calls rather than deterministic fallback logic.
+Use Pinchtab for the browser inspection, but prefer a real keyboard for text
+entry if `browser_fill` / `browser_type` fail to trigger Svelte input binding.
+
+1. Start from an active campaign where the next narrated turn can plausibly
+   establish:
+   - two distinct visible people in the same scene, and
+   - at least one concrete worn/carried personal item that is not already in
+     the inventory.
+1. Submit one natural-language turn that should resolve mechanically or through
+   narrated action rather than a pure `/ask` preview. A good candidate is a
+   movement/save/social beat where the prose can naturally mention who is where
+   and what the protagonist is wearing/carrying.
+1. After the turn commits, confirm the latest DM message shows the late
+   `Reconciling continuity` stage after narration rather than only pre-narration
+   continuity stages.
+1. Open the left folio and confirm any newly established worn/carried item is
+   now present in the protagonist inventory instead of remaining prose-only.
+1. Open `NPCs` in the Inspector and confirm distinct figures from the narration
+   remain distinct roster entries rather than collapsing into one generic
+   character.
+1. Open `Threads` in the Inspector and confirm any newly advanced/resolved
+   ongoing matter matches the committed narration's latest state instead of the
+   pre-turn state.
+
 ## Cairn Item-Power UI Smoke
 
 Use an isolated save-library root when checking spellbook / scroll / relic /

@@ -32,7 +32,7 @@ tabletop role-playing game after a turn has already resolved.
 Return only valid JSON.
 
 Hard rules:
-- You may emit 0-2 NPC ops total.
+- You may emit 0-4 NPC ops total.
 - NPC ops may only be: create, update, retire.
 - Only create an NPC when the turn introduces or clarifies a recurring person
   who should remain in the campaign cast beyond the immediate beat.
@@ -42,15 +42,35 @@ Hard rules:
 - Do NOT reveal or invent a proper-name `player_label` unless the supplied
   context explicitly grants that name to the player (direct introduction,
   being told, a clue, divination/fortunetelling, etc.).
-- If final narration explicitly grants a proper name for an existing
-  descriptor-visible NPC ("call me X", "my name is X", "I am X"), update that
-  existing NPC by id instead of creating a duplicate. Set `name` to the revealed
-  identity, `player_label` to the same proper name, and
-  `player_label_kind="proper_name"`.
+- When a proper name is newly associated with an already-tracked descriptor
+  figure, update that existing NPC by id instead of creating a duplicate. This
+  includes direct introductions ("call me X", "my name is X", "I am X") and
+  committed narration that identifies the descriptor figure as the named person.
+  Set `name` to the revealed identity, `player_label` to the same proper name,
+  and `player_label_kind="proper_name"`.
 - If the player should know the figure only by signs, office, clothing, scars,
   or some other non-name identifier, set `player_label_kind="descriptor"` and
   use that descriptor as `player_label`.
 - Prefer updating an existing NPC over creating a near-duplicate.
+- Before every create op, compare the proposed person against all current NPCs
+  and the current scene transcript. If the new record would mostly restate an
+  existing descriptor, recently interacted figure, handle, role, or revealed
+  identity, emit an update for that existing npc_id instead.
+- But do not collapse distinct people into one record just because they share a
+  broad category. If the supplied context distinguishes two figures by current
+  location, possessions, appearance, dialogue, social role, or who the player is
+  interacting with, keep them separate unless the text explicitly identifies
+  them as the same person.
+- Preserve existing role/disposition facts unless supplied context actually
+  changes them. A revealed name or handle alone is not permission to invent a
+  new job, personality, relationship, hobby, motive, or backstory.
+- If more than four recurring figures are introduced/clarified in one beat, keep
+  the most durable or player-relevant people as distinct records first. Only if
+  the remainder are honestly one obvious cohort (for example classmates,
+  bystanders, guards, or a named group in the same place) may you compress those
+  remainder figures into one grouped descriptor NPC. That grouped NPC must stay a
+  descriptor-facing cohort entry, not an invented proper name, and must not
+  replace figures the player is already tracking as distinct individuals.
 - Retire an NPC only when the supplied outcome + executed steps make them leave
   the active cast, become irrelevant to the current recurring roster, or die in
   a way that should stop them appearing as an active NPC.
@@ -205,7 +225,7 @@ class GeneratedNPCUpdateOp(StrictModel):
 
 
 class GeneratedNPCUpdateBatch(StrictModel):
-    ops: list[GeneratedNPCUpdateOp] = Field(default_factory=list, max_length=2)
+    ops: list[GeneratedNPCUpdateOp] = Field(default_factory=list, max_length=4)
 
 
 class GeneratedLegacyRosterNPC(StrictModel):

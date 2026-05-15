@@ -31,6 +31,14 @@ from dungeon_master.models import (
     CairnSurvivalAction,
     CairnTimeAdvance,
     CampaignDangerProfile,
+    CampaignGenre,
+    CampaignMagicLevel,
+    CampaignSeed,
+    CampaignStakesScale,
+    CampaignTechLevel,
+    CampaignTimePeriod,
+    CampaignToneDarkBright,
+    CampaignToneGrimNoble,
     EncounterAdvantagePayoff,
     EncounterEndReason,
     EncounterInitiator,
@@ -86,6 +94,16 @@ def _active_encounter_state(*, player_dex: int, enemy_dex: int) -> GameState:
         ],
     )
     return state
+
+
+def test_cairn_item_state_normalizes_petty_and_bulky_slots() -> None:
+    petty = CairnItemState(tags=[CairnItemTag.PETTY], slots=1)
+    bulky = CairnItemState(tags=[CairnItemTag.BULKY], slots=1)
+    mixed = CairnItemState(tags=[CairnItemTag.PETTY, CairnItemTag.BULKY], slots=0)
+
+    assert petty.slots == 0
+    assert bulky.slots == 2
+    assert mixed.slots == 2
 
 
 def _companion_state() -> GameState:
@@ -208,6 +226,36 @@ def test_generated_backfill_normalizes_zero_weapon_damage_for_non_weapons() -> N
     assert [item.weapon_damage_die for item in generated.inventory] == [None, None]
 
 
+def test_generated_item_profile_normalizes_slots_from_petty_and_bulky_tags() -> None:
+    petty = GeneratedCairnItemProfile.model_validate(
+        {
+            "name": "Folded phone number",
+            "details": "A small note tucked into a pocket.",
+            "tags": ["petty", "utility"],
+            "slots": 1,
+            "weapon_damage_die": None,
+            "armor_bonus": 0,
+            "uses": None,
+            "equipped": False,
+        },
+    )
+    bulky = GeneratedCairnItemProfile.model_validate(
+        {
+            "name": "Gaming laptop",
+            "details": "Heavy enough to matter.",
+            "tags": ["tool", "bulky"],
+            "slots": 1,
+            "weapon_damage_die": None,
+            "armor_bonus": 0,
+            "uses": None,
+            "equipped": False,
+        },
+    )
+
+    assert petty.slots == 0
+    assert bulky.slots == 2
+
+
 def test_generated_backfill_defaults_missing_weapon_damage_for_weapons() -> None:
     generated = GeneratedCairnBackfill.model_validate(
         {
@@ -306,6 +354,55 @@ def test_generated_backfill_normalizes_common_llm_enum_slop() -> None:
     assert relic.power.effect_ability == CairnAbility.WIL
 
 
+def test_generated_backfill_normalizes_resource_recharge_policy_synonyms() -> None:
+    generated = GeneratedCairnBackfill.model_validate(
+        {
+            "skills": ["Terminally online"],
+            "abilities": ["Knows obscure forums"],
+            "str_score": 8,
+            "dex_score": 9,
+            "wil_score": 10,
+            "max_hp": 2,
+            "inventory": [
+                {
+                    "name": "MLP jar",
+                    "details": "Need I say more?",
+                    "tags": ["petty"],
+                    "slots": 0,
+                    "weapon_damage_die": None,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": False,
+                    "resources": [
+                        {
+                            "label": "Psychic damage",
+                            "kind": "custom",
+                            "current": 1,
+                            "max": 1,
+                            "recharge_policy": "per_rest",
+                        },
+                    ],
+                },
+                {
+                    "name": "Laptop",
+                    "details": "Covered in Cheeto dust.",
+                    "tags": ["tool"],
+                    "slots": 1,
+                    "weapon_damage_die": None,
+                    "armor_bonus": 0,
+                    "uses": None,
+                    "equipped": False,
+                },
+            ],
+        },
+    )
+
+    assert (
+        generated.inventory[0].resources[0].recharge_policy
+        == CairnResourceRechargePolicy.ON_REST
+    )
+
+
 def test_backfill_prompt_preserves_visible_authored_gear() -> None:
     state = sample_state()
     authored = state.character.model_copy(
@@ -364,6 +461,67 @@ def test_backfill_prompt_preserves_visible_authored_gear() -> None:
     assert "rusted wood-axe" in user_prompt
     assert sheet.inventory[0].name == "Rusted wood-axe"
     assert sheet.cairn.primary_weapon_item_id == sheet.inventory[0].id
+
+
+def test_backfill_prompt_uses_campaign_seed_as_setting_authority() -> None:
+    state = sample_state()
+    state.campaign_seed = CampaignSeed(
+        preset="Mid 2020s real life romance",
+        time_period=CampaignTimePeriod.MODERN,
+        tone_grim_noble=CampaignToneGrimNoble.MIXED,
+        tone_dark_bright=CampaignToneDarkBright.BRIGHT,
+        genres=[CampaignGenre.HEARTH_AND_HOMESTEAD],
+        magic_level=CampaignMagicLevel.NONE,
+        tech_level=CampaignTechLevel.MODERN,
+        stakes_scale=CampaignStakesScale.PERSONAL_LOCAL,
+        inspirations="mid 2020s, basically real life",
+        restrictions="No supernatural, horror, medieval, plague, relic, or necromantic content.",
+    )
+    payload = GeneratedCairnBackfill(
+        skills=["Awkward small talk"],
+        abilities=["Finds obscure forum threads"],
+        str_score=8,
+        dex_score=9,
+        wil_score=10,
+        max_hp=2,
+        inventory=[
+            GeneratedCairnItemProfile(
+                name="Laptop",
+                details="A mundane laptop.",
+                tags=[CairnItemTag.TOOL],
+                slots=1,
+                weapon_damage_die=None,
+                armor_bonus=0,
+                uses=None,
+                equipped=False,
+            ),
+            GeneratedCairnItemProfile(
+                name="Phone",
+                details="A mundane smartphone.",
+                tags=[CairnItemTag.UTILITY],
+                slots=0,
+                weapon_damage_die=None,
+                armor_bonus=0,
+                uses=None,
+                equipped=False,
+            ),
+        ],
+    ).model_dump_json()
+    completion = RecordingBackfillCompletion(payload)
+    engine = CairnEngine(
+        config=NarrativeConfig(model="test-model", api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.ensure_character_state(state, allow_backfill=True)
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    user_prompt = completion.messages[1]["content"]
+    assert "campaign seed supplied in the user prompt is authoritative" in system_prompt
+    assert "fiction-first dark-fantasy character" not in system_prompt
+    assert "Era/technology: modern with modern technology." in user_prompt
+    assert "No supernatural, horror, medieval" in user_prompt
 
 
 def test_resolve_attack_seeds_encounter_and_tracks_target() -> None:
@@ -1141,6 +1299,32 @@ def test_acquire_items_adds_typed_loot_and_recomputes_burden() -> None:
     assert state.character.cairn.slots_used == 3
     assert completion.messages is not None
     assert "Current inventory" in completion.messages[1]["content"]
+
+
+def test_acquire_items_normalizes_petty_slot_mistake_and_recomputes_burden() -> None:
+    state = _ready_state()
+    completion = RecordingAcquisitionCompletion(
+        '{"items":['
+        '{"name":"Folded phone number","details":"A tiny scrap of paper.",'
+        '"tags":["petty","utility"],"slots":1,"weapon_damage_die":null,'
+        '"armor_bonus":0,"uses":null,"equipped":false}'
+        ']}',
+    )
+    engine = CairnEngine(
+        seed=1,
+        config=NarrativeConfig(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://example.com",
+            exclude_reasoning=True,
+        ),
+        completion_function=completion,
+    )
+
+    engine.acquire_items(state, text="I pick up the folded phone number.")
+
+    assert state.character.inventory[-1].cairn.slots == 0
+    assert state.character.cairn.slots_used == 2
 
 
 def test_acquire_items_can_ready_new_weapon_and_unequip_old_one() -> None:

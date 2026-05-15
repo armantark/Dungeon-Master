@@ -29,10 +29,6 @@ MAX_OPEN_LOOPS: Final[int] = 10
 MAX_CALLBACKS: Final[int] = 8
 SALIENT_CALLBACK_THRESHOLD: Final[int] = 4
 CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 3
-# Keep only a very short native scene window for the narrator. In the common
-# pre-narration path that means roughly the last five chat messages:
-# two completed user/assistant turn-pairs plus the final pending user turn.
-MAX_NATIVE_SCENE_TURNS: Final[int] = 2
 TIMELINE_SUMMARY_BLOCK_TURNS: Final[int] = 5
 
 
@@ -234,6 +230,7 @@ class ThreadUpdateMemoryContext(StrictModel):
 
 class NPCUpdateMemoryContext(StrictModel):
     scene_summary: str = ""
+    scene_transcript: list[str] = Field(default_factory=list)
     recent_turns: list[str] = Field(default_factory=list)
     active_npcs: list[str] = Field(default_factory=list)
     open_loops: list[str] = Field(default_factory=list)
@@ -244,6 +241,11 @@ class NPCUpdateMemoryContext(StrictModel):
         sections: list[str] = []
         if self.scene_summary:
             sections.append(f"Current scene summary: {self.scene_summary}")
+        if self.scene_transcript:
+            sections.append(
+                "Current scene transcript:\n"
+                + "\n".join(f"- {item}" for item in self.scene_transcript),
+            )
         if self.recent_turns:
             sections.append(
                 "Recent turn summaries:\n" + "\n".join(f"- {item}" for item in self.recent_turns),
@@ -393,13 +395,12 @@ class MemoryManager:
         completed_scene_turns = memory.current_scene_turns
         if completed_scene_turns and not completed_scene_turns[-1].narrative_excerpt.strip():
             completed_scene_turns = completed_scene_turns[:-1]
-        if completed_scene_turns:
-            transcript_turns = completed_scene_turns[-MAX_NATIVE_SCENE_TURNS:]
-            older_timeline_turns = completed_scene_turns[:-MAX_NATIVE_SCENE_TURNS]
-        else:
-            transcript_turns = []
-            older_timeline_turns = memory.recent_turn_summaries[-3:]
-        recent_turns = self._narrative_timeline_lines(older_timeline_turns)
+        transcript_turns = completed_scene_turns
+        recent_turns = (
+            []
+            if completed_scene_turns
+            else self._narrative_timeline_lines(memory.recent_turn_summaries[-3:])
+        )
         return NarrativeMemoryContext(
             scene_summary=memory.current_scene_summary,
             active_encounter_summary=memory.active_encounter_summary,
@@ -498,7 +499,16 @@ class MemoryManager:
         ]
         return NPCUpdateMemoryContext(
             scene_summary=memory.current_scene_summary,
-            recent_turns=[self._render_turn(turn) for turn in memory.recent_turn_summaries[-2:]],
+            scene_transcript=[
+                self._render_npc_update_scene_turn(turn)
+                for turn in memory.current_scene_turns
+                if turn.narrative_excerpt.strip()
+            ],
+            recent_turns=[
+                self._render_turn(turn)
+                for turn in memory.recent_turn_summaries[-4:]
+                if turn.scene_key != memory.current_scene_key
+            ],
             active_npcs=active_npcs[:4],
             open_loops=[loop.text for loop in memory.open_loops[:4]],
             revealed_facts=self._narrative_facts(memory, outcome, query)[:4],
@@ -1288,6 +1298,12 @@ class MemoryManager:
         if turn.narrative_excerpt.strip():
             parts.append(f"Narration: {turn.narrative_excerpt.strip()}")
         return _clip(" | ".join(parts), 320)
+
+    def _render_npc_update_scene_turn(self, turn: TurnMemory) -> str:
+        parts = [f"Turn {turn.turn_index}: {turn.player_input} -> {turn.oracle_summary}"]
+        if turn.narrative_excerpt.strip():
+            parts.append(f"Narration: {turn.narrative_excerpt.strip()}")
+        return _clip(" | ".join(parts), 900)
 
     def _narrative_timeline_lines(self, turns: list[TurnMemory]) -> list[str]:
         if not turns:

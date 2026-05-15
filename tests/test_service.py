@@ -18,6 +18,7 @@ from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
 from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
 from dungeon_master.config import LLMConfig, LLMRuntimeBundle, single_llm_runtime
 from dungeon_master.continuity_classifier import ContinuityUpdateScope
+from dungeon_master.inventory_updater import InventoryUpdateResult
 from dungeon_master.memory import LocationMemory, MemoryState
 from dungeon_master.models import (
     NPC,
@@ -151,6 +152,9 @@ class FakeCampaignGenerator:
 
 
 class FakeCharacterGenerator:
+    def __init__(self) -> None:
+        self.quiz_seeds: list[CampaignSeed | None] = []
+
     def setup_state(self, seed: CampaignSeed | None = None) -> GameState:
         state = sample_state()
         if seed is not None:
@@ -184,8 +188,9 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
-        del mode, prompt, template
+        del mode, prompt, template, seed
         return sample_state().character
 
     def generate_draft_result(
@@ -194,9 +199,10 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         return CharacterDraftResult(
-            draft=self.generate_draft(mode=mode, prompt=prompt, template=template),
+            draft=self.generate_draft(mode=mode, prompt=prompt, template=template, seed=seed),
         )
 
     def iter_generate_draft(
@@ -205,14 +211,21 @@ class FakeCharacterGenerator:
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         del cancel_token
-        result = self.generate_draft_result(mode=mode, prompt=prompt, template=template)
+        result = self.generate_draft_result(
+            mode=mode,
+            prompt=prompt,
+            template=template,
+            seed=seed,
+        )
         yield CompletionDelta(content=result.draft.model_dump_json())
         return result
 
-    def generate_quiz(self, concept: str) -> CharacterQuiz:
+    def generate_quiz(self, concept: str, seed: CampaignSeed | None = None) -> CharacterQuiz:
+        self.quiz_seeds.append(seed.model_copy(deep=True) if seed is not None else None)
         return CharacterQuiz(
             concept=concept or "Test concept",
             questions=[
@@ -243,17 +256,22 @@ class FakeCharacterGenerator:
             ],
         )
 
-    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
-        return CharacterQuizResult(quiz=self.generate_quiz(concept))
+    def generate_quiz_result(
+        self,
+        concept: str,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterQuizResult:
+        return CharacterQuizResult(quiz=self.generate_quiz(concept, seed=seed))
 
     def iter_generate_quiz(
         self,
         concept: str,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
         del cancel_token
-        result = self.generate_quiz_result(concept)
+        result = self.generate_quiz_result(concept, seed=seed)
         yield CompletionDelta(content=result.quiz.model_dump_json())
         return result
 
@@ -263,7 +281,9 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
+        del seed
         sheet = sample_state().character.model_copy(deep=True)
         # Make the test sheet visibly reflect inputs so we can assert plumbing.
         sheet.epithet = concept
@@ -278,12 +298,14 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         return CharacterDraftResult(
             draft=self.generate_quizzed_draft(
                 concept=concept,
                 answers=answers,
                 final_note=final_note,
+                seed=seed,
             ),
         )
 
@@ -293,6 +315,7 @@ class FakeCharacterGenerator:
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         del cancel_token
@@ -300,6 +323,7 @@ class FakeCharacterGenerator:
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=seed,
         )
         yield CompletionDelta(content=result.draft.model_dump_json())
         return result
@@ -326,6 +350,7 @@ class FakeThreadUpdater:
         self._mutate = mutate
         self.calls: list[tuple[str, str]] = []
         self.post_calls: list[tuple[str, str, str]] = []
+        self.post_memory_contexts: list[str | None] = []
 
     def update_threads(  # noqa: PLR0913
         self,
@@ -362,11 +387,12 @@ class FakeThreadUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedThreadUpdateBatch | None:
-        del state, execution_context, memory_context, cancel_token
+        del state, execution_context, cancel_token
         if narrative_text is None:
             self.calls.append((player_input, outcome.summary))
         else:
             self.post_calls.append((player_input, outcome.summary, narrative_text))
+            self.post_memory_contexts.append(memory_context)
         return GeneratedThreadUpdateBatch()
 
     def apply_generated_updates(
@@ -391,6 +417,7 @@ class FakeNpcUpdater:
         self._repair = repair
         self.calls: list[tuple[str, str]] = []
         self.post_calls: list[tuple[str, str, str]] = []
+        self.post_memory_contexts: list[str | None] = []
 
     def update_npcs(  # noqa: PLR0913
         self,
@@ -427,11 +454,12 @@ class FakeNpcUpdater:
         memory_context: str | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> GeneratedNPCUpdateBatch | None:
-        del state, execution_context, memory_context, cancel_token
+        del state, execution_context, cancel_token
         if narrative_text is None:
             self.calls.append((player_input, outcome.summary))
         else:
             self.post_calls.append((player_input, outcome.summary, narrative_text))
+            self.post_memory_contexts.append(memory_context)
         return GeneratedNPCUpdateBatch()
 
     def apply_generated_updates(
@@ -455,6 +483,32 @@ class FakeNpcUpdater:
     ) -> LegacyNPCRosterRepairResult:
         del state, memory_context, cancel_token, use_model
         return self._repair or LegacyNPCRosterRepairResult()
+
+
+class FakeInventoryUpdater:
+    def __init__(
+        self,
+        mutate: Callable[[GameState, OracleOutcome], tuple[str, ...]] | None = None,
+    ) -> None:
+        self._mutate = mutate
+        self.calls: list[tuple[str, str, str]] = []
+
+    def update_inventory(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> InventoryUpdateResult:
+        del execution_context, cancel_token
+        self.calls.append((player_input, outcome.summary, narrative_text))
+        if self._mutate is None:
+            return InventoryUpdateResult()
+        summaries = self._mutate(state, outcome)
+        return InventoryUpdateResult(changed=bool(summaries), summaries=summaries)
 
 
 class ParallelThreadUpdater(FakeThreadUpdater):
@@ -2697,6 +2751,30 @@ def test_update_campaign_seed_before_campaign_start(tmp_path: Path) -> None:
     assert state.campaign_seed.danger_profile == CampaignDangerProfile.HARSH
 
 
+def test_character_quiz_uses_active_campaign_seed(tmp_path: Path) -> None:
+    character_generator = SetupCharacterGenerator()
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=character_generator,
+        cairn_engine=FakeCairnEngine(),
+    )
+    seed = CampaignSeed(
+        preset="Modern romance",
+        time_period=CampaignTimePeriod.MODERN,
+    )
+    service.update_campaign_seed(seed)
+
+    service.generate_character_quiz_result("lonely software engineer")
+
+    assert character_generator.quiz_seeds
+    assert character_generator.quiz_seeds[-1] is not None
+    assert character_generator.quiz_seeds[-1].preset == "Modern romance"
+    assert character_generator.quiz_seeds[-1].time_period == CampaignTimePeriod.MODERN
+
+
 def test_start_campaign_uses_finalized_character(tmp_path: Path) -> None:
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
@@ -3289,7 +3367,9 @@ def test_service_thread_updater_creates_thread_and_persists_memory(tmp_path: Pat
     )
 
 
-def test_service_continuity_classifier_can_skip_both_updaters(tmp_path: Path) -> None:
+def test_service_post_narration_reconciliation_runs_even_when_classifier_would_skip(
+    tmp_path: Path,
+) -> None:
     store = StateStore(tmp_path / "game_state.json")
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
@@ -3308,17 +3388,23 @@ def test_service_continuity_classifier_can_skip_both_updaters(tmp_path: Path) ->
 
     updated = service.submit_player_action("I keep moving and say nothing.")
 
-    assert classifier.calls == [
+    assert classifier.calls == []
+    assert thread_updater.calls == []
+    assert npc_updater.calls == []
+    assert thread_updater.post_calls == [
         (
             "I keep moving and say nothing.",
             updated.oracle_history[-1].summary,
             updated.action_log[-1].content,
         ),
     ]
-    assert thread_updater.calls == []
-    assert npc_updater.calls == []
-    assert thread_updater.post_calls == []
-    assert npc_updater.post_calls == []
+    assert npc_updater.post_calls == [
+        (
+            "I keep moving and say nothing.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert updated.oracle_history[-1].referenced_thread_ids == []
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
@@ -3345,13 +3431,7 @@ def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
 
     updated = service.submit_player_turn("I study the icon and pray for intercession.")
 
-    assert classifier.calls == [
-        (
-            "I study the icon and pray for intercession.",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
+    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3371,6 +3451,65 @@ def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
     assert updated.oracle_history[-1].kind == OracleKind.PLAYER_ACTION
     assert updated.oracle_history[-1].referenced_thread_ids == []
     assert updated.oracle_history[-1].referenced_npc_ids == []
+
+
+def test_service_save_turn_reconciles_inventory_and_continuity_after_narration(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "game_state.json")
+    thread_updater = FakeThreadUpdater()
+    npc_updater = FakeNpcUpdater()
+
+    def mutate_inventory(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        state.character.inventory.append(
+            InventoryItem(name="Fedora", details="Added from committed narration."),
+        )
+        return ("Fedora canonized.",)
+
+    inventory_updater = FakeInventoryUpdater(mutate=mutate_inventory)
+    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
+    service = GameService(
+        store=store,
+        oracle=OracleEngine(seed=1),
+        narrative=FakeNarrative(),
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        thread_updater=thread_updater,
+        npc_updater=npc_updater,
+        inventory_updater=inventory_updater,
+        continuity_classifier=classifier,
+        turn_router=TurnRouter(classifier=scripted_classifier),
+    )
+
+    updated = service.submit_player_turn("I balance across the abbey beam.")
+
+    assert classifier.calls == []
+    assert thread_updater.calls == []
+    assert npc_updater.calls == []
+    assert thread_updater.post_calls == [
+        (
+            "I balance across the abbey beam.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert npc_updater.post_calls == [
+        (
+            "I balance across the abbey beam.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert inventory_updater.calls == [
+        (
+            "I balance across the abbey beam.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
+    assert any(item.name == "Fedora" for item in updated.character.inventory)
 
 
 def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continuity(
@@ -3419,13 +3558,7 @@ def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continui
     ]
     assert updated.oracle_history[-1].kind == OracleKind.PLAYER_ACTION
     assert "current vantage without advancing" in updated.action_log[-1].content
-    assert classifier.calls == [
-        (
-            "Are there enemies along the goat-path?",
-            updated.oracle_history[-1].summary,
-            updated.action_log[-1].content,
-        ),
-    ]
+    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3487,7 +3620,7 @@ def test_service_post_narration_continuity_can_touch_threads_and_npcs(
     assert updated.oracle_history[-1].referenced_npc_ids
 
 
-def test_service_post_narration_continuity_can_skip_when_narration_adds_no_lore(
+def test_service_post_narration_continuity_runs_noop_updaters_when_narration_adds_no_lore(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
@@ -3509,20 +3642,28 @@ def test_service_post_narration_continuity_can_skip_when_narration_adds_no_lore(
 
     updated = service.submit_player_turn("Do we know the patriarch's name?")
 
-    assert classifier.calls == [
+    assert classifier.calls == []
+    assert thread_updater.post_calls == [
         (
             "Do we know the patriarch's name?",
             updated.oracle_history[-1].summary,
             updated.action_log[-1].content,
         ),
     ]
-    assert thread_updater.post_calls == []
-    assert npc_updater.post_calls == []
+    assert npc_updater.post_calls == [
+        (
+            "Do we know the patriarch's name?",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert updated.oracle_history[-1].referenced_thread_ids == []
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
-def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Path) -> None:
+def test_service_post_narration_reconciles_npcs_even_when_thread_only_scope_was_expected(
+    tmp_path: Path,
+) -> None:
     store = StateStore(tmp_path / "game_state.json")
 
     def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
@@ -3562,12 +3703,20 @@ def test_service_continuity_classifier_can_run_only_thread_updater(tmp_path: Pat
             updated.action_log[-1].content,
         ),
     ]
-    assert npc_updater.post_calls == []
+    assert npc_updater.post_calls == [
+        (
+            "I accept the ferryman's warning.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert updated.oracle_history[-1].referenced_thread_ids == [created.id]
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
-def test_service_continuity_classifier_can_run_only_npc_updater(tmp_path: Path) -> None:
+def test_service_post_narration_reconciles_threads_even_when_npc_only_scope_was_expected(
+    tmp_path: Path,
+) -> None:
     store = StateStore(tmp_path / "game_state.json")
 
     def mutate(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
@@ -3599,7 +3748,13 @@ def test_service_continuity_classifier_can_run_only_npc_updater(tmp_path: Path) 
     created = next(npc for npc in updated.npcs if npc.name == "Brother Vahagn")
     assert thread_updater.calls == []
     assert npc_updater.calls == []
-    assert thread_updater.post_calls == []
+    assert thread_updater.post_calls == [
+        (
+            "I press the bell-ringer for the truth.",
+            updated.oracle_history[-1].summary,
+            updated.action_log[-1].content,
+        ),
+    ]
     assert npc_updater.post_calls == [
         (
             "I press the bell-ringer for the truth.",
@@ -4216,26 +4371,23 @@ def test_streamed_player_turn_persists_stage_timings(tmp_path: Path) -> None:
     timings = narrative_event.stage_timings
     by_id = {timing.stage_id: timing for timing in timings}
 
-    # Every canonical pre-narration stage should appear in order. We
-    # don't assert exact statuses for continuity stages because the
-    # scripted classifier's scope is route-dependent; we *do* assert
-    # the planning / mechanics / narration trio is `done` because the
-    # full-turn route always runs them.
+    # Every canonical stage should appear in order. Natural-language turns
+    # now reconcile continuity after narration by default, so the late
+    # post-narration stage should complete even when the pre-narration
+    # classifier/updater stages were skipped.
     assert [t.stage_id for t in timings] == list(TURN_STREAM_STAGE_ORDER)
     for stage_id in (
         "planning_turn",
         "resolving_mechanics",
         "preparing_narration",
         "streaming_narration",
+        "reconciling_continuity",
     ):
         timing = by_id[stage_id]
         assert timing.status == StageStatus.DONE
         assert timing.started_at is not None
         assert timing.completed_at is not None
         assert timing.completed_at >= timing.started_at
-    assert by_id["reconciling_continuity"].status == StageStatus.SKIPPED
-    assert by_id["reconciling_continuity"].started_at is None
-    assert by_id["reconciling_continuity"].completed_at is None
 
 
 def test_streamed_player_turn_applies_narrated_character_effects(tmp_path: Path) -> None:
@@ -4332,13 +4484,7 @@ def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
     )
     by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
 
-    assert classifier.calls == [
-        (
-            "I study the icon and pray for intercession.",
-            final.oracle_history[-1].summary,
-            final.action_log[-1].content,
-        ),
-    ]
+    assert classifier.calls == []
     for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
         timing = by_id[skipped_id]
         assert timing.status == StageStatus.SKIPPED
@@ -4385,13 +4531,7 @@ def test_streamed_recon_turn_marks_pre_narration_continuity_stages_skipped(
     )
     by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
 
-    assert classifier.calls == [
-        (
-            "Are there enemies along the goat-path?",
-            final.oracle_history[-1].summary,
-            final.action_log[-1].content,
-        ),
-    ]
+    assert classifier.calls == []
     for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
         timing = by_id[skipped_id]
         assert timing.status == StageStatus.SKIPPED

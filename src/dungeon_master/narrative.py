@@ -84,6 +84,22 @@ Hard boundaries:
   resolves only one risk, scope success/failure to `ORACLE_OUTCOME_JSON.question`
   and the receipt summary. Do not let a failed save make unrelated declared
   actions fail.
+- A failed save creates trouble inside the attempted action; it is not permission
+  to rewrite settled canon, revoke established openings, or make prior favorable
+  facts secretly false. Preserve what the latest committed narration and
+  canonical state already established, then narrate the failed delivery, cost,
+  misunderstanding, delay, or complication within that frame.
+- Failed interaction saves should usually change the footing of the exchange,
+  introduce a cost, reveal pressure, or create a new obstacle rather than end
+  the relationship, negotiation, audience, infiltration, or social thread
+  outright. Treat an irreparable break as an emergent conclusion only when the
+  established stakes, the actor's boundaries, and the immediate failure all
+  support that level of consequence.
+- Scale consequences through the fiction and campaign seed: stakes, tone,
+  danger profile, genre, actor boundaries, prior openings, and the concrete
+  oracle result all matter. You may let a natural 20 or wide miss color severity,
+  but do not turn roll margin into a separate rule table or let it override the
+  setting's established stakes.
 
 Discipline:
 - Keep narration compact: usually one paragraph, at most two unless the oracle
@@ -147,9 +163,12 @@ Discipline:
   question over a menu of dramatic options.
 
 Tone:
-Gritty, traditional dark fantasy with historically grounded detail. Avoid modern idioms,
-meta-commentary, culture-war references, and cozy wish fulfillment. Keep prose vivid,
-concrete, playable, and not novelistic.
+- The campaign seed and setting notes in supplemental context are authoritative
+  for genre, era, technology, magic, tone, stakes, inspirations, and
+  restrictions.
+- Match the supplied campaign seed and setting notes directly instead of
+  blending in an unrelated default genre.
+- Keep prose vivid, concrete, playable, and not novelistic.
 
 Voice:
 - Address the player-character in second person (`you`), not third person,
@@ -511,6 +530,9 @@ class NarrativeEngine:
             f"<CURRENT_SCENE>{self._xml_escape(state.current_scene)}</CURRENT_SCENE>",
             f"<SCENE_STATUS>{state.scene_status.value}</SCENE_STATUS>",
             f"<CHAOS_FACTOR>{state.chaos_factor}</CHAOS_FACTOR>",
+            "<CAMPAIGN_SEED>",
+            self._xml_escape(state.campaign_seed.model_dump_json()),
+            "</CAMPAIGN_SEED>",
             "<CHARACTER_JSON>",
             self._xml_escape(self._compact_character_json(state)),
             "</CHARACTER_JSON>",

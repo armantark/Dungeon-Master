@@ -2,7 +2,11 @@ from litellm.types.utils import ModelResponse
 
 from dungeon_master.models import NPC, NPCPlayerLabelKind, NPCStatus, OracleKind, OracleOutcome
 from dungeon_master.narrative import CompletionRequest, NarrativeConfig
-from dungeon_master.npc_updater import NPCUpdater
+from dungeon_master.npc_updater import (
+    NPC_UPDATER_SYSTEM_PROMPT,
+    GeneratedNPCUpdateBatch,
+    NPCUpdater,
+)
 from tests.factories import sample_state
 
 
@@ -345,3 +349,91 @@ def test_npc_updater_prompt_includes_final_narration_when_supplied() -> None:
     user_prompt = completion.messages[1]["content"]
     assert "Final narration response" in user_prompt
     assert "The Hierophant of the Ashen Choir" in user_prompt
+
+
+def test_npc_updater_batch_accepts_four_ops() -> None:
+    batch = GeneratedNPCUpdateBatch.model_validate(
+        {
+            "ops": [
+                {
+                    "kind": "create",
+                    "npc_id": None,
+                    "name": "NPC One",
+                    "role": "Role one",
+                    "disposition": "neutral",
+                },
+                {
+                    "kind": "create",
+                    "npc_id": None,
+                    "name": "NPC Two",
+                    "role": "Role two",
+                    "disposition": "neutral",
+                },
+                {
+                    "kind": "create",
+                    "npc_id": None,
+                    "name": "NPC Three",
+                    "role": "Role three",
+                    "disposition": "neutral",
+                },
+                {
+                    "kind": "create",
+                    "npc_id": None,
+                    "name": "Lecture hall onlookers",
+                    "player_label": "Lecture hall onlookers",
+                    "player_label_kind": "descriptor",
+                    "role": "Other students watching the exchange",
+                    "disposition": "curious",
+                },
+            ],
+        },
+    )
+
+    assert len(batch.ops) == 4
+
+
+def test_npc_updater_prompt_mentions_four_op_cap_and_grouping() -> None:
+    assert "0-4 NPC ops total" in NPC_UPDATER_SYSTEM_PROMPT
+    assert "grouped descriptor NPC" in NPC_UPDATER_SYSTEM_PROMPT
+
+
+def test_npc_updater_prompt_requires_revealed_names_to_update_descriptors() -> None:
+    system_prompt = " ".join(NPC_UPDATER_SYSTEM_PROMPT.split())
+
+    assert "proper name is newly associated with an already-tracked descriptor figure" in (
+        system_prompt
+    )
+    assert "update that existing NPC by id instead of creating a duplicate" in system_prompt
+    assert "Preserve existing role/disposition facts" in system_prompt
+    assert "not permission to invent" in system_prompt
+
+
+def test_npc_updater_prompt_includes_scene_transcript_memory() -> None:
+    completion = RecordingNPCCompletion('{"ops":[]}')
+    updater = NPCUpdater(
+        config=NarrativeConfig(model="test-model", api_key=None, base_url=None, max_retries=0),
+        completion_function=completion,
+    )
+    state = sample_state()
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+
+    updater.generate_npc_updates(
+        state,
+        player_input="I ask Mira about the note.",
+        outcome=outcome,
+        narrative_text="Mira keeps walking beside the courtyard planter.",
+        memory_context=(
+            "Current scene transcript:\n"
+            "- Turn 3: I return the note -> Narration: The blue-haired student says, "
+            "'I'm Mira.'"
+        ),
+    )
+
+    assert completion.messages is not None
+    user_prompt = completion.messages[1]["content"]
+    assert "Current scene transcript:" in user_prompt
+    assert "The blue-haired student says" in user_prompt

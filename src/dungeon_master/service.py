@@ -30,6 +30,7 @@ from dungeon_master.character_effect_updater import (
 from dungeon_master.config import LLMRuntimeBundle, build_llm_runtime, single_llm_runtime
 from dungeon_master.continuity_classifier import ContinuityClassifier, ContinuityUpdateScope
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
+from dungeon_master.inventory_updater import InventoryUpdater, InventoryUpdateResult
 from dungeon_master.memory import (
     CURRENT_MEMORY_SCHEMA_VERSION,
     CommittedTurnMemory,
@@ -471,6 +472,7 @@ class CharacterPort(Protocol):
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
         raise NotImplementedError
 
@@ -480,6 +482,7 @@ class CharacterPort(Protocol):
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         raise NotImplementedError
 
@@ -489,20 +492,26 @@ class CharacterPort(Protocol):
         mode: CharacterDraftMode,
         prompt: str | None,
         template: CharacterSheet | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         raise NotImplementedError
 
-    def generate_quiz(self, concept: str) -> CharacterQuiz:
+    def generate_quiz(self, concept: str, seed: CampaignSeed | None = None) -> CharacterQuiz:
         raise NotImplementedError
 
-    def generate_quiz_result(self, concept: str) -> CharacterQuizResult:
+    def generate_quiz_result(
+        self,
+        concept: str,
+        seed: CampaignSeed | None = None,
+    ) -> CharacterQuizResult:
         raise NotImplementedError
 
     def iter_generate_quiz(
         self,
         concept: str,
         *,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
         raise NotImplementedError
@@ -513,6 +522,7 @@ class CharacterPort(Protocol):
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterSheet:
         raise NotImplementedError
 
@@ -522,6 +532,7 @@ class CharacterPort(Protocol):
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
     ) -> CharacterDraftResult:
         raise NotImplementedError
 
@@ -531,6 +542,7 @@ class CharacterPort(Protocol):
         concept: str,
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
+        seed: CampaignSeed | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
         raise NotImplementedError
@@ -678,6 +690,20 @@ class CharacterEffectUpdaterPort(Protocol):
         raise NotImplementedError
 
 
+class InventoryUpdaterPort(Protocol):
+    def update_inventory(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> InventoryUpdateResult:
+        raise NotImplementedError
+
+
 class GameService:
     def __init__(  # noqa: PLR0913
         self,
@@ -693,6 +719,7 @@ class GameService:
         thread_updater: ThreadUpdaterPort | None = None,
         npc_updater: NPCUpdaterPort | None = None,
         character_effect_updater: CharacterEffectUpdaterPort | None = None,
+        inventory_updater: InventoryUpdaterPort | None = None,
         continuity_classifier: ContinuityClassifierPort | None = None,
         capability_oracle_guard: CapabilityOracleGuardPort | None = None,
         llm_runtime: LLMRuntimeBundle | None = None,
@@ -715,6 +742,10 @@ class GameService:
         self._thread_updater = thread_updater or ThreadUpdater(config=resolved_runtime.structured)
         self._npc_updater = npc_updater or NPCUpdater(config=resolved_runtime.structured)
         self._character_effect_updater = character_effect_updater or CharacterEffectUpdater(
+            config=resolved_runtime.structured,
+        )
+        self._inventory_updater = inventory_updater or InventoryUpdater(
+            cairn=self._cairn,
             config=resolved_runtime.structured,
         )
         self._continuity_classifier = continuity_classifier or ContinuityClassifier(
@@ -748,6 +779,7 @@ class GameService:
         self._thread_updater = ThreadUpdater(config=runtime.structured)
         self._npc_updater = NPCUpdater(config=runtime.structured)
         self._character_effect_updater = CharacterEffectUpdater(config=runtime.structured)
+        self._inventory_updater = InventoryUpdater(cairn=self._cairn, config=runtime.structured)
         self._continuity_classifier = ContinuityClassifier(config=runtime.structured)
         self._capability_oracle_guard = CapabilityOracleGuard(config=runtime.structured)
 
@@ -940,10 +972,12 @@ class GameService:
         prompt: str | None,
         template: CharacterSheet | None,
     ) -> CharacterSheet:
+        state = self.load_state()
         return self._character_generator.generate_draft(
             mode=mode,
             prompt=prompt,
             template=template,
+            seed=state.campaign_seed,
         )
 
     def generate_character_draft_result(
@@ -953,17 +987,24 @@ class GameService:
         prompt: str | None,
         template: CharacterSheet | None,
     ) -> CharacterDraftResult:
+        state = self.load_state()
         return self._character_generator.generate_draft_result(
             mode=mode,
             prompt=prompt,
             template=template,
+            seed=state.campaign_seed,
         )
 
     def generate_character_quiz(self, concept: str) -> CharacterQuiz:
-        return self._character_generator.generate_quiz(concept)
+        state = self.load_state()
+        return self._character_generator.generate_quiz(concept, seed=state.campaign_seed)
 
     def generate_character_quiz_result(self, concept: str) -> CharacterQuizResult:
-        return self._character_generator.generate_quiz_result(concept)
+        state = self.load_state()
+        return self._character_generator.generate_quiz_result(
+            concept,
+            seed=state.campaign_seed,
+        )
 
     def stream_character_quiz(
         self,
@@ -971,7 +1012,12 @@ class GameService:
         *,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterQuizResult]:
-        return self._character_generator.iter_generate_quiz(concept, cancel_token=cancel_token)
+        state = self.load_state(cancel_token=cancel_token)
+        return self._character_generator.iter_generate_quiz(
+            concept,
+            seed=state.campaign_seed,
+            cancel_token=cancel_token,
+        )
 
     def generate_quizzed_character_draft(
         self,
@@ -980,10 +1026,12 @@ class GameService:
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
     ) -> CharacterSheet:
+        state = self.load_state()
         return self._character_generator.generate_quizzed_draft(
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=state.campaign_seed,
         )
 
     def generate_quizzed_character_draft_result(
@@ -993,10 +1041,12 @@ class GameService:
         answers: list[CharacterQuizAnswer],
         final_note: str | None,
     ) -> CharacterDraftResult:
+        state = self.load_state()
         return self._character_generator.generate_quizzed_draft_result(
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=state.campaign_seed,
         )
 
     def stream_quizzed_character_draft(
@@ -1007,10 +1057,12 @@ class GameService:
         final_note: str | None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        state = self.load_state(cancel_token=cancel_token)
         return self._character_generator.iter_generate_quizzed_draft(
             concept=concept,
             answers=answers,
             final_note=final_note,
+            seed=state.campaign_seed,
             cancel_token=cancel_token,
         )
 
@@ -1022,10 +1074,12 @@ class GameService:
         template: CharacterSheet | None,
         cancel_token: CancellationToken | None = None,
     ) -> Generator[CompletionDelta, None, CharacterDraftResult]:
+        state = self.load_state(cancel_token=cancel_token)
         return self._character_generator.iter_generate_draft(
             mode=mode,
             prompt=prompt,
             template=template,
+            seed=state.campaign_seed,
             cancel_token=cancel_token,
         )
 
@@ -2119,18 +2173,12 @@ class GameService:
         )
 
     def _plan_needs_pre_narration_continuity(self, plan: TurnPlan) -> bool:
-        # Pure narration plans have not resolved any durable fact yet. Running
-        # the expensive thread/NPC updater before the narrator answers only
-        # makes the turn slower; newly narrated canon is captured after prose
-        # by the normal committed-turn memory path.
-        #
-        # Recon/search turns follow the same rule: inspecting the immediate
-        # scene from the current vantage should not mutate continuity before
-        # the narrator answers, because the player has not yet committed to
-        # movement and no durable new fact has been established.
-        if self._plan_is_recon_lookup(plan):
-            return False
-        return any(op.kind is not PlannedTurnOpKind.NARRATE for op in plan.ops)
+        # Treat the final narrated turn as the main source of durable
+        # continuity evidence. The mechanic/oracle outcome still resolves first,
+        # but thread/NPC/item canon should reconcile against committed prose
+        # rather than speculative pre-narration guesses.
+        del plan
+        return False
 
     def _plan_is_recon_lookup(self, plan: TurnPlan) -> bool:
         return any(op.kind == PlannedTurnOpKind.SEARCH_SCENE for op in plan.ops) and all(
@@ -2666,6 +2714,13 @@ class GameService:
             narrative_text=narration.content,
         )
         if post_narration_continuity:
+            self._apply_inventory_updates_from_narration(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+            )
             working_memory = self._apply_post_narration_continuity_for_turn(
                 state,
                 player_input=player_input,
@@ -2773,6 +2828,14 @@ class GameService:
                 "reconciling_continuity",
                 StreamStageStatus.ACTIVE,
                 tracker=tracker,
+            )
+            self._apply_inventory_updates_from_narration(
+                state,
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+                cancel_token=cancel_token,
             )
             working_memory = self._apply_post_narration_continuity_for_turn(
                 state,
@@ -3495,63 +3558,22 @@ class GameService:
         cancel_token: CancellationToken | None = None,
         working_memory: MemoryState | None = None,
     ) -> MemoryState:
-        scope = self._continuity_classifier.classify_update_scope(
+        memory = self._memory_for_state(state, existing_memory=working_memory)
+        thread_context, memory = self._memory_context_for_thread_updater(
             state,
             player_input=player_input,
             outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narrative_text,
-            cancel_token=cancel_token,
+            working_memory=memory,
         )
-        if scope is ContinuityUpdateScope.NONE:
-            return self._memory_for_state(state, existing_memory=working_memory)
-        memory = self._memory_for_state(state, existing_memory=working_memory)
-        thread_generated: GeneratedThreadUpdateBatch | None = None
-        npc_generated: GeneratedNPCUpdateBatch | None = None
-        if scope is ContinuityUpdateScope.BOTH:
-            thread_context, memory = self._memory_context_for_thread_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-                working_memory=memory,
-            )
-            npc_context, _ = self._memory_context_for_npc_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-                working_memory=memory,
-            )
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                thread_future = executor.submit(
-                    self._generate_thread_updates_for_turn,
-                    state,
-                    player_input=player_input,
-                    outcome=outcome,
-                    execution_context=execution_context,
-                    narrative_text=narrative_text,
-                    memory_context=thread_context,
-                    cancel_token=cancel_token,
-                )
-                npc_future = executor.submit(
-                    self._generate_npc_updates_for_turn,
-                    state,
-                    player_input=player_input,
-                    outcome=outcome,
-                    execution_context=execution_context,
-                    narrative_text=narrative_text,
-                    memory_context=npc_context,
-                    cancel_token=cancel_token,
-                )
-                thread_generated = thread_future.result()
-                npc_generated = npc_future.result()
-        elif scope is ContinuityUpdateScope.THREADS:
-            thread_context, memory = self._memory_context_for_thread_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-                working_memory=memory,
-            )
-            thread_generated = self._generate_thread_updates_for_turn(
+        npc_context, _ = self._memory_context_for_npc_updater(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            working_memory=memory,
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            thread_future = executor.submit(
+                self._generate_thread_updates_for_turn,
                 state,
                 player_input=player_input,
                 outcome=outcome,
@@ -3560,14 +3582,8 @@ class GameService:
                 memory_context=thread_context,
                 cancel_token=cancel_token,
             )
-        elif scope is ContinuityUpdateScope.NPCS:
-            npc_context, _ = self._memory_context_for_npc_updater(
-                state,
-                player_input=player_input,
-                outcome=outcome,
-                working_memory=memory,
-            )
-            npc_generated = self._generate_npc_updates_for_turn(
+            npc_future = executor.submit(
+                self._generate_npc_updates_for_turn,
                 state,
                 player_input=player_input,
                 outcome=outcome,
@@ -3576,6 +3592,8 @@ class GameService:
                 memory_context=npc_context,
                 cancel_token=cancel_token,
             )
+            thread_generated = thread_future.result()
+            npc_generated = npc_future.result()
         touched_thread_ids = self._apply_generated_thread_updates(state, thread_generated)
         touched_npc_ids = self._apply_generated_npc_updates(state, npc_generated)
         if touched_npc_ids:
@@ -3595,6 +3613,25 @@ class GameService:
         cancel_token: CancellationToken | None = None,
     ) -> CharacterEffectUpdateResult:
         return self._character_effect_updater.update_character_effects(
+            state,
+            player_input=player_input,
+            outcome=outcome,
+            execution_context=execution_context,
+            narrative_text=narrative_text,
+            cancel_token=cancel_token,
+        )
+
+    def _apply_inventory_updates_from_narration(  # noqa: PLR0913
+        self,
+        state: GameState,
+        *,
+        player_input: str,
+        outcome: OracleOutcome,
+        execution_context: str | None,
+        narrative_text: str,
+        cancel_token: CancellationToken | None = None,
+    ) -> InventoryUpdateResult:
+        return self._inventory_updater.update_inventory(
             state,
             player_input=player_input,
             outcome=outcome,

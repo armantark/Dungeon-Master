@@ -533,6 +533,14 @@ class CairnItemState(StrictModel):
     attack_costs: list[CairnResourceCost] = Field(default_factory=list)
     use_costs: list[CairnResourceCost] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def normalize_slots_for_cairn_tags(self) -> CairnItemState:
+        if CairnItemTag.BULKY in self.tags:
+            object.__setattr__(self, "slots", 2)
+        elif CairnItemTag.PETTY in self.tags:
+            object.__setattr__(self, "slots", 0)
+        return self
+
 
 class InventoryItem(StrictModel):
     id: str = Field(default_factory=lambda: new_id("item"))

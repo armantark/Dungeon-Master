@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from pydantic import Field, ValidationError, model_validator
 
+from dungeon_master.campaign import render_creative_direction
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.models import (
     AttackStance,
@@ -177,21 +178,31 @@ BROKEN_LIMB_PARTS: tuple[str, ...] = (
     "Skull",
 )
 
-CAIRN_BACKFILL_SYSTEM_PROMPT = """You convert a fiction-first dark-fantasy character into a
-Cairn 2e-inspired backend mechanics record.
+CAIRN_BACKFILL_SYSTEM_PROMPT = """You convert a fiction-first character into a
+Cairn-inspired backend mechanics record.
 
 Return only valid JSON.
+
+Setting authority:
+- The campaign seed supplied in the user prompt is authoritative for genre,
+  era, technology, magic, tone, stakes, inspirations, and restrictions.
+- If the seed is mundane or modern, translate Cairn mechanics into lightweight
+  ordinary capability/resource abstractions that fit the supplied setting.
 
 Rules philosophy:
 - This project uses Cairn-style structured play: STR, DEX, WIL, HP, armor,
   burden/slots, practical inventory, and deterministic item semantics.
 - `skills` and `abilities` should be short textual specialties or permissions,
   not bonuses.
-- Biography and body-horror details should primarily affect stats, condition,
-  skills, abilities, and notes.
+- Biography details should primarily affect stats, condition, skills, abilities,
+  and notes.
 - Inventory should be a practical starting bundle appropriate to the
-  character's profile. Prefer a weapon, practical clothing/armor, light,
-  supplies, tools, and at most one or two signature biography-derived items.
+  character profile and campaign seed. Do not force weapons, armor, relics,
+  survival gear, or occult items into a mundane/non-combat seed.
+- When the authored character is an ordinary person rather than an abstract
+  adventuring kit, include the clothing, accessories, and immediate personal
+  carry that define how they actually show up in play, as long as those items
+  are concrete and useful enough to track.
 - If the authored character context names concrete visible gear already
   established in play, especially carried or wielded weapons, preserve that
   gear in the structured inventory unless the context says it was lost,
@@ -209,6 +220,8 @@ Rules philosophy:
   weapon resource `{label:"Bolts", kind:"ammo", current:5, max:5}` and self
   attack cost; sunlight laser: weapon resource `{label:"Sun charge",
   kind:"charge", current:2, max:2, recharge_policy:"in_sunlight"}`.
+- Allowed resource recharge policies are: none, per_turn, per_watch, per_day,
+  on_rest, in_sunlight, manual_condition. Do not emit per_rest.
 - If an item is a spellbook, scroll, relic, or holy relic, include a bounded
   `power` object. Keep powers item-bound, limited, and costly when appropriate;
   do not invent generic blessing/buff states.
@@ -283,6 +296,9 @@ The authored character is:
 <<CHARACTER_JSON>>
 
 The generated opening state around that character is:
+Campaign seed:
+<<CAMPAIGN_SEED>>
+
 Current scene: <<CURRENT_SCENE>>
 Setting notes: <<SETTING_NOTES>>
 Threads: <<THREAD_TITLES>>
@@ -299,8 +315,9 @@ Important instruction:
   and notes rather than inventory objects.
 """
 
-CAIRN_ENCOUNTER_SYSTEM_PROMPT = """You convert a dark-fantasy scene into a concrete
-Cairn 2e combat encounter.
+CAIRN_ENCOUNTER_SYSTEM_PROMPT = """You convert a scene into a concrete
+Cairn-inspired encounter only when the supplied scene and trigger actually
+support one.
 
 Return only valid JSON.
 
@@ -319,6 +336,7 @@ Rules:
 - If multiple combatants appear, mark at most one as `leader`.
 - Keep the encounter grounded and playable; do not invent a boss fight out
   of a minor scuffle.
+- Obey the supplied campaign seed and setting context.
 """
 
 CAIRN_ENCOUNTER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
@@ -469,12 +487,20 @@ class GeneratedCairnItemProfile(StrictModel):
         migrated["tags"] = _normalize_generated_item_tags(migrated.get("tags", []))
         if "power" in migrated:
             migrated["power"] = _normalize_generated_item_power(migrated.get("power"))
+        for field_name in ("resources", "attack_costs", "use_costs"):
+            migrated[field_name] = _normalize_generated_resource_entries(
+                migrated.get(field_name, []),
+            )
         raw_tags = migrated.get("tags", [])
         tags = {
             tag.value if isinstance(tag, CairnItemTag) else str(tag)
             for tag in raw_tags
             if isinstance(tag, CairnItemTag | str)
         }
+        if CairnItemTag.BULKY.value in tags:
+            migrated["slots"] = 2
+        elif CairnItemTag.PETTY.value in tags:
+            migrated["slots"] = 0
         has_weapon_tag = CairnItemTag.WEAPON.value in tags
         raw_die = migrated.get("weapon_damage_die")
         if raw_die in (0, "0", ""):
@@ -585,6 +611,30 @@ def _normalize_generated_item_power(raw_power: object) -> object:
         if isinstance(raw_value, str):
             migrated[field_name] = raw_value.strip().lower().replace("-", "_").replace(" ", "_")
     return migrated
+
+
+def _normalize_generated_resource_entries(raw_entries: object) -> list[object]:
+    if not isinstance(raw_entries, list):
+        return []
+    normalized: list[object] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            normalized.append(raw_entry)
+            continue
+        migrated = dict(raw_entry)
+        for field_name in ("kind", "draw_policy", "recharge_policy"):
+            raw_value = migrated.get(field_name)
+            if isinstance(raw_value, str):
+                migrated[field_name] = _normalize_generated_resource_enum(raw_value)
+        normalized.append(migrated)
+    return normalized
+
+
+def _normalize_generated_resource_enum(raw_value: str) -> str:
+    cleaned = raw_value.strip().lower().replace("-", "_").replace(" ", "_")
+    if cleaned in {"per_rest", "per_full_rest", "full_rest", "rest"}:
+        return CairnResourceRechargePolicy.ON_REST.value
+    return cleaned
 
 
 def _dedupe_preserve_order(values: list[object]) -> list[object]:
@@ -2399,6 +2449,7 @@ class CairnEngine:
                 "<<CHARACTER_JSON>>",
                 state.character.model_dump_json(indent=2),
             )
+            .replace("<<CAMPAIGN_SEED>>", render_creative_direction(state.campaign_seed))
             .replace("<<CURRENT_SCENE>>", state.current_scene)
             .replace("<<SETTING_NOTES>>", self._prompt_setting_context(state))
             .replace("<<THREAD_TITLES>>", ", ".join(thread.title for thread in state.threads) or "(none)")

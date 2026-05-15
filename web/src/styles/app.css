@@ -636,6 +636,7 @@ button,
   --btn-bg: linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
   --btn-color: var(--paper-warm);
   --btn-border: color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+  --btn-iron-inset: -1px;
 
   position: relative;
   /*
@@ -700,7 +701,7 @@ button::before,
 .btn::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: var(--btn-iron-inset);
   z-index: -1;
   pointer-events: none;
   background-image: url("/textures/cast-iron.jpg");

@@ -10,7 +10,15 @@ from dungeon_master.models import (
     CairnItemState,
     CairnItemTag,
     CairnMechanicsSource,
+    CampaignGenre,
+    CampaignMagicLevel,
+    CampaignSeed,
+    CampaignStakesScale,
     CampaignStatus,
+    CampaignTechLevel,
+    CampaignTimePeriod,
+    CampaignToneDarkBright,
+    CampaignToneGrimNoble,
     EncounterState,
     EncounterThreatLevel,
     EnemyCombatant,
@@ -358,6 +366,18 @@ def test_narrative_prompt_prefers_compact_grounded_prose() -> None:
     assert "Canonical abilities and notes" in system_prompt
     assert "Do not invent a narrower limitation for an ability" in system_prompt
     assert "scope success/failure to `ORACLE_OUTCOME_JSON.question`" in system_prompt
+    assert all(
+        phrase in system_prompt
+        for phrase in (
+            "not permission",
+            "rewrite settled canon",
+            "revoke established openings",
+            "Failed interaction saves should usually change the footing",
+            "irreparable break as an emergent conclusion",
+            "Scale consequences through the fiction and campaign seed",
+            "do not turn roll margin into a separate rule table",
+        )
+    )
     assert '<SUPPLEMENTAL_CONTEXT REFERENCE_ONLY="true"' in system_prompt
     assert "<LATEST_USER_MESSAGE>" in system_prompt
     assert "I check my supplies before leaving." in system_prompt
@@ -658,6 +678,41 @@ def test_narrative_prompt_includes_campaign_directives_when_present() -> None:
         "role": "user",
         "content": "I wait for the hierophant to answer.",
     }
+
+
+def test_narrative_prompt_uses_campaign_seed_as_tone_authority() -> None:
+    completion = RecordingCompletion()
+    state = sample_state()
+    state.campaign_seed = CampaignSeed(
+        preset="Mid 2020s real life romance",
+        time_period=CampaignTimePeriod.MODERN,
+        tone_grim_noble=CampaignToneGrimNoble.MIXED,
+        tone_dark_bright=CampaignToneDarkBright.BRIGHT,
+        genres=[CampaignGenre.HEARTH_AND_HOMESTEAD],
+        magic_level=CampaignMagicLevel.NONE,
+        tech_level=CampaignTechLevel.MODERN,
+        stakes_scale=CampaignStakesScale.PERSONAL_LOCAL,
+        inspirations="mid 2020s, basically real life",
+        restrictions="No supernatural, horror, medieval, plague, relic, or necromantic content.",
+    )
+    outcome = OracleOutcome(
+        kind=OracleKind.PLAYER_ACTION,
+        summary="Narrative continuation requested without an oracle roll.",
+        chaos_factor=state.chaos_factor,
+    )
+    engine = NarrativeEngine(
+        config=NarrativeConfig(model=DEFAULT_MODEL, api_key="test-key", base_url=None),
+        completion_function=completion,
+    )
+
+    engine.generate(state, outcome, "I look around the apartment.")
+
+    assert completion.messages is not None
+    system_prompt = completion.messages[0]["content"]
+    assert "<CAMPAIGN_SEED>" in system_prompt
+    assert '"preset":"Mid 2020s real life romance"' in system_prompt
+    assert "The campaign seed and setting notes" in system_prompt
+    assert "Gritty, traditional dark fantasy" not in system_prompt
 
 
 def test_narrative_prompt_compacts_character_payload() -> None:
