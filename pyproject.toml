@@ -26,6 +26,7 @@ where = ["src"]
 
 [dependency-groups]
 dev = [
+    "deepeval>=4.0.2",
     "httpx>=0.28.0",
     "mypy>=1.19.0",
     "pyinstaller>=6.20.0",

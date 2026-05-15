@@ -140,6 +140,17 @@
 - Generalized Cairn resource accounting is now landed. `CairnItemState` carries structured `resources`, `attack_costs`, and `use_costs` alongside legacy `uses`; `CairnResolution.resource_deltas` records actor/item/resource before-after changes for attack, item-use, recharge, and survival-style updates. `CairnEngine` preflights all resource costs before mutation, consumes attack resources for both ordinary and coordinated attacks, consumes item-use costs through the same helper, and applies deterministic recharge policies for watch/day/rest triggers without item-name heuristics. The router/reviewer prompts now explicitly approve active-combat named companion weapon commands such as a companion bow shot, avoiding narrate-only attacks that skip resource accounting. Frontend mirrors the resource wire schema, formats pools/costs/deltas in `web/src/lib/cairn.ts`, renders item pools/costs in `CharacterFolio`, and renders structured resource rows in `MechanicalReceipt`. Verification is green: `uv run ruff check src tests`, `uv run mypy src tests`, full `uv run pytest -q`, `cd web && npm run check`, full `npm test -- --run`, and `npm run build`.
 - Resource-accounting follow-up: generated Cairn item profiles now normalize model-authored recharge-policy synonyms before strict Pydantic validation. The immediate bug was `"per_rest"` from the backfill LLM, which is now mapped to canonical `on_rest` alongside `per_full_rest` / `full_rest` / `rest`; normalization also applies to nested `resources`, `attack_costs`, and `use_costs` enum strings. The prompt now lists the allowed resource recharge policies and warns not to emit `per_rest`. A focused regression test in `tests/test_cairn.py` covers the exact validation failure. A small CSS fix also widened the global cast-iron button pseudo to `inset: -1px` via `--btn-iron-inset`, eliminating the untextured rim at button edges while preserving `no-iron` opt-outs.
 - Campaign seed authority follow-up: the remaining backend prompt contradictions are fixed. `CampaignGenerator` no longer imposes "oppressive medieval dark fantasy" at campaign start; `NarrativeEngine` no longer has a global gritty dark-fantasy tone; and Cairn backfill/encounter seed prompts now treat the active `CampaignSeed` as setting authority without framing ordinary/mundane play as a special exception. Cairn mechanics are still available, but mundane/modern seeds should be translated as ordinary capability/resource abstractions that fit the supplied setting. Regression coverage now inspects actual campaign, narration, quiz, and Cairn prompt content for the modern-real-life romance seed case. Verification: `uv run pytest tests/test_campaign.py tests/test_cairn.py tests/test_narrative.py`, targeted `ruff`, and targeted `mypy` are green.
+- Prompt-compression Wave 1 is underway. A new
+  `src/dungeon_master/prompt_fragments.py` module centralizes repeated prompt
+  policy text and the common updater user-prompt shape, with
+  `tests/test_prompt_fragments.py` guarding the fragments. Backend prompt files
+  now reuse shared JSON-only / seed-authority / no-invention / no-keyword /
+  continuity-updater / Cairn enum fragments where safe. A first `deepeval`
+  drift harness also exists (`tools/generate_baseline.py`,
+  `tests/test_eval_drift.py`), but the current baseline file contains only
+  error rows and the drift test skips until a valid baseline is regenerated.
+  Verification for this pass: full `uv run pytest -q` passes with that expected
+  skip, and `uv run ruff check .` passes.
 
 ## Current Status
 

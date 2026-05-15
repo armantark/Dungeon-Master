@@ -30,6 +30,7 @@ from dungeon_master.narrative import (
     extract_json_object,
 )
 from dungeon_master.observability import log_decision
+from dungeon_master.prompt_fragments import JSON_ONLY
 
 
 class TurnRoute(StrEnum):
@@ -213,50 +214,13 @@ LIKELIHOOD_HINTS: dict[str, Likelihood] = {
 }
 
 
-TURN_ROUTER_SYSTEM_PROMPT = """You plan a bounded backend action sequence for a solo
+TURN_ROUTER_SYSTEM_PROMPT = f"""You plan a bounded backend action sequence for a solo
 TTRPG player's free-text turn before narration happens.
 
-Return only valid JSON.
+{JSON_ONLY}
 
-`route` is the legacy summary label for the whole turn:
-- player_action
-- yes_no
-- random_event
-- scene_check
-- save
-- begin_encounter
-- attack
-- harm
-- recovery
-- setup_advantage
-- equip
-- retreat
-
-`ops` is an ordered list of 1-3 bounded backend steps.
-
-Allowed op kinds:
-- narrate: pure narration, no deterministic backend step inferred
-- yes_no: an explicit yes/no oracle question about uncertainty, fate, luck,
-  or facts not directly answerable by immediate observation
-- random_event: the player is explicitly asking for a complication, twist, or random event
-- scene_check: the player is explicitly pushing into a new scene, location, or
-  travel transition right now
-- save: the player is attempting one risky immediate action that should
-  resolve as a Cairn-style save
-- begin_encounter: the player explicitly wants to start or frame tracked combat
-  against a present/established hostile foe or group, without resolving the
-  first attack or incoming blow yet
-- attack: the player is attacking or striking a concrete foe right now
-- coordinated_attack: the player and at least one named party member are
-  making one coordinated offensive move against the same concrete foe now
-- enemy_opener: a hostile foe is clearly striking first, springing an ambush,
-  or seizing initiative in a way that should start a tracked encounter now
-- harm: the player is explicitly taking damage or a blow should be resolved directly
-- recovery: the player is explicitly resting, catching breath, or recovering
-- setup_advantage: the player is changing the combat situation to earn a
-  fiction-first advantage before or during a fight (blinding, pinning,
-  hamstringing, luring under a hazard, exposing a weak spot, waiting for a
-  clean shot) without simply making a normal attack right now
+`route` is the legacy summary label for the whole turn. See schema.
+`ops` is an ordered list of 1-3 bounded backend steps. See schema for allowed kinds.
 - equip: the player is explicitly readying, drawing, donning, stowing,
   equipping, or unequipping gear
 - retreat: the player is explicitly disengaging, falling back, fleeing,

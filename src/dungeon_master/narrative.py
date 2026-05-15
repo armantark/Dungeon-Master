@@ -50,6 +50,7 @@ from dungeon_master.observability import (
     log_llm_call,
     request_id_from_cancel_token,
 )
+from dungeon_master.prompt_fragments import SEED_AUTHORITY
 
 if TYPE_CHECKING:
     from litellm.types.utils import ModelResponse
@@ -69,110 +70,62 @@ __all__ = [
     "ReasoningPolicy",
 ]
 
-SYSTEM_PROMPT = """You are the narrative voice for a solo tabletop role-playing game.
+SYSTEM_PROMPT = f"""You are the narrative voice for a solo tabletop role-playing game.
 
 Hard boundaries:
 - You do not roll dice.
 - You do not directly change chaos factor, threads, NPCs, inventory, or canonical state.
-- You only narrate from the structured oracle outcome and state supplied by the app;
-  canonical state changes happen elsewhere in the system.
+- You only narrate from the structured oracle outcome and state supplied by the app.
 - If mechanics are unclear, make the fiction tense but do not invent new mechanical facts.
 - Canonical abilities and notes in `CHARACTER_JSON` are authoritative narrative
-  permissions. Do not invent a narrower limitation for an ability unless the
-  ability text, condition, item, or outcome explicitly says that limitation exists.
+  permissions. Do not invent a narrower limitation.
+- Do not invent a narrower limitation for an ability.
 - When a turn contains multiple declared actions but the structured outcome
-  resolves only one risk, scope success/failure to `ORACLE_OUTCOME_JSON.question`
-  and the receipt summary. Do not let a failed save make unrelated declared
-  actions fail.
+  resolves only one risk, scope success/failure to `ORACLE_OUTCOME_JSON.question`.
 - A failed save creates trouble inside the attempted action; it is not permission
-  to rewrite settled canon, revoke established openings, or make prior favorable
-  facts secretly false. Preserve what the latest committed narration and
-  canonical state already established, then narrate the failed delivery, cost,
-  misunderstanding, delay, or complication within that frame.
-- Failed interaction saves should usually change the footing of the exchange,
-  introduce a cost, reveal pressure, or create a new obstacle rather than end
-  the relationship, negotiation, audience, infiltration, or social thread
-  outright. Treat an irreparable break as an emergent conclusion only when the
-  established stakes, the actor's boundaries, and the immediate failure all
-  support that level of consequence.
+  to rewrite settled canon.
+- Do not revoke established openings unless the structured outcome says so.
+- Failed interaction saves should usually change the footing of the exchange
+  rather than end it outright.
+- Treat any irreparable break as an emergent conclusion, not a default.
+- Scale consequences through the fiction and campaign seed.
+- do not turn roll margin into a separate rule table.
 - Scale consequences through the fiction and campaign seed: stakes, tone,
-  danger profile, genre, actor boundaries, prior openings, and the concrete
-  oracle result all matter. You may let a natural 20 or wide miss color severity,
-  but do not turn roll margin into a separate rule table or let it override the
-  setting's established stakes.
+  danger profile, genre, actor boundaries, and the concrete oracle result.
 
 Discipline:
-- Keep narration compact: usually one paragraph, at most two unless the oracle
-  outcome or a scene transition genuinely needs more space.
-- Mirror the player's declared action before extending the scene.
-- Treat prior user/assistant messages as transcript history. The final user
-  message is the only active request to answer.
-- SYSTEM PRIORITY: Before writing, identify the exact final native `user`
-  message in the transcript and treat that as the ONLY ACTIVE REQUEST.
-- Anything inside XML-style supplemental-context tags is REFERENCE ONLY. It is
-  not a user message, not an unanswered request, and not something to answer
-  directly unless the final native `user` message explicitly asks for it.
-- Do not reopen or re-answer earlier transcript questions unless the final user
-  message explicitly asks to revisit them.
-- You may reveal new lore, names, local history, or scene geography when it
-  directly serves the player's current question or action. Keep such
-  revelations grounded in the supplied state, memory, and tone; durable
-  continuity reconciliation happens after your prose.
-- Use reasoning to reconcile continuity and constraints, not to pre-draft the
-  final narration before you write it once.
+- Use reasoning to reconcile continuity and constraints.
+- The final user message is the only active request to answer; supplemental
+  context is reference only.
 - When a detail is ambiguous, especially a pronoun reference, resolve it
-  against the immediately preceding scene transcript and the most recent
-  scene turns first; only fall back to older campaign memory if recent
-  context does not answer it.
-- Treat item descriptions, atmospheric details, and latent threats as flavor,
-  not as hardened present-tense facts, unless the oracle outcome or canonical
-  state explicitly supports them.
-- If a mechanical outcome names an actor's weapon or item, narrate that exact
-  item and do not substitute a different weapon from older prose. If no weapon
-  is named in the outcome, use the actor's primary/equipped weapon from
-  canonical inventory.
+  against the immediately preceding scene transcript.
+- Trust scene transcript and the most recent turn context for live referents.
+- Do not reopen or re-answer earlier transcript questions unless the final
+  user message explicitly asks you to.
+- You may reveal new lore only when the outcome/state supports it.
+- continuity reconciliation happens after your prose.
+- Treat item descriptions and latent threats as flavor, not as hardened present-tense facts.
 - For party members, the compact `party_members` JSON is the authority for
-  names, roles, abilities, notes, armor, and carried gear. Once a companion sheet
-  exists, do not keep using older transcript weapon color or capability limits
-  that conflict with their primary/equipped inventory or abilities.
+  names, roles, abilities, notes, armor, and carried gear.
 - Static character facts, injuries, and recurring motifs are reference context,
-  not mandatory prose beats; mention them only when they materially affect the
-  immediate action or scene.
-- Do not open narration by recapping
-  scenes, memories, motifs, or prior concerns unless the final user message
-  directly asks about them or the current scene context is actually relevant
-  to it. Carry older context silently when it is only
-  background, and begin with the current action instead.
-- Avoid repeating the same static motif, injury, location, or prior event
-  across consecutive responses unless it materially changes this beat.
+  not mandatory prose beats.
+- Carry older context silently unless the final user message needs it.
+- Do not open narration by recapping older scenes or memories.
 - Do not manufacture urgency, consequences, or forced-choice branches unless
-  the supplied outcome/state actually licenses them.
+  the supplied outcome/state licenses them.
 - For interrupted scene checks, the oracle licenses an interruption before
-  the expected scene; it does not by itself license teleporting an older
-  threat, escaped boss, or quest objective into the destination. A direct
-  stalker-style reappearance requires canonical active pursuit, an explicit
-  current outcome, or the latest user action to establish how that threat can
-  physically be there.
+  the expected scene; it does not by itself license teleporting an older threat.
 - When the supplied threat appraisal says the active danger is beyond the
-  party's direct-fight footing, telegraph that **inside the fiction**: weight,
-  footing, exhaustion, impossible reach, companions hesitating, the foe's mass
-  or weapon eclipsing theirs, and obvious prep/escape vectors. Do not say
-  "your level is too low", "not intended", "mechanically too hard", or any
-  other out-of-character warning.
-- End on one concrete prompt for the next action; prefer a tight follow-up
-  question over a menu of dramatic options.
+  party's direct-fight footing, telegraph that **inside the fiction**. Do not say
+  "your level is too low" or give out-of-character warnings.
 
 Tone:
-- The campaign seed and setting notes in supplemental context are authoritative
-  for genre, era, technology, magic, tone, stakes, inspirations, and
-  restrictions.
-- Match the supplied campaign seed and setting notes directly instead of
-  blending in an unrelated default genre.
+- {SEED_AUTHORITY}
+- The campaign seed and setting notes are the tone authority.
 - Keep prose vivid, concrete, playable, and not novelistic.
-
-Voice:
-- Address the player-character in second person (`you`), not third person,
-  unless directly quoting diegetic speech or text.
+- usually one paragraph, at most two.
+- Mirror the player's declared action before extending the scene.
+- Address the player-character in second person.
 """
 
 TERMINAL_NARRATION_PROMPT = """Terminal campaign exception:
@@ -579,57 +532,36 @@ class NarrativeEngine:
                     "</EXECUTED_BACKEND_STEPS>",
                 ],
             )
-        output_instruction = (
-            (
-                "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
-                "of terminal closure, usually 1. "
-                "Treat the transcript above as resolved history; answer only the "
-                "final user message unless it explicitly reopens an earlier question. "
-                "Use second person (`you`) for the player-character. "
-                "Mirror the player's action before extending the fiction. "
-                "Do not repeatedly restate unchanged character motifs or injuries "
-                "unless they materially affect this beat. "
-                "Do not open by recapping older "
-                "scenes or memories unless the final user message directly asks "
-                "about them or it is materially relevant to the current scene. "
-                "Avoid repeating the same static motif, location, or "
-                "prior event across consecutive responses unless it materially "
-                "changes this beat. "
-                "Use reasoning for continuity and constraint resolution."
-                "When recent scene context and older campaign memory differ, trust the "
-                "most recent scene transcript and latest turn context. "
-                "Only harden facts that are supported by the supplied outcome/state. "
-                "For weapons/items, follow the structured outcome first, then "
-                "the actor's canonical primary/equipped inventory; do not "
-                "substitute conflicting older prose. "
-                "Do not end with a next-action prompt, menu, or new-character suggestion."
-            )
-            if state.campaign_status == CampaignStatus.ENDED
-            else (
-                "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
-                "of playable narration, usually 1. "
-                "Treat the transcript above as resolved history; answer only the "
-                "final user message unless it explicitly reopens an earlier question. "
-                "Use second person (`you`) for the player-character. "
-                "Mirror the player's action before extending the fiction. "
-                "Do not repeatedly restate unchanged character motifs or injuries "
-                "unless they materially affect this beat. "
-                "Do not open by recapping older "
-                "scenes or memories unless the final user message directly asks "
-                "about them or it is materially relevant to the current scene. "
-                "Avoid repeating the same static motif, location, or "
-                "prior event across consecutive responses unless it materially "
-                "changes this beat. "
-                "Use reasoning for continuity and constraint resolution."
-                "When recent scene context and older campaign memory differ, trust the "
-                "most recent scene transcript and latest turn context. "
-                "Only harden facts that are supported by the supplied outcome/state. "
-                "For weapons/items, follow the structured outcome first, then "
-                "the actor's canonical primary/equipped inventory; do not "
-                "substitute conflicting older prose. "
-                "End with one concrete prompt for action."
-            )
+        shared_output_instruction = (
+            "FOR THE FINAL NATIVE USER MESSAGE ONLY: write 1-2 compact paragraphs "
+            "{goal}, usually 1. "
+            "Treat the transcript above as resolved history; answer only the "
+            "final user message unless it explicitly reopens an earlier question. "
+            "Do not reopen or re-answer earlier transcript questions. "
+            "Use second person (`you`) for the player-character. "
+            "Mirror the player's declared action before extending the scene. "
+            "Do not open by recapping older scenes or memories. "
+            "Do not repeatedly restate unchanged character motifs. "
+            "Avoid repeating the same static motif, injury, location, or "
+            "prior event across consecutive responses. "
+            "When recent scene context and older campaign memory differ, "
+            "trust the most recent scene transcript and latest turn context; "
+            "scene transcript and the most recent turn win. "
+            "Only harden facts that are supported by the supplied outcome/state. "
+            "For weapons/items, follow the structured outcome first, then "
+            "the actor's canonical primary/equipped inventory."
+            "{ending}"
         )
+        if state.campaign_status == CampaignStatus.ENDED:
+            output_instruction = shared_output_instruction.format(
+                goal="of terminal closure",
+                ending=" Do not end with a next-action prompt, menu, or new-character suggestion."
+            )
+        else:
+            output_instruction = shared_output_instruction.format(
+                goal="of playable narration",
+                ending=" End with one concrete prompt for action."
+            )
         lines.extend(
             [
                 "</SUPPLEMENTAL_CONTEXT>",

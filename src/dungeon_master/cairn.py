@@ -59,6 +59,12 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import (
+    CAIRN_ALLOWED_ENUMS,
+    CAIRN_ITEM_SEMANTICS,
+    JSON_ONLY,
+    SEED_AUTHORITY,
+)
 
 D20_SIDES = 20
 D6_SIDES = 6
@@ -178,14 +184,14 @@ BROKEN_LIMB_PARTS: tuple[str, ...] = (
     "Skull",
 )
 
-CAIRN_BACKFILL_SYSTEM_PROMPT = """You convert a fiction-first character into a
+CAIRN_BACKFILL_SYSTEM_PROMPT = f"""You convert a fiction-first character into a
 Cairn-inspired backend mechanics record.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Setting authority:
-- The campaign seed supplied in the user prompt is authoritative for genre,
-  era, technology, magic, tone, stakes, inspirations, and restrictions.
+- {SEED_AUTHORITY}
+- The campaign seed supplied in the user prompt is authoritative.
 - If the seed is mundane or modern, translate Cairn mechanics into lightweight
   ordinary capability/resource abstractions that fit the supplied setting.
 
@@ -209,17 +215,14 @@ Rules philosophy:
   traded, or discarded.
 - Keep the inventory lean and believable. Most items should be useful in play,
   not symbolic transcripts of the backstory.
-- Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
-  uses, equipped state.
-- For limited ammunition/charges/fuel/components, prefer structured
-  `resources` and `attack_costs` over prose. Use `uses` only as a legacy
-  single counter when no structured pool fits. Examples:
-  bow + quiver: quiver resource `{label:"Arrows", kind:"ammo", current:12}`
-  and bow attack cost `{label:"Arrows", kind:"ammo", amount:1,
-  draw_policy:"actor_inventory"}`; repeating crossbow with internal magazine:
-  weapon resource `{label:"Bolts", kind:"ammo", current:5, max:5}` and self
-  attack cost; sunlight laser: weapon resource `{label:"Sun charge",
-  kind:"charge", current:2, max:2, recharge_policy:"in_sunlight"}`.
+- {CAIRN_ITEM_SEMANTICS}
+  Examples:
+  bow + quiver: quiver resource `{{label:"Arrows", kind:"ammo", current:12}}`
+  and bow attack cost `{{label:"Arrows", kind:"ammo", amount:1,
+  draw_policy:"actor_inventory"}}`; repeating crossbow with internal magazine:
+  weapon resource `{{label:"Bolts", kind:"ammo", current:5, max:5}}` and self
+  attack cost; sunlight laser: weapon resource `{{label:"Sun charge",
+  kind:"charge", current:2, max:2, recharge_policy:"in_sunlight"}}`.
 - Allowed resource recharge policies are: none, per_turn, per_watch, per_day,
   on_rest, in_sunlight, manual_condition. Do not emit per_rest.
 - If an item is a spellbook, scroll, relic, or holy relic, include a bounded
@@ -283,12 +286,9 @@ CAIRN_BACKFILL_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       }
     }
   ]
-}
+}}
 
-Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
-Allowed power kinds: none, spellbook, scroll, relic, holy_relic
-Allowed effects: none, restore_hp, restore_attribute, clear_condition, enhance_attack, impair_target, force_save, reveal_sign, create_safe_passage, ward_or_pacify, extraordinary_aid, resurrect
-Allowed clear conditions: deprived, critically_wounded, doomed, paralyzed, delirious
+{CAIRN_ALLOWED_ENUMS}
 Inventory rule: `weapon_damage_die` is null for every non-weapon item. If `tags`
 includes `weapon`, `weapon_damage_die` must be 4, 6, 8, 10, or 12. Never emit 0.
 
@@ -315,11 +315,11 @@ Important instruction:
   and notes rather than inventory objects.
 """
 
-CAIRN_ENCOUNTER_SYSTEM_PROMPT = """You convert a scene into a concrete
+CAIRN_ENCOUNTER_SYSTEM_PROMPT = f"""You convert a scene into a concrete
 Cairn-inspired encounter only when the supplied scene and trigger actually
 support one.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Rules:
 - Only create hostile combatants already present in, or directly implied by,
@@ -384,10 +384,10 @@ Named target, if any:
 <<TARGET_NAME>>
 """
 
-CAIRN_ACQUISITION_SYSTEM_PROMPT = """You convert an active-play acquisition into
+CAIRN_ACQUISITION_SYSTEM_PROMPT = f"""You convert an active-play acquisition into
 canonical Cairn-style carried items.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Rules:
 - Only author items explicitly present in, or directly implied by, the
@@ -397,11 +397,7 @@ Rules:
 - If the text implies money, arrows, rations, herbs, or similar fungible
   goods, represent them as one bundle item rather than inventing a quantity
   field.
-- Use Cairn-style item semantics: petty vs bulky, armor bonus, weapon die,
-  uses, equipped state.
-- For limited ammunition/charges/fuel/components, prefer structured
-  `resources` and `attack_costs` over prose. Use `uses` only as a legacy
-  single counter when no structured pool fits.
+- {CAIRN_ITEM_SEMANTICS}
 - If the acquired item is a spellbook, scroll, relic, or holy relic, include a
   bounded `power` object. Relics do not add Fatigue by default; spellbooks do;
   scrolls are consumed; holy relics should stay subtle and item-bound.
@@ -410,10 +406,10 @@ Rules:
 - Preserve the player's meaning; do not rewrite a humble find into treasure.
 """
 
-CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
-{
+CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = f"""Return JSON with this shape:
+{{
   "items": [
-    {
+    {{
       "name": "practical acquired item name",
       "details": "how this item exists in the fiction and helps in play",
       "tags": ["petty", "weapon", "utility"],
@@ -425,7 +421,7 @@ CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
       "attack_costs": [],
       "use_costs": [],
       "equipped": false,
-      "power": {
+      "power": {{
         "kind": "none",
         "name": "",
         "summary": "",
@@ -437,15 +433,12 @@ CAIRN_ACQUISITION_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
         "requires_wil_save_in_danger": false,
         "adds_fatigue": false,
         "consumed_on_use": false
-      }
-    }
+      }}
+    }}
   ]
-}
+}}
 
-Allowed tags: petty, bulky, weapon, ranged, armor, shield, tool, light, relic, holy, healing, consumable, supplies, magic, utility
-Allowed power kinds: none, spellbook, scroll, relic, holy_relic
-Allowed effects: none, restore_hp, restore_attribute, clear_condition, enhance_attack, impair_target, force_save, reveal_sign, create_safe_passage, ward_or_pacify, extraordinary_aid, resurrect
-Allowed clear conditions: deprived, critically_wounded, doomed, paralyzed, delirious
+{CAIRN_ALLOWED_ENUMS}
 
 Acquisition text:
 <<ACQUISITION>>

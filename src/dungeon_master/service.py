@@ -91,6 +91,7 @@ from dungeon_master.npc_updater import (
     NPCUpdateResult,
 )
 from dungeon_master.oracle import OracleEngine
+from dungeon_master.prompt_fragments import JSON_ONLY
 from dungeon_master.state_store import StateStore, TurnCheckpointRecord
 from dungeon_master.thread_updater import (
     GeneratedThreadUpdateBatch,
@@ -117,18 +118,18 @@ MIN_COORDINATED_ATTACK_PARTICIPANTS = 2
 RECENT_NPC_CONTEXT_LIMIT = 4
 RECENT_RECRUITMENT_SCENE_CONTEXT_LIMIT = 6
 CLARIFICATION_EVENT_TITLE = "Clarification needed"
-RECRUITMENT_RESOLVER_SYSTEM_PROMPT = """You resolve a requested recruitment target to one
+RECRUITMENT_RESOLVER_SYSTEM_PROMPT = f"""You resolve a requested recruitment target to one
 already-visible NPC in a solo tabletop RPG save.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Hard rules:
 - Choose only an exact npc_id from the supplied visible_npcs list.
 - Never choose hidden, invented, or merely implied people.
 - Use the player turn, planner label, current scene, and recent visible
   transcript to map descriptors, titles, and roles to the visible roster.
-- If no visible NPC is clearly the target, return {"npc_id": null}.
-- If more than one visible NPC is plausible, return {"npc_id": null}.
+- If no visible NPC is clearly the target, return {{"npc_id": null}}.
+- If more than one visible NPC is plausible, return {{"npc_id": null}}.
 """
 
 
