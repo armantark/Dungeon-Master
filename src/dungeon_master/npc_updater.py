@@ -44,7 +44,7 @@ Hard rules:
   being told, a clue, divination/fortunetelling, etc.).
 - When a proper name is newly associated with an already-tracked descriptor
   figure, update that existing NPC by id instead of creating a duplicate. This
-  includes direct introductions ("call me X", "my name is X", "I am X") and
+  includes direct introductions and
   committed narration that identifies the descriptor figure as the named person.
   Set `name` to the revealed identity, `player_label` to the same proper name,
   and `player_label_kind="proper_name"`.
