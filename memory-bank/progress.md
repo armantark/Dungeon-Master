@@ -145,12 +145,17 @@
   policy text and the common updater user-prompt shape, with
   `tests/test_prompt_fragments.py` guarding the fragments. Backend prompt files
   now reuse shared JSON-only / seed-authority / no-invention / no-keyword /
-  continuity-updater / Cairn enum fragments where safe. A first `deepeval`
-  drift harness also exists (`tools/generate_baseline.py`,
-  `tests/test_eval_drift.py`), but the current baseline file contains only
-  error rows and the drift test skips until a valid baseline is regenerated.
-  Verification for this pass: full `uv run pytest -q` passes with that expected
-  skip, and `uv run ruff check .` passes.
+  continuity-updater / Cairn enum fragments where safe. The DeepEval drift
+  harness is now working end-to-end too: `tools/eval_harness.py` provides typed
+  eval fixtures/baseline IO plus a LiteLLM-backed DeepEval judge, `tools/
+  generate_baseline.py` generates validated rows, `tests/eval_data/
+  baseline.json` contains a real three-case baseline, and
+  `tests/test_eval_drift.py` uses GEval against fresh narration with baseline
+  prose as style-reference context rather than canonical expected state. Live
+  verification passed with configured credentials: `uv run pytest
+  tests/test_eval_drift.py -q`. Non-live focused verification is also green:
+  `uv run pytest tests/test_prompt_fragments.py -q`, focused `ruff`, and
+  `uv run mypy src tests tools`.
 
 ## Current Status
 

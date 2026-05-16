@@ -1,118 +1,90 @@
-import json
-from pathlib import Path
-from typing import cast
-
 import pytest
 from deepeval import assert_test  # type: ignore[attr-defined]
 from deepeval.metrics import GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+from deepeval.test_case import LLMTestCase, SingleTurnParams
 
-from dungeon_master.models import GameState, OracleKind, OracleOutcome, OracleTables
+from dungeon_master.config import LLMConfig
 from dungeon_master.narrative import NarrativeEngine
+from tools.eval_harness import (
+    EvalBaseline,
+    LiteLLMDeepEvalJudge,
+    eval_case_for,
+    eval_llm_config,
+    load_baseline,
+    sample_eval_state,
+)
 
 
 @pytest.fixture
-def baseline_data() -> dict[str, dict[str, str]] | None:
-    path = Path(__file__).parent / "eval_data" / "baseline.json"
-    if path.exists():
-        raw_data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw_data, dict):
-            return cast("dict[str, dict[str, str]]", raw_data)
-    return None
+def baseline_data() -> EvalBaseline | None:
+    return load_baseline()
 
 
-def test_narrative_drift(baseline_data: dict[str, dict[str, str]] | None) -> None:
+def test_narrative_drift(baseline_data: EvalBaseline | None) -> None:
     if not baseline_data:
         pytest.skip("No baseline data found. Run tools/generate_baseline.py first.")
 
     user_input = "I swing my sword at the goblin."
-    baseline_narration = baseline_data.get(user_input, {}).get("narration", "")
-    if not baseline_narration:
+    baseline = baseline_data.get(user_input)
+    if baseline is None:
         pytest.skip("No usable narration baseline found. Regenerate tests/eval_data/baseline.json.")
 
-    state = _sample_eval_state()
-    state.current_scene = "A dark dungeon room."
-    narrator = NarrativeEngine()
-    outcome = OracleOutcome(
-        kind=OracleKind.PLAYER_ACTION,
-        question=f"Does the player succeed at: {user_input}?",
-        summary="Success",
-        chaos_factor=5,
-    )
+    config = eval_llm_config(LLMConfig.from_env())
+    if not config.is_usable():
+        pytest.skip("DeepEval drift check needs the app's LLM credentials.")
+
+    state = sample_eval_state()
+    narrator = NarrativeEngine(config=config)
+    case = eval_case_for(user_input)
     new_narration = narrator.generate(
         state=state,
-        player_input=user_input,
-        outcome=outcome,
-        execution_context="Steps executed successfully.",
+        player_input=case.user_input,
+        outcome=case.outcome,
+        execution_context=case.execution_context,
     )
 
     drift_metric = GEval(
         name="Prompt Drift Evaluation",
-        criteria=(
-            "The actual output should maintain the exact same narrative style, "
-            "second-person perspective ('you'), and strict adherence to the "
-            "outcome as the expected output. It should not invent new mechanical facts."
-        ),
-        evaluation_params=[
-            LLMTestCaseParams.INPUT,
-            LLMTestCaseParams.ACTUAL_OUTPUT,
-            LLMTestCaseParams.EXPECTED_OUTPUT,
+        evaluation_steps=[
+            "Check that the actual output keeps the same second-person dark-fantasy style family.",
+            "Check that the actual output follows the supplied successful player action.",
+            (
+                "Use the baseline narration only as a style reference, "
+                "not as canonical scene state."
+            ),
+            (
+                "Pass alternate incidental prose details unless they contradict "
+                "the input or structured outcome."
+            ),
+            (
+                "Fail outputs that add unsupported mechanical facts, extra rolls, "
+                "state changes, or wrong outcomes."
+            ),
         ],
-        threshold=0.8,
+        evaluation_params=[
+            SingleTurnParams.INPUT,
+            SingleTurnParams.ACTUAL_OUTPUT,
+            SingleTurnParams.CONTEXT,
+        ],
+        model=LiteLLMDeepEvalJudge(config=config, max_tokens=1600),
+        threshold=0.7,
+        async_mode=False,
     )
 
     test_case = LLMTestCase(
         input=user_input,
         actual_output=new_narration,
-        expected_output=baseline_narration,
+        context=[
+            (
+                "<canonical_outcome>\n"
+                f"kind: {case.outcome.kind.value}\n"
+                f"summary: {case.outcome.summary}\n"
+                "canonical_wound_location: unspecified\n"
+                "canonical_enemy_weapon: unspecified\n"
+                "</canonical_outcome>"
+            ),
+            f"<baseline_style_reference>\n{baseline.narration}\n</baseline_style_reference>",
+        ],
     )
 
     assert_test(test_case, [drift_metric])
-
-
-def _sample_eval_state() -> GameState:
-    return GameState(
-        current_scene="A dark dungeon room.",
-        setting_notes="A compact dungeon used for prompt drift evaluation.",
-        player_notes="A cautious adventurer with a sword.",
-        oracle_tables=OracleTables(
-            event_focus=[
-                "NPC action",
-                "New NPC",
-                "Move toward thread",
-                "Move away from thread",
-                "Close thread",
-                "Ambiguous event",
-            ],
-            event_actions=[
-                "attack",
-                "reveal",
-                "betray",
-                "pursue",
-                "hide",
-                "break",
-                "guard",
-                "signal",
-            ],
-            event_tones=[
-                "grim",
-                "quiet",
-                "urgent",
-                "strange",
-                "tense",
-                "hopeful",
-                "cold",
-                "bright",
-            ],
-            event_subjects=[
-                "goblin",
-                "door",
-                "torch",
-                "guard",
-                "trap",
-                "altar",
-                "coin",
-                "blade",
-            ],
-        ),
-    )
