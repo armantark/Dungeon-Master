@@ -15,7 +15,7 @@ type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhig
 type ReasoningPolicy = ReasoningEffort | Literal["auto"]
 
 DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.6"
-DEFAULT_GEMINI_FLASH_MODEL = "gemini/gemini-3-flash-preview"
+DEFAULT_GEMINI_FLASH_MODEL = "gemini/gemini-3.5-flash-preview"
 DEFAULT_GEMINI_PRO_MODEL = "gemini/gemini-3.1-pro-preview"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_REASONING_POLICY: ReasoningPolicy = "auto"

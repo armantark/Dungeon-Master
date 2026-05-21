@@ -31,7 +31,7 @@ function settingsResponse(overrides: Partial<LLMSettingsResponse> = {}): LLMSett
         id: "gemini_split",
         label: "Gemini split",
         description: "Flash for tools, Pro for prose.",
-        structured_model: "gemini/gemini-3-flash-preview",
+        structured_model: "gemini/gemini-3.5-flash-preview",
         narration_model: "gemini/gemini-3.1-pro-preview",
         reasoning_model: "gemini/gemini-3.1-pro-preview",
         available: true,
@@ -176,7 +176,7 @@ describe("GameStore LLM settings", () => {
 
     const updated = settingsResponse({
       preset: "gemini_split",
-      structured_model: "gemini/gemini-3-flash-preview",
+      structured_model: "gemini/gemini-3.5-flash-preview",
       narration_model: "gemini/gemini-3.1-pro-preview",
       reasoning_model: "gemini/gemini-3.1-pro-preview",
     });
@@ -213,7 +213,7 @@ describe("GameStore LLM settings", () => {
     });
     const switched = settingsResponse({
       preset: "gemini_split",
-      structured_model: "gemini/gemini-3-flash-preview",
+      structured_model: "gemini/gemini-3.5-flash-preview",
       narration_model: "gemini/gemini-3.1-pro-preview",
       reasoning_model: "gemini/gemini-3.1-pro-preview",
       needs_key: false,
