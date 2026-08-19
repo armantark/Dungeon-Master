@@ -18,11 +18,17 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import (
+    CONTINUITY_UPDATER_PREAMBLE,
+    JSON_ONLY,
+    no_invention_rule,
+    render_updater_user_prompt,
+)
 
-THREAD_UPDATER_SYSTEM_PROMPT = """You update the canonical long-running thread list for a solo
+THREAD_UPDATER_SYSTEM_PROMPT = f"""You update the canonical long-running thread list for a solo
 tabletop role-playing game after a turn has already resolved.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Hard rules:
 - You may emit 0-2 thread ops total.
@@ -32,19 +38,18 @@ Hard rules:
 - Prefer updating an existing thread over creating a near-duplicate.
 - Resolve a thread only when the supplied outcome + executed steps actually
   discharge its stakes or close the matter in canon.
-- If a final narration response is supplied, treat it as player-visible canon.
-  Only extract durable thread changes that the narration explicitly establishes.
 - Never treat momentary atmosphere, gestures, unanswered prayers, or ordinary
   descriptive flourish as durable thread advancement on their own.
-- Never let narration-only extraction contradict the resolved oracle outcome or
-  executed backend steps.
 - Never delete threads.
-- Never invent new facts beyond the supplied player input, oracle outcome,
-  final narration response, executed backend steps, current threads, and memory
-  context.
+- {no_invention_rule(
+    'player input, oracle outcome, final narration response, executed backend '
+    'steps, current threads, and memory context'
+)}
 - For update/resolve, use an exact supplied thread_id from the current threads list.
 - Keep thread titles short, concrete, and future-playable.
 - Keep stakes focused on what remains at risk if the matter is ignored.
+
+{CONTINUITY_UPDATER_PREAMBLE}
 """
 
 THREAD_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
@@ -59,27 +64,7 @@ THREAD_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
   ]
 }
 
-Current scene:
-<<CURRENT_SCENE>>
-
-Player input:
-<<PLAYER_INPUT>>
-
-Resolved oracle outcome:
-- kind: <<OUTCOME_KIND>>
-- summary: <<OUTCOME_SUMMARY>>
-
-Executed backend steps (may be empty):
-<<EXECUTION_CONTEXT>>
-
-Final narration response (may be empty for pre-narration continuity):
-<<NARRATIVE_TEXT>>
-
-Current canonical threads:
-<<THREADS_JSON>>
-
-Bounded memory context (may be empty):
-<<MEMORY_CONTEXT>>
+<<USER_PROMPT_BODY>>
 """
 
 
@@ -227,16 +212,18 @@ class ThreadUpdater:
             ],
             indent=2,
         )
-        return (
-            THREAD_UPDATER_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
-            .replace("<<PLAYER_INPUT>>", player_input.strip())
-            .replace("<<OUTCOME_KIND>>", outcome.kind.value)
-            .replace("<<OUTCOME_SUMMARY>>", outcome.summary)
-            .replace("<<EXECUTION_CONTEXT>>", execution_context or "(none)")
-            .replace("<<NARRATIVE_TEXT>>", (narrative_text or "").strip() or "(none)")
-            .replace("<<THREADS_JSON>>", threads_json)
-            .replace("<<MEMORY_CONTEXT>>", memory_context or "(none)")
+        prompt = THREAD_UPDATER_USER_PROMPT_TEMPLATE
+        body = render_updater_user_prompt(
+            scene_text=state.current_scene,
+            player_input=player_input.strip(),
+            outcome_kind=outcome.kind.value,
+            outcome_summary=outcome.summary,
+            execution_context=execution_context,
+            final_narration=(narrative_text or "").strip() or None,
+            domain_state=f"Current canonical threads:\n{threads_json}",
+            memory_context=memory_context,
         )
+        return prompt.replace("<<USER_PROMPT_BODY>>\n", body)
 
     def _complete_json(self, request: CompletionRequest) -> str:
         last_error: Exception | None = None

@@ -25,11 +25,12 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import JSON_ONLY
 
-CAPABILITY_ORACLE_GUARD_SYSTEM_PROMPT = """You protect a solo tabletop RPG from
+CAPABILITY_ORACLE_GUARD_SYSTEM_PROMPT = f"""You protect a solo tabletop RPG from
 unbounded ability-fishing via yes/no oracle questions.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Policy:
 - Ordinary world uncertainty should pass through unchanged.

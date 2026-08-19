@@ -25,11 +25,17 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import (
+    JSON_ONLY,
+    NO_KEYWORD_TRIGGERS,
+    no_invention_rule,
+    render_updater_user_prompt,
+)
 
-INVENTORY_UPDATER_SYSTEM_PROMPT = """You extract durable carried-inventory canon from a
+INVENTORY_UPDATER_SYSTEM_PROMPT = f"""You extract durable carried-inventory canon from a
 resolved solo tabletop RPG turn.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Hard rules:
 - Emit 0-4 ops total.
@@ -56,9 +62,11 @@ Hard rules:
   from that sentence.
 - Use exact actor_id values from the supplied actor list. Use "player" for the
   protagonist.
-- Do not use keyword triggers. Judge the whole context.
-- Never invent new facts beyond the supplied actors, player input, oracle
-  outcome, executed backend steps, and final narration.
+- {NO_KEYWORD_TRIGGERS}
+- {no_invention_rule(
+    'actors, player input, oracle outcome, executed backend steps, and final '
+    'narration'
+)}
 - If no durable carried-inventory change occurred, return an empty ops list.
 """
 
@@ -75,24 +83,7 @@ INVENTORY_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
   ]
 }
 
-Current actors:
-<<ACTORS_JSON>>
-
-Current scene:
-<<CURRENT_SCENE>>
-
-Player input:
-<<PLAYER_INPUT>>
-
-Resolved oracle outcome:
-- kind: <<OUTCOME_KIND>>
-- summary: <<OUTCOME_SUMMARY>>
-
-Executed backend steps (may be empty):
-<<EXECUTION_CONTEXT>>
-
-Final narration response:
-<<NARRATIVE_TEXT>>
+<<USER_PROMPT_BODY>>
 """
 
 MAX_GENERATED_INVENTORY_OPS = 4
@@ -262,20 +253,17 @@ class InventoryUpdater:
         execution_context: str | None,
         narrative_text: str,
     ) -> str:
-        actors_json = json.dumps(_actor_payloads(state), ensure_ascii=False)
-        replacements = {
-            "<<ACTORS_JSON>>": actors_json,
-            "<<CURRENT_SCENE>>": state.current_scene,
-            "<<PLAYER_INPUT>>": player_input,
-            "<<OUTCOME_KIND>>": outcome.kind.value,
-            "<<OUTCOME_SUMMARY>>": outcome.summary,
-            "<<EXECUTION_CONTEXT>>": execution_context or "(none)",
-            "<<NARRATIVE_TEXT>>": narrative_text,
-        }
         prompt = INVENTORY_UPDATER_USER_PROMPT_TEMPLATE
-        for marker, value in replacements.items():
-            prompt = prompt.replace(marker, value)
-        return prompt
+        body = render_updater_user_prompt(
+            scene_text=state.current_scene,
+            player_input=player_input,
+            outcome_kind=outcome.kind.value,
+            outcome_summary=outcome.summary,
+            execution_context=execution_context,
+            final_narration=narrative_text,
+            actors=json.dumps(_actor_payloads(state), ensure_ascii=False),
+        )
+        return prompt.replace("<<USER_PROMPT_BODY>>\n", body)
 
     def _apply_op(
         self,

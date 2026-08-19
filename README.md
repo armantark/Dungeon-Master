@@ -112,7 +112,7 @@ These beta artifacts are unsigned. macOS may require right-click Open / quaranti
 
 Default preset is OpenRouter Kimi K2.6. The backend now also supports an app-global Gemini split preset:
 - `kimi`: current behavior, using `openrouter/moonshotai/kimi-k2.6` for all backend LLM work
-- `gemini_split`: `gemini/gemini-3-flash-preview` for structured routing/update work and `gemini/gemini-3.1-pro-preview` for narration plus heavier generation
+- `gemini_split`: `gemini/gemini-3.5-flash-preview` for structured routing/update work and `gemini/gemini-3.1-pro-preview` for narration plus heavier generation
 
 The active preset is stored separately from `.env` in `data/runtime_settings.json` by default and can be read/updated through `GET /api/settings/llm` and `POST /api/settings/llm`.
 

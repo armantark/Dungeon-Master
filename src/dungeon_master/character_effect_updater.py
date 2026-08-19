@@ -25,11 +25,16 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import (
+    JSON_ONLY,
+    NO_KEYWORD_TRIGGERS,
+    render_updater_user_prompt,
+)
 
-CHARACTER_EFFECT_SYSTEM_PROMPT = """You extract durable character-sheet effects from a
+CHARACTER_EFFECT_SYSTEM_PROMPT = f"""You extract durable character-sheet effects from a
 resolved solo tabletop RPG turn.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Hard rules:
 - Emit only effects that the final narration explicitly makes real, or that the
@@ -37,7 +42,7 @@ Hard rules:
 - Do not infer consequences from genre color alone. Pain, fear, fatigue, vows,
   wounds, or ominous language are not mechanical changes unless the text says a
   durable sheet fact changed.
-- Do not use keywords as triggers. Judge the whole context.
+- {NO_KEYWORD_TRIGGERS}
 - Effects may target the protagonist or an active party member, but each op must
   use an exact actor_id from the supplied actor list. Use "player" for the
   protagonist.
@@ -69,24 +74,7 @@ CHARACTER_EFFECT_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
   ]
 }
 
-Current actors:
-<<ACTORS_JSON>>
-
-Current scene:
-<<CURRENT_SCENE>>
-
-Player input:
-<<PLAYER_INPUT>>
-
-Resolved oracle outcome:
-- kind: <<OUTCOME_KIND>>
-- summary: <<OUTCOME_SUMMARY>>
-
-Executed backend steps (may be empty):
-<<EXECUTION_CONTEXT>>
-
-Final narration response:
-<<NARRATIVE_TEXT>>
+<<USER_PROMPT_BODY>>
 """
 
 MAX_GENERATED_EFFECT_OPS = 4
@@ -249,20 +237,17 @@ class CharacterEffectUpdater:
         execution_context: str | None,
         narrative_text: str,
     ) -> str:
-        actors_json = json.dumps(_actor_payloads(state), ensure_ascii=False)
-        replacements = {
-            "<<ACTORS_JSON>>": actors_json,
-            "<<CURRENT_SCENE>>": state.current_scene,
-            "<<PLAYER_INPUT>>": player_input,
-            "<<OUTCOME_KIND>>": outcome.kind.value,
-            "<<OUTCOME_SUMMARY>>": outcome.summary,
-            "<<EXECUTION_CONTEXT>>": execution_context or "(none)",
-            "<<NARRATIVE_TEXT>>": narrative_text,
-        }
         prompt = CHARACTER_EFFECT_USER_PROMPT_TEMPLATE
-        for marker, value in replacements.items():
-            prompt = prompt.replace(marker, value)
-        return prompt
+        body = render_updater_user_prompt(
+            scene_text=state.current_scene,
+            player_input=player_input,
+            outcome_kind=outcome.kind.value,
+            outcome_summary=outcome.summary,
+            execution_context=execution_context,
+            final_narration=narrative_text,
+            actors=json.dumps(_actor_payloads(state), ensure_ascii=False),
+        )
+        return prompt.replace("<<USER_PROMPT_BODY>>\n", body)
 
     def _apply_op(self, state: GameState, op: GeneratedCharacterEffectOp) -> str | None:
         target = _target_sheet(state, op.actor_id)

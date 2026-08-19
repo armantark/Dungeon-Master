@@ -283,7 +283,7 @@ Use Pinchtab (`https://github.com/pinchtab/pinchtab`) for the browser steps so t
 2. Open the system menu (top-right hamburger) and pick `Narrative model`. Confirm the modal opens, the `Active` readout shows three Kimi `openrouter/...` slugs, and the `Kimi (OpenRouter)` card is checked.
 3. Click the `Gemini split` card. Confirm:
    - The button briefly enters a `Saving…` state and is disabled.
-   - On success, the `Active` readout flips to `gemini/gemini-3-flash-preview` (structured) and `gemini/gemini-3.1-pro-preview` (narration / reasoning).
+   - On success, the `Active` readout flips to `gemini/gemini-3.5-flash-preview` (structured) and `gemini/gemini-3.1-pro-preview` (narration / reasoning).
    - `data/runtime_settings.json` on disk now contains `"llm_preset": "gemini_split"`.
 4. Submit a free-text turn (`I look around`). Watch the backend log: planner / mechanics / NPC-updater calls should be against `gemini-3-flash-preview`; the narration stage should be against `gemini-3.1-pro-preview`.
 5. Start a long-running turn, immediately reopen the modal, and try clicking `Kimi`. Confirm the modal renders an inline error reading "Cannot change LLM settings while a request is still in flight." and the radio remains on Gemini split. Wait for the turn to finish and retry the swap — it should now succeed.

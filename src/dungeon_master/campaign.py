@@ -39,13 +39,9 @@ from dungeon_master.narrative import (
     extract_json_object,
     iter_text_deltas,
 )
+from dungeon_master.prompt_fragments import JSON_ONLY, JSON_ONLY_PERSIST, SEED_AUTHORITY
 
 logger = logging.getLogger(__name__)
-
-BASE_CREATIVE_DIRECTION = (
-    "Use the supplied campaign seed as the authority for genre, era, tone, magic, "
-    "technology, stakes, inspirations, and restrictions."
-)
 
 
 GENRE_LABELS: dict[CampaignGenre, str] = {
@@ -117,10 +113,11 @@ def render_danger_guidance(danger_profile: CampaignDangerProfile) -> str:
 
 CHARACTER_SYSTEM_PROMPT = f"""You generate player-character drafts for a solo TTRPG.
 
-Return only valid JSON. The application will persist your JSON as structured state.
+{JSON_ONLY_PERSIST}
 
 Creative direction:
-- {BASE_CREATIVE_DIRECTION}
+- {SEED_AUTHORITY}
+<<CREATIVE_DIRECTION>>
 - Characters must belong to the supplied setting, era, genre, magic level,
   technology level, and stakes.
 - Treat the supplied creative direction as binding.
@@ -196,10 +193,11 @@ Inventory guidance:
 CHARACTER_QUIZ_SYSTEM_PROMPT = f"""You design a 4-6 question interview that helps a
 player commit to a specific character for this campaign.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Creative direction:
-- {BASE_CREATIVE_DIRECTION}
+- {SEED_AUTHORITY}
+<<CREATIVE_DIRECTION>>
 - Treat the supplied creative direction as binding.
 
 Question constraints:
@@ -276,14 +274,13 @@ Campaign creative direction:
 <<CREATIVE_DIRECTION>>
 """
 
-CAMPAIGN_SYSTEM_PROMPT = """You generate the initial world state for a solo TTRPG after the player
+CAMPAIGN_SYSTEM_PROMPT = f"""You generate the initial world state for a solo TTRPG after the player
 character has already been chosen.
 
-Return only valid JSON. The application will persist your JSON as state, so be specific.
+{JSON_ONLY_PERSIST}
 
 Creative direction:
-- The campaign seed supplied by the user is authoritative for genre, era,
-  technology, magic, tone, stakes, inspirations, and restrictions.
+- {SEED_AUTHORITY}
 - The world must feel built around the supplied character, their gear, their
   drive, and their flaw while staying inside the seed.
 
@@ -949,13 +946,13 @@ class CharacterGenerator:
 
     def _character_system_prompt(self, seed: CampaignSeed) -> str:
         return CHARACTER_SYSTEM_PROMPT.replace(
-            f"- {BASE_CREATIVE_DIRECTION}",
+            "<<CREATIVE_DIRECTION>>",
             render_creative_direction(seed),
         )
 
     def _character_quiz_system_prompt(self, seed: CampaignSeed) -> str:
         return CHARACTER_QUIZ_SYSTEM_PROMPT.replace(
-            f"- {BASE_CREATIVE_DIRECTION}",
+            "<<CREATIVE_DIRECTION>>",
             render_creative_direction(seed),
         )
 

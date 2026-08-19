@@ -228,6 +228,17 @@ Prompt discipline now matters as much as tone. The narrator is instructed to:
 
 This pattern exists because "good prose" was proving insufficient on its own: the model could write stylish dark-fantasy narration while still overcommitting fiction that the oracle/state had not actually authorized.
 
+Prompt maintenance now has a shared-fragment layer instead of copy-pasted
+policy prose. `src/dungeon_master/prompt_fragments.py` owns reusable blocks
+such as JSON-only output, campaign-seed authority, no-invention wording,
+no-keyword-trigger wording, continuity-updater preambles, Cairn enum/semantics
+snippets, and the common updater user-prompt renderer. The important boundary
+is the same as the rest of the app: these helpers assemble prompt input only;
+Pydantic models and Python application code still own structured output
+validation and canonical state mutation. When adding or shrinking prompts, use
+these fragments for repeated policy language, but keep domain-specific
+sentinels where tests pin important behavior.
+
 The narrator now also receives a short **executed backend steps** summary when available. This is important after the turn-planner refactor: narration should describe what Python actually executed (e.g. checked inventory, dropped an item, then attacked) rather than reverse-engineering intent from raw player text and one coarse route label.
 
 B-02 adds a separate **campaign directives** steering layer to the backend prompt architecture. `setting_notes` / `player_notes` remain canonical campaign/backstory prose, but `GameState.directives` (`world_guidance`, `play_guidance`) is a durable OOC instruction block that is fed into narrator/Cairn/updater/explainer prompts when present. The service deliberately persists directives without appending a visible `action_log` event: they are save-scoped prompt steering, not in-fiction transcript events. This keeps the future frontend free to present directives as a tucked-away advanced control rather than as ordinary chat history.

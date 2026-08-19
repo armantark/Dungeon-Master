@@ -25,11 +25,17 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
+from dungeon_master.prompt_fragments import (
+    CONTINUITY_UPDATER_PREAMBLE,
+    JSON_ONLY,
+    no_invention_rule,
+    render_updater_user_prompt,
+)
 
-NPC_UPDATER_SYSTEM_PROMPT = """You update the canonical recurring NPC cast for a solo
+NPC_UPDATER_SYSTEM_PROMPT = f"""You update the canonical recurring NPC cast for a solo
 tabletop role-playing game after a turn has already resolved.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Hard rules:
 - You may emit 0-4 NPC ops total.
@@ -40,50 +46,30 @@ Hard rules:
 - `player_label` is the safe player-facing label if the NPC is visible.
 - `player_label_kind` must be `proper_name` or `descriptor`.
 - Do NOT reveal or invent a proper-name `player_label` unless the supplied
-  context explicitly grants that name to the player (direct introduction,
-  being told, a clue, divination/fortunetelling, etc.).
+  context explicitly grants that name to the player.
 - When a proper name is newly associated with an already-tracked descriptor
-  figure, update that existing NPC by id instead of creating a duplicate. This
-  includes direct introductions ("call me X", "my name is X", "I am X") and
-  committed narration that identifies the descriptor figure as the named person.
+  figure, update that existing NPC by id instead of creating a duplicate.
   Set `name` to the revealed identity, `player_label` to the same proper name,
   and `player_label_kind="proper_name"`.
-- If the player should know the figure only by signs, office, clothing, scars,
-  or some other non-name identifier, set `player_label_kind="descriptor"` and
-  use that descriptor as `player_label`.
-- Prefer updating an existing NPC over creating a near-duplicate.
+- If the player should know the figure only by signs or clothing, set
+  `player_label_kind="descriptor"` and use that descriptor as `player_label`.
 - Before every create op, compare the proposed person against all current NPCs
-  and the current scene transcript. If the new record would mostly restate an
-  existing descriptor, recently interacted figure, handle, role, or revealed
-  identity, emit an update for that existing npc_id instead.
+  and the scene transcript. Prefer updating an existing NPC over creating a
+  near-duplicate.
 - But do not collapse distinct people into one record just because they share a
-  broad category. If the supplied context distinguishes two figures by current
-  location, possessions, appearance, dialogue, social role, or who the player is
-  interacting with, keep them separate unless the text explicitly identifies
-  them as the same person.
+  broad category, unless explicitly identified as the same person.
 - Preserve existing role/disposition facts unless supplied context actually
-  changes them. A revealed name or handle alone is not permission to invent a
-  new job, personality, relationship, hobby, motive, or backstory.
-- If more than four recurring figures are introduced/clarified in one beat, keep
-  the most durable or player-relevant people as distinct records first. Only if
-  the remainder are honestly one obvious cohort (for example classmates,
-  bystanders, guards, or a named group in the same place) may you compress those
-  remainder figures into one grouped descriptor NPC. That grouped NPC must stay a
-  descriptor-facing cohort entry, not an invented proper name, and must not
-  replace figures the player is already tracking as distinct individuals.
-- Retire an NPC only when the supplied outcome + executed steps make them leave
-  the active cast, become irrelevant to the current recurring roster, or die in
-  a way that should stop them appearing as an active NPC.
-- If a final narration response is supplied, treat it as player-visible canon.
-  Only extract durable NPC changes that the narration explicitly establishes.
-- Never treat mood, fleeting gestures, unanswered prayers, or decorative prose
-  alone as grounds to create/update/retire a recurring NPC.
-- Never let narration-only extraction contradict the resolved oracle outcome or
-  executed backend steps.
-- Never delete NPCs.
-- Never invent new facts beyond the supplied player input, oracle outcome,
-  final narration response, executed backend steps, current NPC list, and
-  memory context.
+  changes them.
+- If more than four recurring figures are introduced, keep the most durable
+  individuals as distinct records. You may compress remainder figures into one
+  grouped descriptor NPC.
+- Retire an NPC only when the outcome + steps make them leave the active cast
+  or die in a way that stops them appearing as an active NPC.
+- {no_invention_rule(
+    'player input, oracle outcome, final narration response, executed backend '
+    'steps, current NPC list, and memory context'
+)}
+- Memory context is support, not permission to invent.
 - For update/retire, use an exact supplied npc_id from the current NPC list.
 - Keep NPC names stable and concise; do not overwrite a name unless the new
   supplied name is clearly the same person or a better canonical rendering.
@@ -91,8 +77,9 @@ Hard rules:
   wounds, revealed identity, or social changes.
 - `player_visible=true` means the NPC should appear in the player's visible
   recurring roster now.
-- `player_visible=false` means the NPC remains backend-only hidden cast.
-"""
+
+{CONTINUITY_UPDATER_PREAMBLE}
+"""  # noqa: S608
 
 NPC_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
 {
@@ -110,36 +97,13 @@ NPC_UPDATER_USER_PROMPT_TEMPLATE = """Return JSON with this shape:
   ]
 }
 
-Current scene:
-<<CURRENT_SCENE>>
-
-Campaign directives (may be empty):
-<<DIRECTIVES>>
-
-Player input:
-<<PLAYER_INPUT>>
-
-Resolved oracle outcome:
-- kind: <<OUTCOME_KIND>>
-- summary: <<OUTCOME_SUMMARY>>
-
-Executed backend steps (may be empty):
-<<EXECUTION_CONTEXT>>
-
-Final narration response (may be empty for pre-narration continuity):
-<<NARRATIVE_TEXT>>
-
-Current canonical NPCs:
-<<NPCS_JSON>>
-
-Bounded memory context (may be empty):
-<<MEMORY_CONTEXT>>
+<<USER_PROMPT_BODY>>
 """
 
-LEGACY_NPC_REPAIR_SYSTEM_PROMPT = """You are repairing the recurring NPC roster for an
+LEGACY_NPC_REPAIR_SYSTEM_PROMPT = f"""You are repairing the recurring NPC roster for an
 already-running solo tabletop RPG save after a schema change.
 
-Return only valid JSON.
+{JSON_ONLY}
 
 Goal:
 - `introduced` = recurring people the player has clearly encountered or would
@@ -421,23 +385,27 @@ class NPCUpdater:
             ],
             indent=2,
         )
-        return (
-            NPC_UPDATER_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
-            .replace("<<DIRECTIVES>>", self._directives_prompt_block(state))
-            .replace("<<PLAYER_INPUT>>", player_input.strip())
-            .replace("<<OUTCOME_KIND>>", outcome.kind.value)
-            .replace("<<OUTCOME_SUMMARY>>", outcome.summary)
-            .replace("<<EXECUTION_CONTEXT>>", execution_context or "(none)")
-            .replace("<<NARRATIVE_TEXT>>", (narrative_text or "").strip() or "(none)")
-            .replace("<<NPCS_JSON>>", npcs_json)
-            .replace("<<MEMORY_CONTEXT>>", memory_context or "(none)")
+        prompt = NPC_UPDATER_USER_PROMPT_TEMPLATE
+        body = render_updater_user_prompt(
+            scene_text=state.current_scene,
+            player_input=player_input.strip(),
+            outcome_kind=outcome.kind.value,
+            outcome_summary=outcome.summary,
+            execution_context=execution_context,
+            final_narration=(narrative_text or "").strip() or None,
+            domain_state=f"Current canonical NPCs:\n{npcs_json}",
+            memory_context=memory_context,
+            directives=self._directives_prompt_block(state)
+            if state.directives.has_content()
+            else None,
         )
+        return prompt.replace("<<USER_PROMPT_BODY>>\n", body)
 
     def _build_legacy_repair_prompt(
         self,
         state: GameState,
         *,
-        memory_context: str | None,
+        memory_context: str | None = None,
     ) -> str:
         visible_ids = {npc.id for npc in state.npcs}
         existing_npcs = "\n".join(
