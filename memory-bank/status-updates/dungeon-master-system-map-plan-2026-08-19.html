@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dungeon Master System Map Plan</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23a8853f' d='M8 19 32 5l24 14v27L32 59 8 46z'/%3E%3Cpath fill='%23161a21' d='m16 23 16-9 16 9-16 9z'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --surface: #161a21;
+      --surface-2: #1e232c;
+      --border: #2a3040;
+      --text: #e8ecf4;
+      --text-dim: #8b95a8;
+      --accent: #4f8cff;
+      --accent-glow: rgba(79, 140, 255, 0.15);
+      --red: #ff5c5c;
+      --green: #4ade80;
+      --amber: #fbbf24;
+      --purple: #a78bfa;
+      --radius: 12px;
+      --gold: #b08a36;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(176, 138, 54, .14), transparent 34rem),
+        var(--bg);
+      font-family: Outfit, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 42px 0 64px; }
+    .badge {
+      display: inline-flex;
+      padding: 7px 11px;
+      border: 1px solid color-mix(in srgb, var(--gold) 70%, transparent);
+      border-radius: 999px;
+      color: #e0bb61;
+      background: rgba(176, 138, 54, .08);
+      font: 700 12px/1 JetBrains Mono, ui-monospace, monospace;
+      letter-spacing: .08em;
+    }
+    h1 { max-width: 860px; margin: 18px 0 10px; font-size: clamp(2rem, 5vw, 4.4rem); line-height: .98; letter-spacing: -.035em; text-wrap: balance; }
+    .lede { max-width: 72ch; margin: 0; color: var(--text-dim); font-size: 1.05rem; line-height: 1.65; text-wrap: pretty; }
+    .facts { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 34px; }
+    .fact { padding: 8px 10px; border-radius: 8px; background: var(--surface-2); color: #c9d0dc; font: 600 12px/1.3 JetBrains Mono, ui-monospace, monospace; }
+    .plan-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(290px, .7fr); gap: 18px; }
+    section { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+    .campus { min-height: 500px; padding: 24px; overflow: hidden; position: relative; }
+    .campus h2, .panel h2 { margin: 0; font-size: 1rem; }
+    .campus p, .panel p { color: var(--text-dim); line-height: 1.55; }
+    .iso {
+      position: relative;
+      width: 520px;
+      height: 360px;
+      margin: 46px auto 0;
+      transform: rotateX(58deg) rotateZ(-45deg);
+      transform-style: preserve-3d;
+    }
+    .plot { position: absolute; inset: 0; border: 1px solid #394052; background: #11151c; box-shadow: inset 0 0 0 20px rgba(79, 140, 255, .03); }
+    .road { position: absolute; background: #262d39; }
+    .road.h { left: 0; right: 0; top: 50%; height: 42px; transform: translateY(-50%); }
+    .road.v { top: 0; bottom: 0; left: 50%; width: 42px; transform: translateX(-50%); }
+    .building { position: absolute; width: 88px; height: 88px; transform-style: preserve-3d; }
+    .building::before { content: ""; position: absolute; inset: 0; background: var(--c); border: 1px solid rgba(255,255,255,.15); }
+    .building::after { content: ""; position: absolute; left: 0; right: 0; height: var(--h); bottom: 100%; background: color-mix(in srgb, var(--c) 62%, #000); transform-origin: bottom; transform: rotateX(-90deg); border: 1px solid rgba(255,255,255,.12); }
+    .b1 { --c: #416fae; --h: 54px; left: 44px; top: 42px; }
+    .b2 { --c: #6a568e; --h: 82px; right: 42px; top: 46px; }
+    .b3 { --c: #4d765a; --h: 42px; left: 66px; bottom: 38px; }
+    .b4 { --c: #9a6b31; --h: 66px; right: 68px; bottom: 34px; }
+    .core { --c: #7b3737; --h: 100px; left: 216px; top: 136px; }
+    .panel { padding: 22px; }
+    ol { margin: 20px 0 0; padding: 0; list-style: none; counter-reset: steps; }
+    li { display: grid; grid-template-columns: 30px 1fr; gap: 11px; padding: 14px 0; border-top: 1px solid var(--border); line-height: 1.45; }
+    li::before { counter-increment: steps; content: counter(steps); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; color: #b9d2ff; background: var(--accent-glow); font: 700 12px/1 JetBrains Mono, ui-monospace, monospace; }
+    .guardrail { margin-top: 18px; padding: 16px; border: 1px solid rgba(251,191,36,.32); border-radius: 10px; background: rgba(251,191,36,.05); color: #ecd493; line-height: 1.55; }
+    .checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .check { padding: 16px; border-radius: 10px; background: var(--surface-2); }
+    .check strong { display: block; margin-bottom: 5px; font-size: .88rem; }
+    .check span { color: var(--text-dim); font-size: .85rem; line-height: 1.45; }
+    footer { margin-top: 22px; color: var(--text-dim); font: 12px/1.5 JetBrains Mono, ui-monospace, monospace; }
+    @media (max-width: 900px) {
+      .plan-grid { grid-template-columns: 1fr; }
+      .checks { grid-template-columns: 1fr; }
+      .campus { min-height: 430px; }
+      .iso { margin-left: 50%; transform: translateX(-50%) scale(.78) rotateX(58deg) rotateZ(-45deg); transform-origin: top center; }
+    }
+    @media (max-width: 520px) {
+      main { width: min(100% - 20px, 1180px); padding-top: 24px; }
+      .campus { min-height: 350px; padding: 18px; }
+      .iso { margin-top: 20px; transform: translateX(-50%) scale(.58) rotateX(58deg) rotateZ(-45deg); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="badge">PRE-IMPLEMENTATION PLAN</span>
+    <h1>Map the system as a working city.</h1>
+    <p class="lede">The final artifact will show the complete control and data path on merged <code>main</code>. Every building, road, and payload label will cite the source.</p>
+    <div class="facts">
+      <span class="fact">14 system nodes</span>
+      <span class="fact">4 route classes</span>
+      <span class="fact">K3 frontend pass</span>
+      <span class="fact">single-file HTML</span>
+    </div>
+
+    <div class="plan-grid">
+      <section class="campus" aria-labelledby="campus-title">
+        <h2 id="campus-title">Planned visual grammar</h2>
+        <p>The campus groups runtime layers. Height and shape show responsibility, not scale.</p>
+        <div class="iso" aria-hidden="true">
+          <div class="plot"></div><div class="road h"></div><div class="road v"></div>
+          <div class="building b1"></div><div class="building b2"></div>
+          <div class="building b3"></div><div class="building b4"></div>
+          <div class="building core"></div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="work-title">
+        <h2 id="work-title">Implementation sequence</h2>
+        <ol>
+          <li>Reconcile backend and desktop evidence against current source lines.</li>
+          <li>Give K3 the verified node, route, payload, and citation contract.</li>
+          <li>Build the isometric campus, legend, and selectable explainer.</li>
+          <li>Check accessibility, mobile layout, and the source citations.</li>
+          <li>Open the result in Zen and start the architecture quiz.</li>
+        </ol>
+        <div class="guardrail"><strong>Scope guardrail:</strong> The artifact documents the product. It does not change the game runtime or public API.</div>
+      </section>
+    </div>
+
+    <div class="checks" aria-label="Verification gates">
+      <div class="check"><strong>Source gate</strong><span>Each claim has a current file and line.</span></div>
+      <div class="check"><strong>UI gate</strong><span>Keyboard, contrast, reduced motion, and 400px layout all work.</span></div>
+      <div class="check"><strong>Truth gate</strong><span>The map marks actual paths and dormant contracts separately.</span></div>
+    </div>
+    <footer>Plan frozen on 2026-08-19 · Repository: armantark/Dungeon-Master</footer>
+  </main>
+</body>
+</html>
