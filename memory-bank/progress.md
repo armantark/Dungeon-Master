@@ -147,15 +147,17 @@
   now reuse shared JSON-only / seed-authority / no-invention / no-keyword /
   continuity-updater / Cairn enum fragments where safe. The DeepEval drift
   harness is now working end-to-end too: `tools/eval_harness.py` provides typed
-  eval fixtures/baseline IO plus a LiteLLM-backed DeepEval judge, `tools/
-  generate_baseline.py` generates validated rows, `tests/eval_data/
-  baseline.json` contains a real three-case baseline, and
-  `tests/test_eval_drift.py` uses GEval against fresh narration with baseline
-  prose as style-reference context rather than canonical expected state. Live
+  eval fixtures/baseline IO plus a LiteLLM-backed DeepEval judge, and `tools/
+  generate_baseline.py --from-ref c209252` generates a true pre-compression
+  baseline from an isolated detached worktree with per-case checkpoint writes.
+  `tests/eval_data/pre_compression_baseline.json` contains three generated rows
+  from the checkpoint before prompt compression, and `tests/test_eval_drift.py`
+  uses GEval against fresh current narration with those baseline rows as
+  style-reference context rather than canonical expected state. Live before/after
   verification passed with configured credentials: `uv run pytest
-  tests/test_eval_drift.py -q`. Non-live focused verification is also green:
-  `uv run pytest tests/test_prompt_fragments.py -q`, focused `ruff`, and
-  `uv run mypy src tests tools`.
+  tests/test_eval_drift.py -q` (3/3 passing). Non-live focused verification is
+  also green: `uv run pytest tests/test_prompt_fragments.py -q`, focused `ruff`,
+  and `uv run mypy src tests tools`.
 
 ## Current Status
 

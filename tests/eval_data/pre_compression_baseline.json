@@ -1,0 +1,20 @@
+{
+  "I look around the room for traps.": {
+    "narration": "You sweep your gaze across the damp stone, and the darkness yields its secret: a hair-thin tripwire stretches chest-high between two rusted sconces, rigged to loose a cluster of jagged caltrops from a ceiling groove. Near the far archway, a single flagstone sits a thumb\u2019s width lower than the rest, its edge faintly scuffed by the grind of hidden machinery beneath.\n\nDo you try to disable the tripwire, or skirt around both triggers and move on?",
+    "route": "player_action",
+    "routed_text": "I look around the room for traps.",
+    "target_name": null
+  },
+  "I swing my sword at the goblin.": {
+    "narration": "You swing your sword in a short, brutal arc, and the edge catches the goblin across the ribs, punching through ragged leather and dropping it to the stone with a wet gasp. It shudders once and lies still in the dark, leaving only the sound of your breath and the distant drip of water. What do you do now?",
+    "route": "attack",
+    "routed_text": "Swing my sword at the goblin.",
+    "target_name": "the goblin"
+  },
+  "I try to talk my way past the guard.": {
+    "narration": "You keep your voice low and your words sparse, suggesting you belong to the next shift and that the warden has already signed the ledger. The guard, a hollow-eyed man in rust-scabbed mail, studies the shadows behind you more than he studies your face. After a moment that stretches too long, he grunts and steps aside, jerking his chin toward the black maw of the corridor beyond. He does not ask for proof. The way is open.\n\nWhat do you do in the passage ahead?",
+    "route": "player_action",
+    "routed_text": "I try to talk my way past the guard.",
+    "target_name": null
+  }
+}

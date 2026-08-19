@@ -30,7 +30,8 @@ type EvalReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "
 NO_REASONING: dict[str, object] = {"effort": "none"}
 
 
-EVAL_DATA_PATH = Path("tests/eval_data/baseline.json")
+EVAL_DATA_PATH = Path("tests/eval_data/pre_compression_baseline.json")
+LEGACY_EVAL_DATA_PATH = Path("tests/eval_data/baseline.json")
 EVAL_USER_INPUTS: tuple[str, ...] = (
     "I swing my sword at the goblin.",
     "I look around the room for traps.",

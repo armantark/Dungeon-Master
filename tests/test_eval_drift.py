@@ -6,6 +6,7 @@ from deepeval.test_case import LLMTestCase, SingleTurnParams
 from dungeon_master.config import LLMConfig
 from dungeon_master.narrative import NarrativeEngine
 from tools.eval_harness import (
+    EVAL_USER_INPUTS,
     EvalBaseline,
     LiteLLMDeepEvalJudge,
     eval_case_for,
@@ -20,14 +21,17 @@ def baseline_data() -> EvalBaseline | None:
     return load_baseline()
 
 
-def test_narrative_drift(baseline_data: EvalBaseline | None) -> None:
+@pytest.mark.parametrize("user_input", EVAL_USER_INPUTS)
+def test_narrative_drift(
+    baseline_data: EvalBaseline | None,
+    user_input: str,
+) -> None:
     if not baseline_data:
         pytest.skip("No baseline data found. Run tools/generate_baseline.py first.")
 
-    user_input = "I swing my sword at the goblin."
     baseline = baseline_data.get(user_input)
     if baseline is None:
-        pytest.skip("No usable narration baseline found. Regenerate tests/eval_data/baseline.json.")
+        pytest.skip("No usable narration baseline found. Regenerate the drift baseline.")
 
     config = eval_llm_config(LLMConfig.from_env())
     if not config.is_usable():
@@ -79,6 +83,8 @@ def test_narrative_drift(baseline_data: EvalBaseline | None) -> None:
                 "<canonical_outcome>\n"
                 f"kind: {case.outcome.kind.value}\n"
                 f"summary: {case.outcome.summary}\n"
+                f"baseline_route: {baseline.route}\n"
+                f"baseline_target_name: {baseline.target_name or 'unspecified'}\n"
                 "canonical_wound_location: unspecified\n"
                 "canonical_enemy_weapon: unspecified\n"
                 "</canonical_outcome>"

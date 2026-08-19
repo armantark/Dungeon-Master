@@ -59,14 +59,16 @@ The current code state is:
   `LiteLLMDeepEvalJudge` adapter that routes DeepEval's GEval judge through the
   same app/OpenRouter config while forcing the short judge path into no-reasoning
   JSON scoring (`reasoning: {"effort": "none"}`). `tools/generate_baseline.py`
-  writes validated baseline rows to `tests/eval_data/baseline.json` using a lower
-  deterministic eval temperature. `tests/test_eval_drift.py` compares fresh
-  narration against the baseline as style/reference context plus an explicit
-  canonical outcome block, so generated wound/weapon color in the baseline is
-  not accidentally treated as durable canon. A live run of `uv run pytest
-  tests/test_eval_drift.py -q` now exercises narration + DeepEval judge end to
-  end and passes when credentials are configured; it still skips cleanly if the
-  baseline or LLM config is unavailable.
+  can now generate from the current tree or from an isolated detached git
+  worktree via `--from-ref`, checkpointing each completed row as it goes. The
+  committed `tests/eval_data/pre_compression_baseline.json` is generated from
+  `c209252` (the checkpoint before prompt compression), not from the current
+  prompts. `tests/test_eval_drift.py` now parametrizes over all three baseline
+  rows and compares current narration against that true pre-compression baseline
+  as style/reference context plus an explicit canonical outcome block. A live run
+  of `uv run pytest tests/test_eval_drift.py -q` now exercises current prompts
+  against pre-compression outputs end to end and passes when credentials are
+  configured; it still skips cleanly if the baseline or LLM config is unavailable.
 - Follow-up after live social play still over-routed to WIL: `TurnRouter` now has a second structured review gate for proposed `save` plans, mirroring the existing combat-mechanics review. The main prompt now says ordinary social interaction, awkwardness, persona loss, embarrassment, rapport changes, and making someone like/dislike the player are usually `narrate`, while the review prompt rejects saves that merely decide how a conversation/flirtation/performance/persona lands. Social saves remain allowed only for concrete coercion, danger, pursuit, binding commitment, exposure with durable consequences, or similarly immediate pressure that belongs in the rules chassis.
 - Consequence scaling for failed interaction saves now lives in `NarrativeEngine`, not in a new Cairn margin subsystem. Failed interaction saves should usually change footing, introduce cost/pressure, or create an obstacle rather than end a relationship, negotiation, audience, infiltration, or social thread outright. Irreparable breaks are allowed only when the established stakes, actor boundaries, immediate failure, and campaign seed support that severity. Roll margin/natural 20 can color severity, but it must not override fiction-first stakes, tone, genre, danger profile, or prior openings.
 - Cairn item slot normalization now enforces the actual rules in code: `petty` items are 0 slots, `bulky` items are 2 slots, and Fatigue still occupies slots. This normalization happens both on generated item profiles and on `CairnItemState` validation, so old save payloads such as "petty but slots=1" repair when loaded and `ensure_character_state(...)` recomputes derived burden.
