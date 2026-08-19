@@ -50,6 +50,23 @@
   .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
   .controls .grp { display: flex; gap: 6px; }
   .controls .sep { flex: 1 1 12px; }
+  .boundary-key {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: stretch; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); background: #0f1319;
+  }
+  .boundary-side {
+    display: flex; align-items: baseline; gap: 8px; min-width: 0;
+    padding: 7px 9px; border: 1px solid var(--zone-border); background: var(--zone-bg);
+  }
+  .boundary-side strong { flex: none; font-size: 13px; color: var(--zone-text); }
+  .boundary-side span { min-width: 0; color: #aeb7c7; font-size: 12px; }
+  .boundary-side.frontend { --zone-border: #356e76; --zone-bg: rgba(63,125,134,.12); --zone-text: #83c7cf; }
+  .boundary-side.backend { --zone-border: #536078; --zone-bg: rgba(89,103,125,.14); --zone-text: #b2bed2; }
+  .boundary-seam {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 5px; color: var(--brass-hi); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   button {
     font: 600 13px/1 inherit; font-family: inherit;
     color: var(--text); background: #1f252f; border: 1px solid #333c4c;
@@ -116,6 +133,9 @@
   .badge.dormant rect { stroke-dasharray: 3 2; }
   .chip circle { fill: #3a2f14; stroke: var(--brass); }
   .chip text { font: 700 11px/1 ui-monospace, Menlo, monospace; fill: var(--brass-hi); }
+  .zone-plate { pointer-events: none; stroke-width: 1.6; stroke-dasharray: 8 6; }
+  .zone-label { pointer-events: none; font: 700 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; paint-order: stroke; stroke: #0b0d11; stroke-width: 4px; }
+  .zone-sub { pointer-events: none; font: 600 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; fill: #8995a8; paint-order: stroke; stroke: #0b0d11; stroke-width: 3px; }
 
   @media (max-width: 1080px) {
     .atlas { grid-template-columns: 1fr; }
@@ -125,6 +145,8 @@
     .scroller { overflow-x: scroll; }
     svg#map { min-width: 760px; }
     header.mast .stamp { margin-left: 0; }
+    .boundary-key { grid-template-columns: 1fr; }
+    .boundary-seam { justify-content: flex-start; padding: 2px 9px; }
   }
   @media (max-width: 480px) {
     .wrap { padding: 12px 10px 28px; }
@@ -157,6 +179,12 @@
         <span class="sep"></span>
         <button type="button" id="trace">Trace next step</button>
         <button type="button" id="reset" class="ghost">Reset</button>
+      </div>
+
+      <div class="boundary-key" aria-label="Runtime boundary">
+        <div class="boundary-side frontend"><strong>Frontend</strong><span>Svelte UI · TypeScript store</span></div>
+        <div class="boundary-seam"><span>POST</span><span aria-hidden="true">→</span><span>NDJSON</span></div>
+        <div class="boundary-side backend"><strong>Backend</strong><span>FastAPI · Python service and rules</span></div>
       </div>
 
       <div class="scroller">
@@ -533,7 +561,6 @@
     },
     tower: function (g, n, c) {
       var an = off(1.25, 0.35);
-      prism(g, n.x + an[0], n.y + an[1], 1.5, 1.35, 40, shade(c, -0.1));
       var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
       var apex = up(mid(mid(t.n, t.s), mid(t.e, t.w)), 34);
       g.appendChild(el("polygon", { points: pts([t.w, t.s, apex]), fill: shade(c, -0.1), stroke: shade(c, -0.45), "stroke-width": 0.8 }));
@@ -543,6 +570,8 @@
       for (var i = 0; i < 3; i++) {
         facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.34, 0.66, 0.18 + i * 0.26, 0.3 + i * 0.26, "#e0b45c", null);
       }
+      /* The Cairn hall sits southeast of the tower, so it paints after the tower body. */
+      prism(g, n.x + an[0], n.y + an[1], 1.5, 1.35, 40, shade(c, -0.1));
     },
     theater: function (g, n, c) {
       var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
@@ -668,10 +697,16 @@
     var plot = [iso(-R, -R), iso(R, -R), iso(R, R), iso(-R, R)];
     gGrid.appendChild(el("polygon", { points: pts(plot), fill: "#10141b", stroke: "#2b3342", "stroke-width": 1.4 }));
     gGrid.appendChild(el("path", { d: d.join(" "), fill: "none", stroke: "#1d2431", "stroke-width": 1 }));
-    /* district ground plates keep the eye oriented without adding chrome */
-    [[-6.2, -1.4, 4.6, "#3f7d86"], [1.2, -5.2, 5.2, "#59677d"], [3.6, 1.4, 4.6, "#b05c3c"], [-1.6, 4.4, 4.4, "#a07a2e"]].forEach(function (p) {
-      var q = [iso(p[0], p[1]), iso(p[0] + p[2], p[1]), iso(p[0] + p[2], p[1] + p[2]), iso(p[0], p[1] + p[2])];
-      gGrid.appendChild(el("polygon", { points: pts(q), fill: p[3], opacity: 0.055 }));
+    /* Runtime zones make the process boundary visible before a route is selected. */
+    var zones = [
+      { points: [[48, 248], [280, 124], [350, 170], [350, 420], [118, 432], [48, 358]], fill: "#3f7d86", stroke: "#4f9ca6", label: "FRONTEND", sub: "Svelte + TypeScript", x: 76, y: 232 },
+      { points: [[350, 88], [650, 18], [1034, 210], [846, 500], [350, 420]], fill: "#59677d", stroke: "#75839b", label: "BACKEND", sub: "FastAPI + Python", x: 472, y: 52 },
+      { points: [[118, 432], [350, 420], [846, 500], [712, 606], [350, 606], [190, 524]], fill: "#4e7355", stroke: "#6c9a75", label: "DESKTOP & DELIVERY", sub: "Tauri + sidecar + release", x: 260, y: 584 }
+    ];
+    zones.forEach(function (z) {
+      gGrid.appendChild(el("polygon", { "class": "zone-plate", points: pts(z.points), fill: z.fill, "fill-opacity": 0.075, stroke: z.stroke, "stroke-opacity": 0.72 }));
+      gGrid.appendChild(el("text", { "class": "zone-label", x: z.x, y: z.y, fill: z.stroke }, [document.createTextNode(z.label)]));
+      gGrid.appendChild(el("text", { "class": "zone-sub", x: z.x, y: z.y + 16 }, [document.createTextNode(z.sub)]));
     });
   })();
 
@@ -772,8 +807,12 @@
     return rec;
   }
 
-  /* buildings, painted back to front */
-  NODES.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (n) {
+  function frontDepth(n) {
+    return n.y + (HH / 2) * (n.w + n.d);
+  }
+
+  /* Buildings paint by their nearest ground edge, not their center point. */
+  NODES.slice().sort(function (a, b) { return frontDepth(a) - frontDepth(b); }).forEach(function (n) {
     var c = CLASSES[n.cls].color;
     var g = el("g", { "class": "node", role: "button", tabindex: "0", "data-id": n.id });
     g.appendChild(el("title", null, [document.createTextNode(n.name + " — " + CLASSES[n.cls].label)]));
