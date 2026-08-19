@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon Master · The Turn Engine</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23a8853f' d='M8 19 32 5l24 14v27L32 59 8 46z'/%3E%3Cpath fill='%23161a21' d='m16 23 16-9 16 9-16 9z'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0b0d11;
+    --plot: #10141b;
+    --surface: #14181f;
+    --surface-2: #1a1f28;
+    --border: #262c39;
+    --text: #e6eaf2;
+    --dim: #8a94a6;
+    --brass: #e6ae44;
+    --brass-hi: #ffd88a;
+    --parchment: #ded0ae;
+    --c-client: #3f7d86;
+    --c-python: #59677d;
+    --c-structured: #7d5fae;
+    --c-prose: #b05c3c;
+    --c-persist: #a07a2e;
+    --c-desktop: #4e7355;
+    --c-dormant: #78829a;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: var(--brass-hi); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--brass-hi); outline-offset: 2px; }
+
+  .wrap { width: min(1400px, 100%); margin: 0 auto; padding: 18px 18px 40px; }
+  header.mast { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  header.mast h1 { margin: 0; font-size: 1.28rem; font-weight: 650; letter-spacing: -.01em; }
+  header.mast .thesis { margin: 0; max-width: 78ch; color: var(--dim); }
+  header.mast .stamp { margin-left: auto; color: var(--dim); font-size: 12px; }
+
+  .atlas { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; margin-top: 16px; align-items: start; }
+
+  .mapcol { min-width: 0; border: 1px solid var(--border); background: var(--surface); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .controls .grp { display: flex; gap: 6px; }
+  .controls .sep { flex: 1 1 12px; }
+  button {
+    font: 600 13px/1 inherit; font-family: inherit;
+    color: var(--text); background: #1f252f; border: 1px solid #333c4c;
+    padding: 8px 11px; border-radius: 4px; cursor: pointer;
+  }
+  button:hover { background: #28303c; border-color: #46536a; }
+  button[aria-pressed="true"] { background: #3a2f14; border-color: var(--brass); color: var(--brass-hi); }
+  button.ghost { background: transparent; }
+
+  .scroller { overflow-x: auto; }
+  svg#map { display: block; width: 100%; height: auto; background: var(--bg); }
+  .maplegend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 12px; border-top: 1px solid var(--border); }
+  .maplegend span { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: #c3cbd9; }
+  .sw { width: 13px; height: 13px; border: 1px solid rgba(255,255,255,.22); background: var(--c); flex: none; }
+  .sw.line { width: 22px; height: 0; border: 0; border-top: 3px solid var(--c); }
+  .sw.dash { width: 22px; height: 0; border: 0; border-top: 3px dashed var(--c); }
+
+  .rail { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 12px; border-top: 1px solid var(--border); background: #0f1319; }
+  .rail button { display: flex; align-items: baseline; gap: 7px; padding: 6px 9px; font-weight: 500; }
+  .rail button b { color: var(--brass); font: 700 11px/1 ui-monospace, Menlo, monospace; }
+  .rail button .pay { color: var(--dim); font: 11.5px/1 ui-monospace, Menlo, monospace; }
+  .rail button[aria-current="true"] { background: #3a2f14; border-color: var(--brass); }
+
+  aside.panel { border: 1px solid var(--border); background: var(--surface); padding: 16px; position: sticky; top: 12px; }
+  .panel .eyebrow { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; color: #c3cbd9; }
+  .panel h2 { margin: 0 0 8px; font-size: 1.06rem; font-weight: 650; }
+  .panel h3 { margin: 16px 0 5px; font-size: 12.5px; font-weight: 700; color: var(--brass); }
+  .panel p { margin: 0 0 8px; color: #cfd6e2; }
+  .panel .io { margin: 10px 0 0; display: grid; grid-template-columns: 46px 1fr; gap: 4px 10px; }
+  .panel .io dt { color: var(--dim); font: 600 11.5px/1.5 ui-monospace, Menlo, monospace; }
+  .panel .io dd { margin: 0; font-size: 13.5px; color: #cfd6e2; }
+  .panel ul.cites { margin: 0; padding: 0; list-style: none; }
+  .panel ul.cites li { border-top: 1px solid var(--border); }
+  .panel ul.cites a { display: block; padding: 6px 0; font: 12px/1.4 ui-monospace, Menlo, monospace; text-decoration: none; word-break: break-all; }
+  .panel ul.cites a:hover { text-decoration: underline; }
+  .panel .note { margin-top: 14px; padding: 10px; border-left: 2px solid var(--c-dormant); background: #161a22; color: #a9b3c4; font-size: 13px; }
+
+  footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--dim); font-size: 12.5px; }
+  footer code { color: #c3cbd9; }
+
+  /* map elements */
+  .node { cursor: pointer; }
+  .node:focus { outline: none; }
+  .node .ring { fill: none; stroke: var(--brass-hi); stroke-width: 2.4; opacity: 0; }
+  .node:hover .ring { opacity: .55; }
+  .node:focus-visible .ring { opacity: 1; stroke-dasharray: 5 3; }
+  .node.sel .ring { opacity: 1; }
+  .node.cur .ring { opacity: 1; stroke-width: 3.2; }
+  .node.dim { opacity: .2; }
+  .node, .edge, .badge { transition: opacity .18s linear; }
+  .lbl { font: 600 12.5px/1 ui-sans-serif, system-ui, sans-serif; fill: #eef2f8; paint-order: stroke; stroke: #0b0d11; stroke-width: 4.5px; stroke-linejoin: round; }
+  .lbl.dim { opacity: .22; }
+  .leader { stroke: #55607a; stroke-width: 1; }
+  .leader.dim { opacity: .18; }
+  .edge { cursor: pointer; }
+  .edge:focus { outline: none; }
+  .edge .hit { stroke: transparent; stroke-width: 20; fill: none; }
+  .edge:focus-visible .road, .edge:hover .road, .edge.sel .road { stroke: var(--brass-hi); }
+  .edge.sel .road { stroke-width: 7; }
+  .badge rect { fill: #171b23; stroke: #3c4658; }
+  .badge text { font: 600 10.5px/1 ui-monospace, Menlo, monospace; fill: #c8d0de; }
+  .badge.cur rect { fill: #3a2f14; stroke: var(--brass); }
+  .badge.cur text { fill: var(--brass-hi); }
+  .badge.dormant rect { stroke-dasharray: 3 2; }
+  .chip circle { fill: #3a2f14; stroke: var(--brass); }
+  .chip text { font: 700 11px/1 ui-monospace, Menlo, monospace; fill: var(--brass-hi); }
+
+  @media (max-width: 1080px) {
+    .atlas { grid-template-columns: 1fr; }
+    aside.panel { position: static; }
+  }
+  @media (max-width: 820px) {
+    .scroller { overflow-x: scroll; }
+    svg#map { min-width: 760px; }
+    header.mast .stamp { margin-left: 0; }
+  }
+  @media (max-width: 480px) {
+    .wrap { padding: 12px 10px 28px; }
+    header.mast h1 { font-size: 1.12rem; }
+    svg#map { min-width: 700px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <h1>Dungeon Master · The Turn Engine</h1>
+    <p class="thesis">One player sentence enters a deterministic Python pipeline that calls bounded model steps, resolves every outcome in code, and streams back a whole replacement <code>GameState</code>.</p>
+    <span class="stamp mono">evidence reconciled on merged main · 2026-08-19</span>
+  </header>
+
+  <div class="atlas">
+    <section class="mapcol" aria-label="System map">
+      <div class="controls">
+        <div class="grp" role="group" aria-label="Choose a path">
+          <button type="button" class="path" data-path="turn" aria-pressed="true">Turn</button>
+          <button type="button" class="path" data-path="startup" aria-pressed="false">Startup</button>
+          <button type="button" class="path" data-path="persistence" aria-pressed="false">Persistence</button>
+          <button type="button" class="path" data-path="release" aria-pressed="false">Release</button>
+        </div>
+        <span class="sep"></span>
+        <button type="button" id="trace">Trace next step</button>
+        <button type="button" id="reset" class="ghost">Reset</button>
+      </div>
+
+      <div class="scroller">
+        <svg id="map" viewBox="0 0 1060 620" role="img" aria-labelledby="mapTitle mapDesc" shape-rendering="geometricPrecision">
+          <title id="mapTitle">Isometric campus of the Dungeon Master system</title>
+          <desc id="mapDesc">Fifteen labelled buildings on a diamond grid, joined by the road of the currently selected path. Every building is also listed as a button in the step rail below the map.</desc>
+        </svg>
+      </div>
+
+      <ol class="rail" id="rail"></ol>
+
+      <div class="maplegend" id="legend"></div>
+    </section>
+
+    <aside class="panel" id="panel" aria-live="polite" aria-label="Explainer"></aside>
+  </div>
+
+  <footer>
+    Buildings are placed by responsibility, not by size. Height marks how much of the turn a component owns. The dashed spur is a contract the client still honours but the server never fills: <code>web/src/lib/streaming.ts</code> reserves <code>mechanics_ready</code> and <code>oracle_outcome</code> handlers, and today's <code>src/dungeon_master/api.py</code> emits neither.
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var NS = "http://www.w3.org/2000/svg";
+  var REPO = "https://github.com/armantark/Dungeon-Master/blob/main/";
+
+  var HW = 31, HH = 15.5, OX = 530, OY = 300;
+
+  var CLASSES = {
+    client:     { label: "Browser client · TypeScript", color: "#3f7d86" },
+    python:     { label: "Deterministic Python",        color: "#59677d" },
+    structured: { label: "Structured model call",       color: "#7d5fae" },
+    prose:      { label: "Prose model call",            color: "#b05c3c" },
+    persist:    { label: "Persistence",                 color: "#a07a2e" },
+    desktop:    { label: "Desktop shell & build",       color: "#4e7355" }
+  };
+
+  var NODES = [
+    {
+      id: "composer", name: "Composer Gatehouse", kind: "gatehouse", cls: "client",
+      x: 120, y: 296, w: 2, d: 2, h: 62, lx: 120, ly: 186,
+      role: "The door ordinary player intent walks through. The composer passes free text to the store; explicit slash commands have a separate client dispatch path.",
+      inputs: "Player free text",
+      outputs: "POST body { text }",
+      why: "For ordinary prose, a one-field request keeps interpretation on the server. New natural-language mechanics do not require a UI release, and the browser does not guess targets or dice outcomes.",
+      cites: [["web/src/components/Composer.svelte", 75]]
+    },
+    {
+      id: "relay", name: "Relay Post", kind: "relay", cls: "client",
+      x: 245, y: 230, w: 1.8, d: 1.8, h: 46, lx: 250, ly: 144,
+      role: "Client transport. Resolves the API base for the current host, then opens the streaming POST and hands the reader the response body.",
+      inputs: "{ text }, resolved API base",
+      outputs: "POST /api/turn/stream, an open NDJSON body",
+      why: "One resolver serves both the dev browser and the packaged desktop app. Only the base string differs, so there is no second network code path to keep in sync.",
+      cites: [["web/src/lib/api.ts", 376], ["web/src/lib/desktop.ts", 8]]
+    },
+    {
+      id: "depot", name: "Stream Depot", kind: "depot", cls: "python",
+      x: 405, y: 178, w: 3, d: 1.8, h: 44, lx: 398, ly: 84,
+      role: "The FastAPI turn endpoint and its per-turn stream session. It accepts the turn, opens a long-lived NDJSON response, and is the only place frames are written.",
+      inputs: "POST /api/turn/stream { text }",
+      outputs: "NDJSON frames: meta, stage, thinking_delta, content_delta, final_state, error",
+      why: "Concentrating every emit in one session object means the wire format is defined once. Any stage that wants to talk to the client goes through the same narrow door, which is why the frame vocabulary stayed small enough to reason about.",
+      cites: [["src/dungeon_master/api.py", 566], ["src/dungeon_master/api.py", 1022], ["src/dungeon_master/stream_session.py", 21]]
+    },
+    {
+      id: "foundry", name: "Turn Foundry", kind: "foundry", cls: "python",
+      x: 545, y: 238, w: 2.4, d: 2.4, h: 72, lx: 548, ly: 112,
+      role: "The service orchestrator. It loads canonical state, pulls derived memory, and then drives routing, resolution, prose and proposals in a fixed order.",
+      inputs: "Turn text, active save, derived memory",
+      outputs: "Stage events and one new canonical GameState",
+      why: "Turn order lives in one deterministic function rather than being spread across the model steps. A model call can fail, be retried or be swapped out without changing what a turn means.",
+      cites: [["src/dungeon_master/service.py", 1716], ["src/dungeon_master/service.py", 1904]]
+    },
+    {
+      id: "memory", name: "Memory Cistern", kind: "cistern", cls: "python",
+      x: 410, y: 312, w: 1.8, d: 1.8, h: 36, lx: 386, ly: 238,
+      role: "Derived recall. Compacts the append-only event log into the working memory that a model step is allowed to see.",
+      inputs: "events.jsonl, canonical GameState",
+      outputs: "memory.json, prompt-ready recall",
+      why: "Memory is derived, never authoritative. It can be rebuilt from events at any time, so a poor summary degrades one turn instead of corrupting the campaign.",
+      cites: [["src/dungeon_master/memory.py", 335], ["src/dungeon_master/service.py", 1904]]
+    },
+    {
+      id: "router", name: "Router Observatory", kind: "observatory", cls: "structured",
+      x: 690, y: 195, w: 2, d: 2, h: 80, lx: 692, ly: 66,
+      role: "The first model call. It reads the turn against the current scene and returns a schema-validated TurnPlan describing what kind of turn this is and what it touches.",
+      inputs: "Turn text, state summary, recall",
+      outputs: "TurnPlan (validated structure)",
+      why: "Classification is forced through a schema, so everything downstream branches on typed fields. No stage ever matches on model prose to decide what happens next.",
+      cites: [["src/dungeon_master/turn_router.py", 497], ["src/dungeon_master/service.py", 2176]]
+    },
+    {
+      id: "oracle", name: "Oracle Tower & Cairn Hall", kind: "tower", cls: "python",
+      x: 862, y: 238, w: 1.4, d: 1.4, h: 116, lx: 858, ly: 72,
+      role: "Deterministic resolution. The oracle answers the open question with dice; the Cairn hall applies the ruleset consequences that follow from the answer.",
+      inputs: "TurnPlan, canonical state",
+      outputs: "Rolled outcome and rule effects",
+      why: "Chance and rules stay in Python, so outcomes are typed, inspectable and persisted instead of being hidden inside prose. This is the boundary that keeps the model from deciding whether the player succeeded.",
+      cites: [["src/dungeon_master/oracle.py", 30], ["src/dungeon_master/cairn.py", 706], ["src/dungeon_master/service.py", 2641]]
+    },
+    {
+      id: "narrative", name: "Narrative Theater", kind: "theater", cls: "prose",
+      x: 700, y: 318, w: 2.8, d: 2.4, h: 54, lx: 690, ly: 384,
+      role: "The prose model call. It streams the scene token by token, narrating an outcome that has already been decided.",
+      inputs: "TurnPlan, resolved outcome, recall",
+      outputs: "thinking_delta and content_delta frames",
+      why: "Prose runs after resolution, so narration can describe a result but never invent one. It also means the player starts reading while the server is still working.",
+      cites: [["src/dungeon_master/narrative.py", 201], ["src/dungeon_master/service.py", 3095]]
+    },
+    {
+      id: "loom", name: "Thread & NPC Loom", kind: "loom", cls: "structured",
+      x: 872, y: 362, w: 2, d: 2, h: 48, lx: 886, ly: 424,
+      role: "Post-prose bookkeeping. A second structured call proposes thread and NPC updates implied by the scene that was just written.",
+      inputs: "Final prose, existing threads and NPCs",
+      outputs: "Validated update proposals",
+      why: "Continuity edits run last so they are grounded in the exact text the player saw, not in a plan that the narration may have expressed differently.",
+      cites: [["src/dungeon_master/service.py", 3551]]
+    },
+    {
+      id: "vault", name: "Archive Vault", kind: "vault", cls: "persist",
+      x: 585, y: 382, w: 2.4, d: 2.4, h: 58, lx: 500, ly: 444,
+      role: "Atomic writer for the active save: canonical state, the append-only event log, and both checkpoint families.",
+      inputs: "New GameState, turn events",
+      outputs: "game_state.json, events.jsonl, checkpoints/, turn-checkpoints/",
+      why: "Writes land atomically, so a crash in the middle of a turn leaves the previous save intact rather than a half-written state file. Turn checkpoints make a single bad turn reversible without rolling back the campaign.",
+      cites: [["src/dungeon_master/state_store.py", 21], ["src/dungeon_master/service.py", 3918]]
+    },
+    {
+      id: "library", name: "Save Library", kind: "library", cls: "persist",
+      x: 700, y: 442, w: 2, d: 2, h: 40, lx: 806, ly: 486,
+      role: "Catalogue of campaigns. Resolves library.json into the active saves/&lt;id&gt;/ directory and its metadata.",
+      inputs: "library.json",
+      outputs: "Active save path, save metadata",
+      why: "One indirection between which campaign is open and where its bytes live keeps save switching entirely off the turn path. Settings and credentials stay app-global rather than being copied into every save.",
+      cites: [["src/dungeon_master/save_library.py", 44]]
+    },
+    {
+      id: "homes", name: "Client State District", kind: "homes", cls: "client",
+      x: 265, y: 372, w: 2.4, d: 2.2, h: 32, lx: 250, ly: 292,
+      role: "Frame reader and store. Renders deltas as they arrive, then replaces the entire GameState when final_state lands.",
+      inputs: "NDJSON frames",
+      outputs: "Rendered scene, replaced GameState",
+      why: "The client replaces state instead of patching it, so no client-side merge rule can drift from the server. Streaming deltas keep the screen alive while the authoritative object is still being assembled.",
+      cites: [["web/src/lib/streaming.ts", 109], ["web/src/lib/streaming.ts", 252], ["web/src/lib/store.svelte.ts", 410], ["web/src/lib/store.svelte.ts", 829], ["web/src/lib/store.svelte.ts", 1460], ["web/src/lib/store.svelte.ts", 1481]]
+    },
+    {
+      id: "shell", name: "Tauri Shell & Vite Proxy", kind: "shell", cls: "desktop",
+      x: 245, y: 442, w: 2, d: 2, h: 46, lx: 128, ly: 400,
+      role: "The host process. In development the Vite proxy forwards /api to the local service. Packaged, Tauri allocates an ephemeral loopback port, injects app-data paths and credentials into the sidecar, and publishes the base as desktop_api_base.",
+      inputs: "App data directory, stored credentials",
+      outputs: "desktop_api_base, sidecar environment",
+      why: "An ephemeral loopback port avoids fixed-port collisions between installs and keeps the API off the network. Because the base is only known at launch, the frontend sets it late and bootstraps afterwards.",
+      cites: [["web/src-tauri/src/lib.rs", 10], ["web/vite.config.ts", 11], ["web/src/lib/desktop.ts", 8]]
+    },
+    {
+      id: "sidecar", name: "Sidecar Works", kind: "works", cls: "desktop",
+      x: 395, y: 492, w: 2, d: 2, h: 52, lx: 420, ly: 398,
+      role: "Build step that freezes the Python service into a one-file PyInstaller binary and stages it as the Tauri sidecar.",
+      inputs: "Python service tree, build script",
+      outputs: "One-file sidecar executable",
+      why: "Shipping a frozen interpreter removes any Python installation requirement from the player's machine, which is what makes the desktop build a single download.",
+      cites: [["scripts/build_tauri_sidecar.py", 32]]
+    },
+    {
+      id: "crane", name: "Release Crane", kind: "crane", cls: "desktop",
+      x: 520, y: 528, w: 1.6, d: 1.6, h: 100, lx: 542, ly: 566,
+      role: "Continuous integration. On a desktop tag or manual dispatch, runs the checks, builds the sidecar, then bundles and publishes the desktop release.",
+      inputs: "desktop-v* tag or manual dispatch",
+      outputs: "Platform bundle, GitHub release",
+      why: "The sidecar is produced in the same job that bundles the app, so the shipped binary always matches the commit that passed the checks.",
+      cites: [[".github/workflows/desktop-release.yml", 60]]
+    }
+  ];
+
+  var PATHS = {
+    turn: {
+      name: "Turn",
+      blurb: "One player sentence to one replaced GameState. Every stage below is on merged main today.",
+      steps: [
+        { node: "composer" },
+        { node: "relay",     pay: "{ text }",              det: "The raw sentence leaves the composer untouched. No client-side parsing happens before this point." },
+        { node: "depot",     pay: "POST /api/turn/stream", det: "A streaming POST, not a websocket. The response body stays open for the whole turn and carries NDJSON." },
+        { node: "foundry",   pay: "stream session",        det: "The endpoint hands the orchestrator a session object that owns every frame the turn will emit." },
+        { node: "memory",    pay: "load canonical state",  det: "The orchestrator loads the authoritative GameState first, then asks for derived recall built from the event log." },
+        { node: "router",    pay: "state + recall",        det: "Only a summary and recall reach the router prompt, never the whole save." },
+        { node: "oracle",    pay: "TurnPlan",              det: "A validated structure, so resolution branches on typed fields instead of on model prose." },
+        { node: "narrative", pay: "resolved outcome",      det: "The dice and rules are already settled when narration begins. Prose describes the outcome, it does not choose it." },
+        { node: "loom",      pay: "final prose",           det: "Thread and NPC proposals are generated from the completed scene text." },
+        { node: "vault",     pay: "state diff",            det: "Proposals are folded into the new canonical state, which is written atomically along with the turn's events." },
+        { node: "homes",     pay: "final_state",           det: "The last frame carries the complete GameState. The client replaces its store outright rather than merging." }
+      ],
+      dormant: {
+        from: "oracle", to: "homes",
+        pay: "mechanics_ready · oracle_outcome",
+        name: "Dormant contract",
+        det: "The client still registers handlers for mechanics_ready and oracle_outcome frames, but the current API never emits them. Resolution reaches the player only through content_delta and final_state, so this spur is a reserved contract rather than a live route.",
+        cites: [["web/src/lib/store.svelte.ts", 1481], ["src/dungeon_master/api.py", 566]]
+      }
+    },
+    startup: {
+      name: "Startup",
+      blurb: "How the frontend finds a service that may not exist until launch time.",
+      steps: [
+        { node: "shell" },
+        { node: "sidecar", pay: "port · paths · credentials", det: "Tauri allocates an ephemeral loopback port and injects app-data paths and stored credentials into the sidecar's environment." },
+        { node: "depot",   pay: "sidecar boots FastAPI",      det: "The frozen one-file binary starts the same FastAPI service the dev server runs." },
+        { node: "relay",   pay: "desktop_api_base",           det: "The base is late-bound: the browser uses the Vite /api proxy, while the packaged app reads the injected base before any request is made." },
+        { node: "library", pay: "settings · credentials · library", det: "Bootstrap order is fixed: settings and credentials first, both app-global, then library.json resolves the active save." },
+        { node: "homes",   pay: "GameState",                  det: "Only after the base and library are known does the client load the campaign state." }
+      ]
+    },
+    persistence: {
+      name: "Persistence",
+      blurb: "What is authoritative on disk, and what is merely derived from it.",
+      steps: [
+        { node: "foundry" },
+        { node: "library", pay: "active save id",          det: "library.json is the index. It names which campaign directory the turn writes into." },
+        { node: "vault",   pay: "saves/<id>/",             det: "Inside the save: game_state.json, events.jsonl, checkpoints/ and turn-checkpoints/. The event log is append-only." },
+        { node: "memory",  pay: "derived memory.json",     det: "memory.json is rebuildable from events.jsonl, so it is a cache rather than a source of truth." }
+      ]
+    },
+    release: {
+      name: "Release",
+      blurb: "From a passing commit to an installable desktop app.",
+      steps: [
+        { node: "crane" },
+        { node: "sidecar", pay: "checks pass → PyInstaller", det: "The workflow only builds the one-file sidecar after the checks succeed on the tagged commit." },
+        { node: "shell",   pay: "Tauri bundle → release",    det: "The bundle embeds the sidecar produced in the same job, so binary and source always match." }
+      ]
+    }
+  };
+
+  /* ---------- geometry helpers ---------- */
+
+  function el(tag, attrs, kids) {
+    var n = document.createElementNS(NS, tag), k;
+    if (attrs) for (k in attrs) if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+    if (kids) for (var i = 0; i < kids.length; i++) n.appendChild(kids[i]);
+    return n;
+  }
+  function pts(list) {
+    return list.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+  }
+  function iso(gx, gy) { return [OX + (gx - gy) * HW, OY + (gx + gy) * HH]; }
+  function toGrid(x, y) { var u = (x - OX) / HW, v = (y - OY) / HH; return [(u + v) / 2, (v - u) / 2]; }
+  function off(dgx, dgy) { return [HW * (dgx - dgy), HH * (dgx + dgy)]; }
+  function corners(x, y, w, d) {
+    return {
+      n: [x + (HW / 2) * (d - w), y - (HH / 2) * (w + d)],
+      e: [x + (HW / 2) * (w + d), y + (HH / 2) * (w - d)],
+      s: [x + (HW / 2) * (w - d), y + (HH / 2) * (w + d)],
+      w: [x - (HW / 2) * (w + d), y + (HH / 2) * (d - w)]
+    };
+  }
+  function up(p, h) { return [p[0], p[1] - h]; }
+  function mid(a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
+  function shade(hex, amt) {
+    var n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    var t = amt < 0 ? 0 : 255, p = Math.abs(amt);
+    r = Math.round(r + (t - r) * p); g = Math.round(g + (t - g) * p); b = Math.round(b + (t - b) * p);
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  }
+
+  /* prism: returns the top-face corner set */
+  function prism(g, x, y, w, d, h, c, opt) {
+    opt = opt || {};
+    var b = corners(x, y, w, d);
+    var t = { n: up(b.n, h), e: up(b.e, h), s: up(b.s, h), w: up(b.w, h) };
+    g.appendChild(el("polygon", { points: pts([b.w, b.s, t.s, t.w]), fill: shade(c, -0.24), stroke: shade(c, -0.52), "stroke-width": 0.8 }));
+    g.appendChild(el("polygon", { points: pts([b.s, b.e, t.e, t.s]), fill: shade(c, -0.46), stroke: shade(c, -0.6), "stroke-width": 0.8 }));
+    if (!opt.noTop) g.appendChild(el("polygon", { points: pts([t.n, t.e, t.s, t.w]), fill: shade(c, 0.17), stroke: shade(c, 0.32), "stroke-width": 0.8 }));
+    return t;
+  }
+  /* quad on a side face, parameterised by along-face fraction and height fraction */
+  function facePatch(g, x, y, w, d, h, face, a0, a1, v0, v1, fill, stroke) {
+    var b = corners(x, y, w, d);
+    var p0 = face === "left" ? b.w : b.s, p1 = face === "left" ? b.s : b.e;
+    function at(a, v) {
+      return [p0[0] + (p1[0] - p0[0]) * a, p0[1] + (p1[1] - p0[1]) * a - h * v];
+    }
+    g.appendChild(el("polygon", {
+      points: pts([at(a0, v0), at(a1, v0), at(a1, v1), at(a0, v1)]),
+      fill: fill, stroke: stroke || "none", "stroke-width": 0.8
+    }));
+    return at;
+  }
+  function gable(g, t, rise, c) {
+    var a = up(mid(t.w, t.n), rise), b = up(mid(t.s, t.e), rise);
+    g.appendChild(el("polygon", { points: pts([t.w, t.s, b, a]), fill: shade(c, -0.14), stroke: shade(c, -0.5), "stroke-width": 0.8 }));
+    g.appendChild(el("polygon", { points: pts([t.n, t.e, b, a]), fill: shade(c, -0.38), stroke: shade(c, -0.55), "stroke-width": 0.8 }));
+    g.appendChild(el("polygon", { points: pts([t.w, t.n, a]), fill: shade(c, 0.05), stroke: shade(c, -0.4), "stroke-width": 0.8 }));
+    g.appendChild(el("polygon", { points: pts([t.s, t.e, b]), fill: shade(c, -0.28), stroke: shade(c, -0.5), "stroke-width": 0.8 }));
+  }
+
+  /* ---------- building kinds ---------- */
+
+  var KIND = {
+    gatehouse: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      gable(g, t, 18, c);
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.32, 0.68, 0.02, 0.62, shade(c, -0.66), shade(c, -0.72));
+      [[-0.72, 0.72], [0.72, -0.72]].forEach(function (o) {
+        var p = off(o[0], o[1]);
+        var tt = prism(g, n.x + p[0], n.y + p[1], 0.62, 0.62, n.h + 16, shade(c, 0.06));
+        g.appendChild(el("polygon", {
+          points: pts([tt.n, tt.e, tt.s, tt.w].map(function (q) { return q; })),
+          fill: "none", stroke: shade(c, 0.4), "stroke-width": 0.8
+        }));
+      });
+    },
+    relay: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var top = mid(mid(t.n, t.s), mid(t.e, t.w));
+      g.appendChild(el("line", { x1: top[0], y1: top[1], x2: top[0], y2: top[1] - 40, stroke: shade(c, 0.45), "stroke-width": 2 }));
+      g.appendChild(el("line", { x1: top[0], y1: top[1] - 40, x2: t.e[0], y2: t.e[1], stroke: shade(c, 0.2), "stroke-width": 0.9 }));
+      g.appendChild(el("line", { x1: top[0], y1: top[1] - 40, x2: t.w[0], y2: t.w[1], stroke: shade(c, 0.2), "stroke-width": 0.9 }));
+      g.appendChild(el("ellipse", { cx: top[0] + 6, cy: top[1] - 42, rx: 9, ry: 5, fill: shade(c, 0.3), stroke: shade(c, 0.5), "stroke-width": 0.8, transform: "rotate(-24 " + (top[0] + 6) + " " + (top[1] - 42) + ")" }));
+    },
+    depot: function (g, n, c) {
+      var pad = corners(n.x, n.y + 4, n.w + 0.7, n.d + 0.7);
+      g.appendChild(el("polygon", { points: pts([pad.n, pad.e, pad.s, pad.w]), fill: "#20252f", stroke: "#2c3341", "stroke-width": 0.8 }));
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      gable(g, t, 22, c);
+      var at = facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.08, 0.92, 0.12, 0.52, shade(c, -0.68), shade(c, -0.74));
+      for (var i = 1; i < 6; i++) {
+        var a = 0.08 + (0.84 * i) / 6;
+        var p1 = at(a, 0.12), p2 = at(a, 0.52);
+        g.appendChild(el("line", { x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1], stroke: shade(c, -0.3), "stroke-width": 0.8 }));
+      }
+    },
+    foundry: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var s1 = off(-0.55, -0.55), s2 = off(0.2, -0.75);
+      prism(g, n.x + s1[0], n.y + s1[1], 0.38, 0.38, n.h + 54, shade(c, -0.12));
+      prism(g, n.x + s2[0], n.y + s2[1], 0.32, 0.32, n.h + 34, shade(c, -0.18));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "left", 0.14, 0.86, 0.1, 0.42, "#c8752f", shade(c, -0.6));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.2, 0.5, 0.06, 0.34, shade(c, -0.68), null);
+    },
+    cistern: function (g, n, c) {
+      var rx = (HW / 2) * (n.w + n.d) * 0.78, ry = (HH / 2) * (n.w + n.d) * 0.78;
+      var yb = n.y, yt = n.y - n.h;
+      g.appendChild(el("path", {
+        d: "M" + (n.x - rx) + "," + yb + " L" + (n.x - rx) + "," + yt +
+           " A" + rx + "," + ry + " 0 0 0 " + (n.x + rx) + "," + yt +
+           " L" + (n.x + rx) + "," + yb +
+           " A" + rx + "," + ry + " 0 0 1 " + (n.x - rx) + "," + yb + " Z",
+        fill: shade(c, -0.34), stroke: shade(c, -0.55), "stroke-width": 0.8
+      }));
+      for (var i = 1; i < 3; i++) {
+        g.appendChild(el("path", {
+          d: "M" + (n.x - rx) + "," + (yt + (n.h * i) / 3) + " A" + rx + "," + ry + " 0 0 0 " + (n.x + rx) + "," + (yt + (n.h * i) / 3),
+          fill: "none", stroke: shade(c, -0.5), "stroke-width": 0.8
+        }));
+      }
+      g.appendChild(el("ellipse", { cx: n.x, cy: yt, rx: rx, ry: ry, fill: shade(c, 0.18), stroke: shade(c, 0.34), "stroke-width": 0.8 }));
+      g.appendChild(el("ellipse", { cx: n.x, cy: yt, rx: rx * 0.45, ry: ry * 0.45, fill: shade(c, 0.02), stroke: shade(c, 0.28), "stroke-width": 0.8 }));
+    },
+    observatory: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var ctr = mid(mid(t.n, t.s), mid(t.e, t.w));
+      var rx = (HW / 2) * (n.w + n.d) * 0.6, ry = rx * 0.5;
+      g.appendChild(el("path", {
+        d: "M" + (ctr[0] - rx) + "," + ctr[1] + " A" + rx + "," + (ry * 1.7) + " 0 0 1 " + (ctr[0] + rx) + "," + ctr[1] + " Z",
+        fill: shade(c, 0.1), stroke: shade(c, 0.34), "stroke-width": 0.9
+      }));
+      g.appendChild(el("line", { x1: ctr[0] - 3, y1: ctr[1] - 2, x2: ctr[0] + 12, y2: ctr[1] - rx * 1.2, stroke: "#0b0d11", "stroke-width": 4 }));
+      g.appendChild(el("line", { x1: ctr[0] - 3, y1: ctr[1] - 2, x2: ctr[0] + 12, y2: ctr[1] - rx * 1.2, stroke: shade(c, 0.55), "stroke-width": 1.4 }));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.3, 0.7, 0.2, 0.72, shade(c, -0.66), null);
+    },
+    tower: function (g, n, c) {
+      var an = off(1.25, 0.35);
+      prism(g, n.x + an[0], n.y + an[1], 1.5, 1.35, 40, shade(c, -0.1));
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var apex = up(mid(mid(t.n, t.s), mid(t.e, t.w)), 34);
+      g.appendChild(el("polygon", { points: pts([t.w, t.s, apex]), fill: shade(c, -0.1), stroke: shade(c, -0.45), "stroke-width": 0.8 }));
+      g.appendChild(el("polygon", { points: pts([t.s, t.e, apex]), fill: shade(c, -0.36), stroke: shade(c, -0.5), "stroke-width": 0.8 }));
+      g.appendChild(el("polygon", { points: pts([t.n, t.w, apex]), fill: shade(c, 0.12), stroke: shade(c, -0.3), "stroke-width": 0.8 }));
+      g.appendChild(el("circle", { cx: apex[0], cy: apex[1] - 5, r: 3.6, fill: "#e6ae44", stroke: "#8a6a20", "stroke-width": 0.8 }));
+      for (var i = 0; i < 3; i++) {
+        facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.34, 0.66, 0.18 + i * 0.26, 0.3 + i * 0.26, "#e0b45c", null);
+      }
+    },
+    theater: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var ctr = mid(mid(t.n, t.s), mid(t.e, t.w));
+      var rx = (HW / 2) * (n.w + n.d) * 0.5;
+      g.appendChild(el("path", {
+        d: "M" + (ctr[0] - rx * 1.25) + "," + (ctr[1] + rx * 0.3) +
+           " Q" + ctr[0] + "," + (ctr[1] - rx * 0.95) + " " + (ctr[0] + rx * 1.25) + "," + (ctr[1] + rx * 0.3) +
+           " L" + (ctr[0] + rx * 1.1) + "," + (ctr[1] + rx * 0.5) +
+           " Q" + ctr[0] + "," + (ctr[1] - rx * 0.6) + " " + (ctr[0] - rx * 1.1) + "," + (ctr[1] + rx * 0.5) + " Z",
+        fill: shade(c, 0.24), stroke: shade(c, 0.4), "stroke-width": 0.8
+      }));
+      prism(g, n.x, n.y - n.h, 1.3, 1.1, 20, shade(c, -0.05));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.1, 0.9, 0.46, 0.66, "#e8c07a", shade(c, -0.6));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.36, 0.64, 0.0, 0.4, shade(c, -0.66), null);
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "left", 0.14, 0.86, 0.5, 0.62, shade(c, -0.6), null);
+    },
+    loom: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var a = mid(t.w, t.n), b = mid(t.s, t.e);
+      for (var i = 0; i <= 4; i++) {
+        var f = i / 4;
+        var p = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+        g.appendChild(el("line", { x1: p[0], y1: p[1], x2: p[0], y2: p[1] - 26, stroke: shade(c, 0.4), "stroke-width": 1.6 }));
+      }
+      g.appendChild(el("polygon", {
+        points: pts([[a[0], a[1] - 26], [b[0], b[1] - 26], [b[0], b[1] - 32], [a[0], a[1] - 32]]),
+        fill: shade(c, 0.1), stroke: shade(c, 0.35), "stroke-width": 0.8
+      }));
+      g.appendChild(el("line", { x1: t.w[0], y1: t.w[1] - 6, x2: t.e[0], y2: t.e[1] - 22, stroke: shade(c, 0.5), "stroke-width": 1 }));
+    },
+    vault: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      prism(g, n.x, n.y - n.h, n.w - 0.7, n.d - 0.7, 14, shade(c, 0.08));
+      var at = facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.28, 0.72, 0.05, 0.62, shade(c, -0.66), shade(c, -0.74));
+      var dc = at(0.5, 0.34);
+      g.appendChild(el("ellipse", { cx: dc[0], cy: dc[1], rx: 11, ry: 13, fill: shade(c, -0.5), stroke: shade(c, 0.2), "stroke-width": 1.2 }));
+      g.appendChild(el("line", { x1: dc[0] - 9, y1: dc[1], x2: dc[0] + 9, y2: dc[1], stroke: shade(c, 0.3), "stroke-width": 1 }));
+      g.appendChild(el("line", { x1: dc[0], y1: dc[1] - 11, x2: dc[0], y2: dc[1] + 11, stroke: shade(c, 0.3), "stroke-width": 1 }));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "left", 0.1, 0.9, 0.7, 0.8, shade(c, -0.3), null);
+    },
+    library: function (g, n, c) {
+      prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      var shelves = [[-0.5, -0.5, 26], [0, 0, 40], [0.5, 0.5, 18]];
+      shelves.forEach(function (s) {
+        var p = off(s[0], s[1]);
+        prism(g, n.x + p[0], n.y + p[1] - n.h, 0.52, 1.3, s[2], shade(c, 0.06));
+      });
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.35, 0.65, 0.0, 0.5, shade(c, -0.66), null);
+    },
+    homes: function (g, n, c) {
+      var lots = [[-0.62, -0.62, 30], [0.6, -0.5, 24], [-0.1, 0.65, 27]];
+      lots.forEach(function (l) {
+        var p = off(l[0], l[1]);
+        var t = prism(g, n.x + p[0], n.y + p[1], 0.9, 0.9, l[2], c);
+        gable(g, t, 15, c);
+        facePatch(g, n.x + p[0], n.y + p[1], 0.9, 0.9, l[2], "right", 0.35, 0.65, 0.1, 0.5, "#e8c07a", null);
+      });
+    },
+    shell: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      for (var r = 0; r < 2; r++) {
+        for (var i = 0; i < 3; i++) {
+          facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.14 + i * 0.26, 0.32 + i * 0.26, 0.16 + r * 0.36, 0.44 + r * 0.36, r ? "#7fb2a0" : shade(c, -0.6), null);
+        }
+      }
+      g.appendChild(el("polygon", { points: pts([t.n, t.e, t.s, t.w]), fill: "none", stroke: shade(c, 0.5), "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
+    },
+    works: function (g, n, c) {
+      var t = prism(g, n.x, n.y, n.w, n.d, n.h, c);
+      prism(g, n.x, n.y - n.h, 1.1, 1.1, 16, shade(c, 0.1));
+      var s = off(-0.5, 0.5);
+      prism(g, n.x + s[0], n.y + s[1], 0.3, 0.3, n.h + 30, shade(c, -0.2));
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "left", 0.2, 0.8, 0.15, 0.45, shade(c, -0.62), null);
+      facePatch(g, n.x, n.y, n.w, n.d, n.h, "right", 0.2, 0.45, 0.1, 0.5, "#8fbf9a", null);
+    },
+    crane: function (g, n, c) {
+      var base = prism(g, n.x, n.y, n.w, n.d, 16, shade(c, -0.1));
+      var ctr = mid(mid(base.n, base.s), mid(base.e, base.w));
+      var topY = ctr[1] - n.h;
+      var half = 9;
+      g.appendChild(el("line", { x1: ctr[0] - half, y1: ctr[1], x2: ctr[0] - half, y2: topY, stroke: shade(c, 0.42), "stroke-width": 2 }));
+      g.appendChild(el("line", { x1: ctr[0] + half, y1: ctr[1], x2: ctr[0] + half, y2: topY, stroke: shade(c, 0.3), "stroke-width": 2 }));
+      for (var i = 0; i < 6; i++) {
+        var y0 = ctr[1] - (n.h * i) / 6, y1 = ctr[1] - (n.h * (i + 1)) / 6;
+        g.appendChild(el("line", { x1: ctr[0] - half, y1: y0, x2: ctr[0] + half, y2: y1, stroke: shade(c, 0.2), "stroke-width": 1 }));
+        g.appendChild(el("line", { x1: ctr[0] + half, y1: y0, x2: ctr[0] - half, y2: y1, stroke: shade(c, 0.2), "stroke-width": 1 }));
+      }
+      g.appendChild(el("polygon", {
+        points: pts([[ctr[0] - 34, topY + 12], [ctr[0] + 96, topY - 4], [ctr[0] + 96, topY + 2], [ctr[0] - 34, topY + 18]]),
+        fill: shade(c, 0.22), stroke: shade(c, 0.4), "stroke-width": 0.8
+      }));
+      g.appendChild(el("line", { x1: ctr[0] + 74, y1: topY - 1, x2: ctr[0] + 74, y2: topY + 44, stroke: "#9aa6b8", "stroke-width": 1 }));
+      g.appendChild(el("polygon", {
+        points: pts([[ctr[0] + 66, topY + 44], [ctr[0] + 82, topY + 44], [ctr[0] + 82, topY + 56], [ctr[0] + 66, topY + 56]]),
+        fill: "#e6ae44", stroke: "#8a6a20", "stroke-width": 0.8
+      }));
+    }
+  };
+
+  /* ---------- map construction ---------- */
+
+  var svg = document.getElementById("map");
+  var byId = {};
+  NODES.forEach(function (n) { byId[n.id] = n; });
+
+  var gGrid = el("g", { "aria-hidden": "true" });
+  var gRoads = el("g", null);
+  var gBuild = el("g", null);
+  var gLabels = el("g", { "aria-hidden": "true" });
+  var gBadges = el("g", null);
+  svg.appendChild(gGrid); svg.appendChild(gRoads); svg.appendChild(gBuild);
+  svg.appendChild(gLabels); svg.appendChild(gBadges);
+
+  (function drawGrid() {
+    var R = 10, i;
+    var d = [];
+    for (i = -R; i <= R; i++) {
+      var a = iso(i, -R), b = iso(i, R), c = iso(-R, i), e2 = iso(R, i);
+      d.push("M" + a[0].toFixed(1) + "," + a[1].toFixed(1) + "L" + b[0].toFixed(1) + "," + b[1].toFixed(1));
+      d.push("M" + c[0].toFixed(1) + "," + c[1].toFixed(1) + "L" + e2[0].toFixed(1) + "," + e2[1].toFixed(1));
+    }
+    var plot = [iso(-R, -R), iso(R, -R), iso(R, R), iso(-R, R)];
+    gGrid.appendChild(el("polygon", { points: pts(plot), fill: "#10141b", stroke: "#2b3342", "stroke-width": 1.4 }));
+    gGrid.appendChild(el("path", { d: d.join(" "), fill: "none", stroke: "#1d2431", "stroke-width": 1 }));
+    /* district ground plates keep the eye oriented without adding chrome */
+    [[-6.2, -1.4, 4.6, "#3f7d86"], [1.2, -5.2, 5.2, "#59677d"], [3.6, 1.4, 4.6, "#b05c3c"], [-1.6, 4.4, 4.4, "#a07a2e"]].forEach(function (p) {
+      var q = [iso(p[0], p[1]), iso(p[0] + p[2], p[1]), iso(p[0] + p[2], p[1] + p[2]), iso(p[0], p[1] + p[2])];
+      gGrid.appendChild(el("polygon", { points: pts(q), fill: p[3], opacity: 0.055 }));
+    });
+  })();
+
+  /* roads */
+  function isoRadius(n, dx, dy) {
+    var HWn = (HW / 2) * (n.w + n.d), HHn = (HH / 2) * (n.w + n.d);
+    var len = Math.hypot(dx, dy) || 1;
+    var c = Math.abs(dx / len) / HWn + Math.abs(dy / len) / HHn;
+    return 1 / c;
+  }
+  function elbowPath(a, b) {
+    var ga = toGrid(a.x, a.y), gb = toGrid(b.x, b.y);
+    var c1 = iso(gb[0], ga[1]), c2 = iso(ga[0], gb[1]);
+    function score(c) {
+      var m = 1e9;
+      NODES.forEach(function (n) {
+        if (n.id === a.id || n.id === b.id) return;
+        m = Math.min(m, Math.hypot(n.x - c[0], n.y - c[1]));
+      });
+      return m;
+    }
+    var A = [a.x, a.y], B = [b.x, b.y];
+    var c = score(c1) >= score(c2) ? c1 : c2;
+    if (Math.hypot(c[0] - A[0], c[1] - A[1]) < 14 || Math.hypot(c[0] - B[0], c[1] - B[1]) < 14) return [A, B];
+    return [A, c, B];
+  }
+  function trim(path, a, b) {
+    var p = path.map(function (q) { return q.slice(); });
+    var d0x = p[1][0] - p[0][0], d0y = p[1][1] - p[0][1], l0 = Math.hypot(d0x, d0y);
+    var t0 = isoRadius(a, d0x, d0y) + 6;
+    p[0] = [p[0][0] + (d0x / l0) * t0, p[0][1] + (d0y / l0) * t0];
+    var k = p.length - 1;
+    var d1x = p[k][0] - p[k - 1][0], d1y = p[k][1] - p[k - 1][1], l1 = Math.hypot(d1x, d1y);
+    var t1 = isoRadius(b, d1x, d1y) + 12;
+    p[k] = [p[k][0] - (d1x / l1) * t1, p[k][1] - (d1y / l1) * t1];
+    return p;
+  }
+  function along(path, frac) {
+    var total = 0, segs = [], i;
+    for (i = 1; i < path.length; i++) {
+      var L = Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]);
+      segs.push(L); total += L;
+    }
+    var want = total * frac, acc = 0;
+    for (i = 0; i < segs.length; i++) {
+      if (acc + segs[i] >= want) {
+        var f = (want - acc) / segs[i];
+        return [path[i][0] + (path[i + 1][0] - path[i][0]) * f, path[i][1] + (path[i + 1][1] - path[i][1]) * f];
+      }
+      acc += segs[i];
+    }
+    return path[path.length - 1];
+  }
+
+  var edgeEls = [], badgeEls = [], nodeEls = {}, labelEls = {}, chipEls = {};
+
+  function makeEdge(from, to, opts) {
+    var raw = elbowPath(from, to);
+    var p = trim(raw, from, to);
+    var g = el("g", { "class": "edge" + (opts.dormant ? " dormant" : ""), role: "button", tabindex: "0" });
+    g.appendChild(el("title", null, [document.createTextNode(from.name + " → " + to.name + ": " + opts.pay)]));
+    g.appendChild(el("polyline", { "class": "hit", points: pts(p), fill: "none" }));
+    var road = el("polyline", {
+      "class": "road", points: pts(p), fill: "none",
+      stroke: opts.dormant ? "#78829a" : "#e6ae44",
+      "stroke-width": opts.dormant ? 2.4 : 5,
+      "stroke-linecap": "round", "stroke-linejoin": "round",
+      "stroke-dasharray": opts.dormant ? "8 7" : null,
+      opacity: opts.dormant ? 0.85 : 0.92
+    });
+    g.appendChild(road);
+    /* arrowhead */
+    var k = p.length - 1;
+    var dx = p[k][0] - p[k - 1][0], dy = p[k][1] - p[k - 1][1], L = Math.hypot(dx, dy);
+    var ux = dx / L, uy = dy / L, nx = -uy, ny = ux, s = opts.dormant ? 7 : 10;
+    g.appendChild(el("polygon", {
+      "class": "head",
+      points: pts([p[k], [p[k][0] - ux * s * 1.7 + nx * s * 0.75, p[k][1] - uy * s * 1.7 + ny * s * 0.75],
+                        [p[k][0] - ux * s * 1.7 - nx * s * 0.75, p[k][1] - uy * s * 1.7 - ny * s * 0.75]]),
+      fill: opts.dormant ? "#78829a" : "#e6ae44"
+    }));
+    gRoads.appendChild(g);
+
+    var at = along(p, 0.56);
+    var bw = opts.pay.length * 6.4 + 14;
+    var bg = el("g", { "class": "badge" + (opts.dormant ? " dormant" : ""), transform: "translate(" + (at[0] - bw / 2).toFixed(1) + "," + (at[1] - 24).toFixed(1) + ")" });
+    bg.appendChild(el("rect", { width: bw, height: 18, rx: 3 }));
+    bg.appendChild(el("text", { x: bw / 2, y: 12.5, "text-anchor": "middle" }, [document.createTextNode(opts.pay)]));
+    gBadges.appendChild(bg);
+
+    var rec = { g: g, badge: bg, from: from, to: to, opts: opts, index: opts.index };
+    function pick() { opts.dormant ? selectDormant(opts) : selectStep(opts.index); }
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); }
+    });
+    edgeEls.push(rec); badgeEls.push(bg);
+    return rec;
+  }
+
+  /* buildings, painted back to front */
+  NODES.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (n) {
+    var c = CLASSES[n.cls].color;
+    var g = el("g", { "class": "node", role: "button", tabindex: "0", "data-id": n.id });
+    g.appendChild(el("title", null, [document.createTextNode(n.name + " — " + CLASSES[n.cls].label)]));
+    var hw = (HW / 2) * (n.w + n.d), hh = (HH / 2) * (n.w + n.d);
+    g.appendChild(el("ellipse", { cx: n.x, cy: n.y + 3, rx: hw * 0.95, ry: hh * 0.95, fill: "#05070a", opacity: 0.5 }));
+    (KIND[n.kind] || KIND.shell)(g, n, c);
+    var b = corners(n.x, n.y, n.w, n.d);
+    g.appendChild(el("polygon", { "class": "ring", points: pts([b.n, b.e, b.s, b.w]) }));
+    g.addEventListener("click", function () { selectNode(n.id); });
+    g.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectNode(n.id); }
+    });
+    gBuild.appendChild(g);
+    nodeEls[n.id] = g;
+
+    var anchor = [n.x, n.y - (HH / 2) * (n.w + n.d) - n.h];
+    var leader = el("line", { "class": "leader", x1: n.lx, y1: n.ly + 4, x2: anchor[0], y2: (n.ly < n.y ? anchor[1] - 2 : n.y + hh) });
+    gLabels.appendChild(leader);
+    var txt = el("text", { "class": "lbl", x: n.lx, y: n.ly, "text-anchor": "middle" }, [document.createTextNode(n.name)]);
+    gLabels.appendChild(txt);
+    labelEls[n.id] = [txt, leader];
+
+    var chip = el("g", { "class": "chip", opacity: 0 });
+    chip.appendChild(el("circle", { cx: n.x, cy: n.y + hh + 9, r: 10 }));
+    chip.appendChild(el("text", { x: n.x, y: n.y + hh + 13, "text-anchor": "middle" }, [document.createTextNode("")]));
+    gBadges.appendChild(chip);
+    chipEls[n.id] = chip;
+  });
+
+  /* ---------- state ---------- */
+
+  var state = { path: "turn", step: -1, sel: null, selKind: null };
+
+  function buildRoads() {
+    gRoads.textContent = "";
+    gBadges.textContent = "";
+    edgeEls = [];
+    var p = PATHS[state.path];
+    for (var i = 1; i < p.steps.length; i++) {
+      makeEdge(byId[p.steps[i - 1].node], byId[p.steps[i].node], { pay: p.steps[i].pay, index: i });
+    }
+    if (p.dormant) {
+      makeEdge(byId[p.dormant.from], byId[p.dormant.to], { pay: p.dormant.pay, dormant: true, index: -1 });
+    }
+    /* chips are re-appended so they paint above the roads */
+    NODES.forEach(function (n) { gBadges.appendChild(chipEls[n.id]); });
+  }
+
+  function inPath(id) {
+    return PATHS[state.path].steps.some(function (s) { return s.node === id; });
+  }
+
+  function render() {
+    var p = PATHS[state.path];
+    NODES.forEach(function (n) {
+      var on = inPath(n.id);
+      var g = nodeEls[n.id];
+      g.classList.toggle("dim", !on);
+      g.classList.toggle("sel", state.selKind === "node" && state.sel === n.id);
+      g.classList.toggle("cur", state.step >= 0 && p.steps[state.step] && p.steps[state.step].node === n.id);
+      labelEls[n.id][0].classList.toggle("dim", !on);
+      labelEls[n.id][1].classList.toggle("dim", !on);
+      var idx = -1;
+      p.steps.forEach(function (s, i) { if (s.node === n.id) idx = i; });
+      var chip = chipEls[n.id];
+      chip.setAttribute("opacity", idx >= 0 ? 1 : 0);
+      if (idx >= 0) chip.lastChild.textContent = String(idx + 1);
+    });
+    edgeEls.forEach(function (e) {
+      var cur = state.step > 0 && e.opts.index === state.step;
+      var past = state.step < 0 || (e.opts.index > 0 && e.opts.index <= state.step);
+      var road = e.g.querySelector(".road");
+      var head = e.g.querySelector(".head");
+      if (e.opts.dormant) {
+        e.g.setAttribute("opacity", 1);
+        e.badge.setAttribute("opacity", 1);
+      } else {
+        road.setAttribute("stroke", cur ? "#ffd88a" : "#e6ae44");
+        road.setAttribute("stroke-width", cur ? 7 : 5);
+        head.setAttribute("fill", cur ? "#ffd88a" : "#e6ae44");
+        e.g.setAttribute("opacity", past ? 1 : 0.34);
+        e.badge.setAttribute("opacity", past ? 1 : 0.4);
+      }
+      e.badge.classList.toggle("cur", cur);
+      e.g.classList.toggle("sel", state.selKind === "step" && state.sel === e.opts.index);
+    });
+    renderRail();
+    renderPanel();
+  }
+
+  /* ---------- rail ---------- */
+
+  var rail = document.getElementById("rail");
+  function renderRail() {
+    var p = PATHS[state.path];
+    rail.textContent = "";
+    p.steps.forEach(function (s, i) {
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button";
+      b.innerHTML = "<b>" + (i + 1) + "</b><span>" + byId[s.node].name + "</span>" +
+        (s.pay ? '<span class="pay">' + escapeHtml(s.pay) + "</span>" : "");
+      if (state.step === i) b.setAttribute("aria-current", "true");
+      b.addEventListener("click", function () { selectStep(i); });
+      li.appendChild(b);
+      rail.appendChild(li);
+    });
+    if (p.dormant) {
+      var li2 = document.createElement("li");
+      var b2 = document.createElement("button");
+      b2.type = "button";
+      b2.innerHTML = '<b>⌁</b><span>' + p.dormant.name + '</span><span class="pay">' + escapeHtml(p.dormant.pay) + "</span>";
+      b2.addEventListener("click", function () { selectDormant(p.dormant); });
+      li2.appendChild(b2);
+      rail.appendChild(li2);
+    }
+  }
+
+  /* ---------- panel ---------- */
+
+  var panel = document.getElementById("panel");
+  function escapeHtml(s) {
+    return String(s).replace(/&(?!(amp|lt|gt|quot|#\d+);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function citeList(cites) {
+    return '<ul class="cites">' + cites.map(function (c) {
+      return '<li><a href="' + REPO + c[0] + "#L" + c[1] + '" target="_blank" rel="noopener">' + c[0] + ":" + c[1] + "</a></li>";
+    }).join("") + "</ul>";
+  }
+  function swatch(cls) {
+    return '<span class="sw" style="--c:' + CLASSES[cls].color + '"></span>';
+  }
+
+  function renderPanel() {
+    var p = PATHS[state.path], html;
+    if (state.selKind === "node") {
+      var n = byId[state.sel];
+      var idx = -1;
+      p.steps.forEach(function (s, i) { if (s.node === n.id) idx = i; });
+      html =
+        '<p class="eyebrow">' + swatch(n.cls) + escapeHtml(CLASSES[n.cls].label) +
+        (idx >= 0 ? " · step " + (idx + 1) + " of " + p.steps.length + " on " + p.name : " · not on the " + p.name + " path") + "</p>" +
+        "<h2>" + escapeHtml(n.name) + "</h2>" +
+        "<p>" + n.role + "</p>" +
+        '<dl class="io"><dt>In</dt><dd>' + escapeHtml(n.inputs) + "</dd>" +
+        "<dt>Out</dt><dd>" + escapeHtml(n.outputs) + "</dd></dl>" +
+        "<h3>Why it is built this way</h3><p>" + escapeHtml(n.why) + "</p>" +
+        "<h3>Evidence</h3>" + citeList(n.cites);
+    } else if (state.selKind === "step") {
+      var s = p.steps[state.sel], from = byId[p.steps[state.sel - 1].node], to = byId[s.node];
+      html =
+        '<p class="eyebrow"><span class="sw line" style="--c:#e6ae44"></span>' + p.name + " · leg " + state.sel + "</p>" +
+        "<h2>" + escapeHtml(from.name) + " → " + escapeHtml(to.name) + "</h2>" +
+        '<dl class="io"><dt>Carries</dt><dd><code>' + escapeHtml(s.pay) + "</code></dd></dl>" +
+        "<h3>What crosses here</h3><p>" + escapeHtml(s.det) + "</p>" +
+        "<h3>Evidence</h3>" + citeList(from.cites.slice(0, 2).concat(to.cites.slice(0, 2)));
+    } else if (state.selKind === "dormant") {
+      var dm = p.dormant;
+      html =
+        '<p class="eyebrow"><span class="sw dash" style="--c:#78829a"></span>Reserved contract · not emitted</p>' +
+        "<h2>" + escapeHtml(dm.name) + "</h2>" +
+        '<dl class="io"><dt>Frames</dt><dd><code>' + escapeHtml(dm.pay) + "</code></dd></dl>" +
+        "<h3>Why it is drawn dashed</h3><p>" + escapeHtml(dm.det) + "</p>" +
+        "<h3>Evidence</h3>" + citeList(dm.cites);
+    } else {
+      html =
+        '<p class="eyebrow"><span class="sw line" style="--c:#e6ae44"></span>' + p.name + " path · " + p.steps.length + " stops</p>" +
+        "<h2>" + escapeHtml(p.name) + "</h2>" +
+        "<p>" + escapeHtml(p.blurb) + "</p>" +
+        "<p>Select a building, a road or a step to see its role, its payload and the lines that prove it. Use <em>Trace next step</em> to walk the route in order.</p>" +
+        (p.dormant ? '<div class="note"><strong>Dormant contract.</strong> ' + escapeHtml(p.dormant.det) + "</div>" : "");
+    }
+    panel.innerHTML = html;
+  }
+
+  /* ---------- selection ---------- */
+
+  function selectNode(id) {
+    state.selKind = "node"; state.sel = id;
+    var p = PATHS[state.path];
+    p.steps.forEach(function (s, i) { if (s.node === id) state.step = i; });
+    render();
+  }
+  function selectStep(i) {
+    if (i <= 0) { selectNode(PATHS[state.path].steps[0].node); return; }
+    state.selKind = "step"; state.sel = i; state.step = i;
+    render();
+  }
+  function selectDormant() {
+    state.selKind = "dormant"; state.sel = "dormant";
+    render();
+  }
+  function setPath(id) {
+    state.path = id; state.step = -1; state.sel = null; state.selKind = null;
+    Array.prototype.forEach.call(document.querySelectorAll("button.path"), function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.path === id));
+    });
+    buildRoads();
+    render();
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("button.path"), function (b) {
+    b.addEventListener("click", function () { setPath(b.dataset.path); });
+  });
+  document.getElementById("trace").addEventListener("click", function () {
+    var p = PATHS[state.path];
+    state.step = (state.step + 1) % p.steps.length;
+    if (state.step === 0) selectNode(p.steps[0].node); else selectStep(state.step);
+  });
+  document.getElementById("reset").addEventListener("click", function () { setPath(state.path); });
+
+  /* ---------- legend ---------- */
+
+  (function () {
+    var box = document.getElementById("legend");
+    var items = [
+      ["Deterministic Python", CLASSES.python.color, "sw"],
+      ["Structured model call", CLASSES.structured.color, "sw"],
+      ["Prose model call", CLASSES.prose.color, "sw"],
+      ["Persistence", CLASSES.persist.color, "sw"],
+      ["Desktop shell & build", CLASSES.desktop.color, "sw"],
+      ["Browser client", CLASSES.client.color, "sw"],
+      ["Active route", "#e6ae44", "sw line"],
+      ["Dormant contract", "#78829a", "sw dash"]
+    ];
+    box.innerHTML = items.map(function (i) {
+      return '<span><i class="' + i[2] + '" style="--c:' + i[1] + '"></i>' + i[0] + "</span>";
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll("i"), function (i) { i.setAttribute("aria-hidden", "true"); });
+  })();
+
+  buildRoads();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -78,3 +78,6 @@ Success criteria:
 ## Event log
 
 - 2026-08-19: Contract created after branch consolidation and initial repository orientation.
+- 2026-08-19: Backend and frontend read-only evidence leaves completed and root reconciled their citations against merged `main`.
+- 2026-08-19: K3 frontend implementation is blocked before file creation. Direct calls at `max`, `high`, and `low` effort each ended after three attempts with `error: provider request failed after 3 attempts: The read operation timed out`.
+- 2026-08-19: The user authorized Opus as the replacement frontend implementer. Opus created the final atlas; root corrected evidence wording, passed the artifact checker, and verified all route and explainer interactions in PinchTab. Postplan hosting remains blocked on authentication because the interactive file contains inline JavaScript.

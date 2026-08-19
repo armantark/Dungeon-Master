@@ -274,3 +274,11 @@ Latest setup-finalization bugfix: Cairn backfill now normalizes structured resou
 Do not overfit the app to Scarlet Heroes or OSR unless the user explicitly chooses that direction. The project is about a reliable AI-assisted game-master harness first; the oracle/rules layer should remain replaceable.
 
 Also avoid copying Mythic GME 2e tables verbatim unless the user supplies licensed material or chooses an open alternative. The system can implement an original deterministic oracle with the same general roles: likelihood, chaos, scene pacing, events, threads, and NPC prompts.
+
+## 2026-08-19 architecture atlas checkpoint
+
+- Local `main` contains every local and remote-tracking branch. The superseded latency branch was ancestry-merged without reintroducing old code, and the prompt-compression work was merged normally. Nothing was pushed.
+- The verified ordinary-turn seam is: Svelte composer -> streamed FastAPI endpoint -> typed `TurnPlan` -> deterministic Oracle/Cairn execution -> prose narration -> structured post-prose continuity -> atomic state/event/checkpoint/memory persistence -> NDJSON -> wholesale client `GameState` replacement.
+- `mechanics_ready` and `oracle_outcome` exist in the client event contract, but current `api.py` does not emit them. Treat them as dormant contract surface, not an active runtime path.
+- The user authorized Opus after K3 timed out at all three reasoning tiers. The final interactive atlas is complete at `memory-bank/status-updates/dungeon-master-system-map-2026-08-19.html`: 15 isometric buildings, Turn/Startup/Persistence/Release route filters, payload labels, trace controls, legend, explainer, source citations, and a dashed dormant-contract spur. The artifact checker and PinchTab interaction/desktop visual smoke pass. Postplan mobile hosting is blocked until CLI authentication because inline JavaScript cannot be uploaded anonymously.
+- The principal-engineer learning sequence is tracked in `memory-bank/learning/architecture-panel-quiz.md` and must run one question at a time, beginning with the user's own end-to-end turn trace.
