@@ -1,5 +1,27 @@
 # Manual Testing
 
+## Development Architecture Map
+
+1. Start only the frontend with the explicit map flag:
+
+```shell
+cd web
+VITE_ENABLE_ARCHITECTURE_MAP=true npm run dev
+```
+
+1. Open `http://127.0.0.1:5173/__dev/architecture` without starting FastAPI.
+1. Confirm the architecture map renders with no `/api` requests or console errors.
+1. Switch among `Turn`, `Startup`, `Persistence`, and `Release`; confirm the route,
+   numbered steps, payload labels, and explainer update together.
+1. Select a building by click and keyboard (`Tab`, then `Enter`); confirm its responsibility,
+   inputs, outputs, rationale, and source citations appear in the explainer.
+1. Resize to 390px wide. Confirm the frontend/backend boundary stacks, the map scrolls
+   horizontally, and the explainer remains readable below it.
+1. Restart Vite without `VITE_ENABLE_ARCHITECTURE_MAP`. Open the same URL and confirm the
+   normal Oracle's Ledger app mounts instead.
+1. Run `VITE_ENABLE_ARCHITECTURE_MAP=true npm run build`, then search `dist/` for
+   `Composer Gatehouse`; expect no match because the dev map is excluded from production.
+
 ## Fixture Library Harness
 
 Use this when you need representative browser data for continuity-heavy UI

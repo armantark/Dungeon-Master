@@ -81,3 +81,40 @@ Success criteria:
 - 2026-08-19: Backend and frontend read-only evidence leaves completed and root reconciled their citations against merged `main`.
 - 2026-08-19: K3 frontend implementation is blocked before file creation. Direct calls at `max`, `high`, and `low` effort each ended after three attempts with `error: provider request failed after 3 attempts: The read operation timed out`.
 - 2026-08-19: The user authorized Opus as the replacement frontend implementer. Opus created the final atlas; root corrected evidence wording, passed the artifact checker, and verified all route and explainer interactions in PinchTab. Postplan hosting remains blocked on authentication because the interactive file contains inline JavaScript.
+
+## Dev-route correction contract
+
+The standalone artifact is now only a source/evidence prototype. The accepted product surface is a dev-only route in the existing Vite + Svelte application.
+
+- Driver ownership: all implementation files, browser state, tests, git, and final verification.
+- Read-only leaf ownership: route/dev-flag/test-convention discovery only; no files and no browser.
+- Route contract: direct navigation must render the architecture map only when the Vite dev flag is enabled; normal game startup and production builds must not expose or bundle a discoverable product navigation entry.
+- Visual contract: preserve the verified topology, payloads, citations, legend, and explainer, but rebuild malformed geometry as native Svelte/SVG components with explicit layer groups and stable depth keys.
+- Integration contract: reuse the app's established typography, material palette, responsive conventions, and Vite environment typing rather than copying the standalone document shell.
+
+### Read-only route-convention leaf
+
+1. Identify how this non-SvelteKit app chooses its root component and whether any route/dev-flag convention already exists.
+2. Identify the correct Vite environment flag naming and TypeScript declaration seam.
+3. Identify the narrowest tests that can prove disabled, enabled, and normal-app behavior.
+4. Identify local start commands and backend requirements for browser verification.
+5. Cite every recommendation with a current file and line.
+6. CHECK: `rg -n "import.meta.env|window.location|new App|mount\\(" web/src web/vite.config.ts`; EXPECT: a concrete integration seam with no guessed router dependency.
+
+### Root correction criteria
+
+1. A dev-flagged local URL opens the native architecture map without loading campaign state.
+2. With the flag absent, that URL falls back to the normal application and exposes no architecture navigation.
+3. Building geometry has no self-overlap or ambiguous front/back surfaces at desktop or mobile widths.
+4. Frontend, transport seam, backend, and desktop/delivery are unmistakable before interaction.
+5. Route selection, step tracing, building selection, source citations, keyboard focus, and reduced motion work.
+6. Frontend unit, type, build, and browser checks pass.
+7. Memory-bank architecture and delivery decisions are updated; all non-secret changes commit atomically on local `main` without a push.
+
+### Correction event log
+
+- 2026-08-19: User rejected the standalone-document delivery and clarified that the malformed 3D models, not only painter order, must be rebuilt behind a dev-only local app endpoint.
+- 2026-08-19: Read-only route audit confirmed the app has no router and identified `web/src/main.ts` as the narrow mount seam. Driver implemented an exact-path Vite dev gate, native Svelte/SVG models, tests, and local documentation.
+- 2026-08-19: The first production build proved a helper-mediated `import.meta.env.DEV` check still emitted the dynamic map chunk. Moving the dynamic import inside Vite's literal compile-time dev branch removed the chunk; a content scan of `dist/` is now green.
+- 2026-08-19: Desktop/mobile browser smoke passed with no API requests. Startup switching, trace advancement, click selection, and keyboard selection all update the same explainer contract.
+- 2026-08-19: The requested Opus review was attempted through the read-only Claude route but produced no output for ten minutes and was interrupted. Local type, test, production-exclusion, and browser evidence remain the acceptance authority.

@@ -379,6 +379,13 @@ Regeneration pattern:
 
 ## Reliability Patterns
 
+### Development-only architecture surface
+
+- `web/src/main.ts` owns one exact-path development gate for `/__dev/architecture`.
+- The gate requires both `import.meta.env.DEV` and `VITE_ENABLE_ARCHITECTURE_MAP=true`; its dynamic import remains inside the compile-time dev branch so production tree-shaking removes the whole map chunk.
+- The map root is independent of `App.svelte`, the game store, and the API client. It therefore renders without FastAPI and cannot load or mutate campaign state.
+- Isometric roads paint before opaque building groups. Building groups sort by their projected front edge, and compound details paint in explicit internal order. Inactive routes use saturation/brightness filtering rather than opacity so background connectors never bleed through structures.
+
 The project should include:
 
 - Typed schemas for all state and node outputs

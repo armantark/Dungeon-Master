@@ -69,6 +69,18 @@ npm run dev                      # serves http://127.0.0.1:5173
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` to the FastAPI server.
 
+The source-cited architecture map is a development-only frontend endpoint. It does not
+bootstrap campaign state and does not require the backend:
+
+```shell
+cd web
+VITE_ENABLE_ARCHITECTURE_MAP=true npm run dev
+```
+
+Open [http://127.0.0.1:5173/__dev/architecture](http://127.0.0.1:5173/__dev/architecture).
+The exact path falls back to the normal app unless both Vite development mode and the
+flag are active; production builds remove the map chunk entirely.
+
 To run the backend with autoreload during development:
 
 ```shell
