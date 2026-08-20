@@ -1,28 +1,115 @@
 <script lang="ts">
-  import ArchitectureBuilding from "./ArchitectureBuilding.svelte";
+  import "@xyflow/svelte/dist/style.css";
+  import { SvelteFlow, Background, MarkerType } from "@xyflow/svelte";
+  import type { Node, Edge } from "@xyflow/svelte";
+  import ArchitectureNode from "./ArchitectureNode.svelte";
+  import ArchitectureRegion from "./ArchitectureRegion.svelte";
   import {
     ARCHITECTURE_NODES,
     ARCHITECTURE_PATHS,
     ROLE_META,
     nodeById,
-    nodesInPainterOrder,
-    type ArchitectureNode,
+    type ArchitectureNode as ArchNode,
     type ArchitecturePath,
     type PathStep,
   } from "../../lib/dev-architecture";
 
-  interface Segment {
-    from: ArchitectureNode;
-    to: ArchitectureNode;
-    payload?: string;
-    detail?: string;
-    index: number;
+  const repositoryBase = "https://github.com/armantark/Dungeon-Master/blob/main/";
+
+  interface Region {
+    id: string;
+    label: string;
+    sub: string;
+    tint: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
   }
 
-  const repositoryBase = "https://github.com/armantark/Dungeon-Master/blob/main/";
-  const paintedNodes = nodesInPainterOrder(ARCHITECTURE_NODES);
+  const REGIONS: Region[] = [
+    {
+      id: "region-frontend",
+      label: "Frontend",
+      sub: "Svelte UI · TypeScript store",
+      tint: "#4fa5aa",
+      x: 20, y: 20, width: 240, height: 540,
+    },
+    {
+      id: "region-transport",
+      label: "Transport",
+      sub: "HTTP · NDJSON stream boundary",
+      tint: "#c9a24e",
+      x: 280, y: 20, width: 230, height: 230,
+    },
+    {
+      id: "region-backend",
+      label: "Backend",
+      sub: "FastAPI · deterministic Python · bounded model calls",
+      tint: "#8291a8",
+      x: 530, y: 20, width: 540, height: 540,
+    },
+    {
+      id: "region-persistence",
+      label: "Persistence",
+      sub: "Atomic writes · canonical saves",
+      tint: "#c0a04f",
+      x: 20, y: 580, width: 470, height: 210,
+    },
+    {
+      id: "region-desktop",
+      label: "Desktop & Delivery",
+      sub: "Tauri shell · sidecar · release",
+      tint: "#70a178",
+      x: 510, y: 580, width: 560, height: 210,
+    },
+  ];
+
+  // Positions are relative to each parent region. Svelte Flow owns viewport,
+  // edge routing, zoom, and pan while the regions keep trust boundaries stable.
+  const POSITIONS: Record<string, { x: number; y: number }> = {
+    composer: { x: 20, y: 95 },
+    relay: { x: 20, y: 270 },
+    homes: { x: 20, y: 430 },
+    depot: { x: 15, y: 100 },
+    foundry: { x: 35, y: 95 },
+    router: { x: 305, y: 95 },
+    memory: { x: 35, y: 260 },
+    oracle: { x: 305, y: 260 },
+    narrative: { x: 35, y: 420 },
+    loom: { x: 305, y: 420 },
+    vault: { x: 20, y: 80 },
+    library: { x: 250, y: 80 },
+    shell: { x: 10, y: 80 },
+    sidecar: { x: 180, y: 80 },
+    crane: { x: 350, y: 80 },
+  };
+
+  const NODE_REGIONS: Record<string, string> = {
+    composer: "region-frontend",
+    relay: "region-frontend",
+    homes: "region-frontend",
+    depot: "region-transport",
+    foundry: "region-backend",
+    memory: "region-backend",
+    router: "region-backend",
+    oracle: "region-backend",
+    narrative: "region-backend",
+    loom: "region-backend",
+    vault: "region-persistence",
+    library: "region-persistence",
+    shell: "region-desktop",
+    sidecar: "region-desktop",
+    crane: "region-desktop",
+  };
+
+  const NODE_WIDTH = 200;
+  const NODE_HEIGHT = 90;
+
+  const nodeTypes = { arch: ArchitectureNode, region: ArchitectureRegion } as never;
+
   const defaultPath: ArchitecturePath = ARCHITECTURE_PATHS[0]!;
-  const defaultNode: ArchitectureNode = ARCHITECTURE_NODES[0]!;
+  const defaultNode: ArchNode = ARCHITECTURE_NODES[0]!;
 
   let activePathId = $state<ArchitecturePath["id"]>("turn");
   let selectedNodeId = $state("foundry");
@@ -36,24 +123,75 @@
   const selectedStep = $derived(
     activePath.steps.find((step) => step.node === selectedNodeId),
   );
-  const segments = $derived.by<Segment[]>(() => {
-    const result: Segment[] = [];
+
+  function stepNumber(nodeId: string): number | undefined {
+    const index = activePath.steps.findIndex((step) => step.node === nodeId);
+    return index >= 0 ? index + 1 : undefined;
+  }
+
+  const flowNodes = $derived.by<Node[]>(() => {
+    const regions: Node[] = REGIONS.map((region) => ({
+      id: region.id,
+      type: "region",
+      position: { x: region.x, y: region.y },
+      data: { label: region.label, sub: region.sub, tint: region.tint },
+      width: region.width,
+      height: region.height,
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      focusable: false,
+      zIndex: -10,
+    }));
+    const nodes: Node[] = ARCHITECTURE_NODES.map((node) => {
+      const regionId = NODE_REGIONS[node.id];
+      const position = POSITIONS[node.id] ?? { x: 0, y: 0 };
+      return {
+        id: node.id,
+        type: "arch",
+        position,
+        data: {
+          name: node.name,
+          roleLabel: ROLE_META[node.role].label,
+          color: ROLE_META[node.role].color,
+          active: activeIds.has(node.id),
+          selected: selectedNode.id === node.id,
+          step: stepNumber(node.id),
+          id: node.id,
+          onSelect: chooseNode,
+        },
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+        draggable: false,
+        connectable: false,
+        focusable: false,
+        ...(regionId ? { parentId: regionId } : {}),
+      };
+    });
+    return [...regions, ...nodes];
+  });
+
+  const flowEdges = $derived.by<Edge[]>(() => {
+    const edges: Edge[] = [];
     for (let index = 1; index < activePath.steps.length; index += 1) {
       const previous = activePath.steps[index - 1];
       const current = activePath.steps[index];
       if (!previous || !current) continue;
-      const from = nodeById(previous.node);
-      const to = nodeById(current.node);
-      if (!from || !to) continue;
-      result.push({
-        from,
-        to,
-        payload: current.payload,
-        detail: current.detail,
-        index,
+      const traced = traceIndex < 0 || traceIndex >= index;
+      edges.push({
+        id: `${activePath.id}-${index}-${previous.node}-${current.node}`,
+        source: previous.node,
+        target: current.node,
+        type: "smoothstep",
+        label: traceIndex === index ? current.payload : undefined,
+        animated: false,
+        zIndex: 5,
+        class: traced ? "arch-edge arch-edge--traced" : "arch-edge",
+        labelStyle: "color:#f0d485;font-size:16px;font-family:var(--font-pixel);background:#1a150d;border:1px solid #8b7138;padding:5px 8px;border-radius:2px",
+        markerEnd: { type: MarkerType.ArrowClosed, color: traced ? "#efbd4b" : "#9a7a30" },
       });
     }
-    return result;
+    return edges;
   });
 
   function choosePath(id: ArchitecturePath["id"]): void {
@@ -83,14 +221,6 @@
     selectedNodeId = activePath.steps[0]?.node ?? "foundry";
   }
 
-  function stepNumber(nodeId: string): number | undefined {
-    const index = activePath.steps.findIndex((step) => step.node === nodeId);
-    return index >= 0 ? index + 1 : undefined;
-  }
-
-  function labelY(node: ArchitectureNode): number {
-    return node.y - node.height - 7.75 * (node.width + node.depth) - 14;
-  }
 </script>
 
 <section class="atlas" aria-labelledby="architecture-title">
@@ -126,98 +256,27 @@
         <button type="button" class="ghost" onclick={resetTrace}>Reset</button>
       </div>
 
-      <div class="boundary" aria-label="Frontend to backend runtime boundary">
-        <div class="boundary__side boundary__side--frontend">
-          <strong>Frontend</strong>
-          <span>Svelte UI · TypeScript store</span>
-        </div>
-        <div class="boundary__seam pixel">
-          <span>POST</span>
-          <span aria-hidden="true">→</span>
-          <span>NDJSON</span>
-        </div>
-        <div class="boundary__side boundary__side--backend">
-          <strong>Backend</strong>
-          <span>FastAPI · Python service and rules</span>
-        </div>
-      </div>
+      <p class="path-summary">{activePath.summary}</p>
 
-      <div class="map-scroll">
-        <svg viewBox="0 0 1060 620" role="img" aria-labelledby="map-title map-description">
-          <title id="map-title">Isometric architecture of Dungeon Master</title>
-          <desc id="map-description">
-            Fifteen distinct infrastructure buildings in frontend, backend, and desktop delivery
-            districts. The selected route connects them with payload-labelled arrows.
-          </desc>
-          <defs>
-            <pattern id="iso-grid" width="62" height="31" patternUnits="userSpaceOnUse">
-              <path d="M 31 0 L 62 15.5 L 31 31 L 0 15.5 Z" fill="none" stroke="#222b38" stroke-width="0.85" />
-            </pattern>
-            <marker id="arrow" markerWidth="8" markerHeight="8" refX="6.5" refY="3.5" orient="auto">
-              <path d="M 0 0 L 7 3.5 L 0 7 Z" fill="#d3a642" />
-            </marker>
-          </defs>
-
-          <path class="ground" d="M 530 10 L 1040 300 L 530 610 L 20 300 Z" />
-          <path class="grid" d="M 530 10 L 1040 300 L 530 610 L 20 300 Z" />
-
-          <g class="zones" aria-hidden="true">
-            <polygon class="zone zone--frontend" points="40,235 282,112 356,160 356,425 118,438 40,356" />
-            <text class="zone__name zone__name--frontend" x="64" y="218">FRONTEND</text>
-            <text class="zone__sub" x="64" y="235">Svelte + TypeScript</text>
-
-            <polygon class="zone zone--backend" points="356,72 648,8 1032,204 850,500 356,425" />
-            <text class="zone__name zone__name--backend" x="468" y="48">BACKEND</text>
-            <text class="zone__sub" x="468" y="65">FastAPI + Python</text>
-
-            <polygon class="zone zone--desktop" points="118,438 356,425 850,500 710,608 345,608 185,526" />
-            <text class="zone__name zone__name--desktop" x="242" y="580">DESKTOP &amp; DELIVERY</text>
-            <text class="zone__sub" x="242" y="597">Tauri + sidecar + release</text>
-          </g>
-
-          <g class="routes" aria-label={`${activePath.name} data path`}>
-            {#each segments as segment}
-              <line
-                class="route"
-                class:route--traced={traceIndex >= segment.index}
-                x1={segment.from.x}
-                y1={segment.from.y}
-                x2={segment.to.x}
-                y2={segment.to.y}
-                marker-end="url(#arrow)"
-              />
-              {#if segment.payload}
-                <g class="payload" transform={`translate(${(segment.from.x + segment.to.x) / 2} ${(segment.from.y + segment.to.y) / 2 - 9})`}>
-                  <rect x={-Math.max(34, segment.payload.length * 3.8)} y="-10" width={Math.max(68, segment.payload.length * 7.6)} height="20" rx="2" />
-                  <text>{segment.payload}</text>
-                </g>
-              {/if}
-            {/each}
-          </g>
-
-          <g class="buildings">
-            {#each paintedNodes as node}
-              <ArchitectureBuilding
-                {node}
-                color={ROLE_META[node.role].color}
-                active={activeIds.has(node.id)}
-                selected={selectedNode.id === node.id}
-                step={stepNumber(node.id)}
-                onselect={chooseNode}
-              />
-            {/each}
-          </g>
-
-          <g class="building-labels" aria-hidden="true">
-            {#each ARCHITECTURE_NODES as node}
-              <text
-                class:label--inactive={!activeIds.has(node.id)}
-                x={node.x}
-                y={labelY(node)}
-              >{node.name}</text>
-            {/each}
-          </g>
-        </svg>
+      <div class="flow-frame">
+        <SvelteFlow
+          nodes={flowNodes}
+          edges={flowEdges}
+          {nodeTypes}
+          fitView
+          minZoom={0.2}
+          maxZoom={1.6}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          nodesFocusable={false}
+          elementsSelectable={false}
+          zoomOnScroll={true}
+          panOnDrag={true}
+          proOptions={{ hideAttribution: true }}
+          colorMode="dark"
+        >
+          <Background gap={28} size={1} bgColor="#0d0b08" patternColor="#241d14" />
+        </SvelteFlow>
       </div>
 
       <ol class="step-rail" aria-label={`${activePath.name} path steps`}>
@@ -250,6 +309,7 @@
     <aside class="explainer parchment deckle" aria-live="polite">
       <p class="explainer__path pixel">{activePath.name} path · {activePath.steps.length} stops</p>
       <h2>{selectedNode.name}</h2>
+      <p class="explainer__role">{ROLE_META[selectedNode.role].label}</p>
       <p class="explainer__summary">{selectedNode.responsibility}</p>
 
       <dl>
@@ -297,6 +357,7 @@
     margin: 0 auto;
     padding: 1rem clamp(0.75rem, 2vw, 1.75rem) 2rem;
     color: var(--paper-bone);
+    font-size: 16px;
   }
   .atlas__header {
     display: flex;
@@ -308,178 +369,179 @@
   }
   .kicker,
   .stamp { color: var(--gold-candle); letter-spacing: 0.08em; }
-  .kicker { margin: 0 0 0.2rem; font-size: 0.75rem; text-transform: uppercase; }
+  .kicker { margin: 0 0 0.2rem; font-size: 0.85rem; text-transform: uppercase; }
   h1,
   h2,
   h3 { font-family: var(--font-display); font-weight: 400; }
   h1 { margin: 0; font-size: 2rem; line-height: 1.05; color: var(--paper-warm); }
-  .lede { max-width: 74ch; margin: 0.5rem 0 0; color: color-mix(in srgb, var(--paper-bone) 72%, transparent); }
-  .stamp { max-width: 24ch; margin: 0; text-align: right; font-size: 0.7rem; }
+  .lede { max-width: 74ch; margin: 0.5rem 0 0; font-size: 1.05rem; color: color-mix(in srgb, var(--paper-bone) 80%, transparent); }
+  .stamp { max-width: 24ch; margin: 0; text-align: right; font-size: 0.85rem; }
+
   .atlas__layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
     gap: 1rem;
     align-items: start;
     margin-top: 1rem;
   }
   .atlas__canvas { min-width: 0; border: var(--rule-hair); box-shadow: var(--shadow-deep); }
+
   .toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.5rem;
     padding: 0.7rem;
     border-bottom: var(--rule-hair);
   }
-  .path-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .path-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .toolbar button,
+  .path-tabs button {
+    font-size: 16px;
+    padding: 0.5rem 0.85rem;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    text-transform: none;
+  }
   .toolbar__spacer { flex: 1 1 1rem; }
   button.active {
     border-color: var(--gold-bright);
     color: #ffe39b;
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold-tarnished) 45%, transparent);
   }
-  .boundary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: 0.45rem;
-    align-items: stretch;
-    padding: 0.55rem 0.7rem;
-    background: rgba(8, 9, 12, 0.78);
-    border-bottom: 1px solid #29313f;
+  .path-summary {
+    margin: 0;
+    padding: 0.6rem 0.9rem;
+    font-size: 1rem;
+    color: #e4d7b6;
+    background: rgba(195, 154, 74, 0.08);
+    border-bottom: 1px solid #2c2416;
   }
-  .boundary__side {
-    display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-    padding: 0.52rem 0.65rem;
-    border: 1px solid;
-    background: rgba(255, 255, 255, 0.025);
+
+  .flow-frame {
+    height: 660px;
+    background: #0d0b08;
+    border-bottom: var(--rule-hair);
   }
-  .boundary__side strong { font-family: var(--font-pixel); font-size: 0.78rem; font-weight: 400; }
-  .boundary__side span { color: #b8bfca; font-size: 0.8rem; }
-  .boundary__side--frontend { border-color: #3f8b91; }
-  .boundary__side--frontend strong { color: #89d0d4; }
-  .boundary__side--backend { border-color: #68788f; }
-  .boundary__side--backend strong { color: #c3cede; }
-  .boundary__seam {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    padding: 0 0.35rem;
-    color: var(--gold-bright);
-    font-size: 0.7rem;
+
+  /* Svelte Flow chrome: readable, high-contrast, brass-framed. */
+  .flow-frame :global(.svelte-flow) {
+    font-size: 16px;
   }
-  .map-scroll { overflow-x: auto; background: #080b10; }
-  svg { display: block; width: 100%; min-width: 820px; height: auto; }
-  .ground { fill: #10151d; stroke: #303a49; stroke-width: 2; }
-  .grid { fill: url(#iso-grid); opacity: 0.78; }
-  .zone { stroke-width: 1.7; stroke-dasharray: 9 7; }
-  .zone--frontend { fill: rgba(63, 139, 145, 0.09); stroke: #4fa5aa; }
-  .zone--backend { fill: rgba(104, 120, 143, 0.09); stroke: #8291a8; }
-  .zone--desktop { fill: rgba(85, 124, 94, 0.09); stroke: #70a178; }
-  .zone__name,
-  .zone__sub,
-  .building-labels text,
-  .payload text { paint-order: stroke; stroke: #080b10; stroke-linejoin: round; }
-  .zone__name {
-    font: 700 14px/1 var(--font-pixel);
-    letter-spacing: 0.1em;
-    stroke-width: 4px;
+  .flow-frame :global(.svelte-flow__edge-path) {
+    stroke: #9a7a30;
+    stroke-width: 3;
   }
-  .zone__name--frontend { fill: #73c4c8; }
-  .zone__name--backend { fill: #a8b5c9; }
-  .zone__name--desktop { fill: #82b98b; }
-  .zone__sub { fill: #929daa; font: 11px/1 var(--font-pixel); stroke-width: 3px; }
-  .route { stroke: #8f6d26; stroke-width: 4; opacity: 0.62; }
-  .route--traced { stroke: #efbd4b; stroke-width: 5; opacity: 1; }
-  .payload rect { fill: #121720; stroke: #8b7138; stroke-width: 1; }
-  .payload text {
-    fill: #f0d485;
-    font: 10px/1 var(--font-pixel);
-    text-anchor: middle;
-    dominant-baseline: middle;
-    stroke-width: 3px;
+  .flow-frame :global(.arch-edge--traced .svelte-flow__edge-path) {
+    stroke: #efbd4b;
+    stroke-width: 4;
   }
-  .building-labels text {
-    fill: #e4ded0;
-    font: 12px/1 var(--font-pixel);
-    text-anchor: middle;
-    stroke-width: 4px;
-    transition: opacity 170ms ease;
+  .flow-frame :global(.svelte-flow__edge-textbg) {
+    fill: #1a150d;
   }
-  .building-labels .label--inactive { opacity: 0.38; }
+  .flow-frame :global(.svelte-flow__handle) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .flow-frame :global(.svelte-flow__node-arch:focus-visible),
+  .flow-frame :global(.svelte-flow__node:focus-visible) {
+    outline: 3px solid var(--gold-bright);
+    outline-offset: 3px;
+  }
+
   .step-rail {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: 0.4rem;
     margin: 0;
-    padding: 0.65rem 0.7rem;
+    padding: 0.7rem;
     list-style: none;
-    border-top: 1px solid #29313f;
+    border-bottom: var(--rule-hair);
   }
   .step-rail button {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    min-height: 2rem;
-    padding: 0.35rem 0.55rem;
+    font-size: 16px;
+    padding: 0.45rem 0.7rem;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    text-transform: none;
   }
-  .step-rail__number { color: var(--gold-bright); }
-  .step-rail code { color: #aab4c3; font-size: 0.68rem; }
+  .step-rail__number {
+    display: grid;
+    place-items: center;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    border: 1px solid var(--gold-tarnished);
+    color: var(--gold-bright);
+    font-size: 16px;
+  }
+  .step-rail code {
+    font-size: 0.95rem;
+    color: #f0d485;
+  }
+
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.7rem 1rem;
-    padding: 0.65rem 0.8rem 0.8rem;
-    color: #aeb7c5;
-    border-top: 1px solid #29313f;
-    font: 0.68rem/1.3 var(--font-pixel);
+    gap: 0.4rem 1.1rem;
+    padding: 0.7rem 0.9rem;
+    font-size: 16px;
+    color: #d8cdb2;
   }
-  .legend span { display: inline-flex; align-items: center; gap: 0.38rem; }
-  .legend i { width: 0.75rem; height: 0.75rem; background: var(--swatch); border: 1px solid rgba(255, 255, 255, 0.24); }
-  .legend__route { width: 1.5rem !important; height: 0 !important; border: 0 !important; border-top: 3px solid #efbd4b !important; }
+  .legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .legend i {
+    width: 0.85rem;
+    height: 0.85rem;
+    background: var(--swatch, transparent);
+    border: 1px solid rgba(0, 0, 0, 0.6);
+  }
+  .legend__route {
+    background: transparent !important;
+    border-top: 3px solid #efbd4b !important;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    height: 0 !important;
+    width: 1.4rem !important;
+  }
+
   .explainer {
-    position: sticky;
-    top: 1rem;
-    padding: 1.15rem 1.2rem 1.3rem;
-    color: var(--ink-deep);
-    box-shadow: var(--shadow-deep);
+    min-width: 0;
+    font-size: 1.05rem;
   }
-  .explainer__path { margin: 0 0 0.55rem; color: #6b5528; font-size: 0.72rem; }
-  .explainer h2 { margin: 0; font-size: 1.65rem; line-height: 1.05; color: var(--ink-black); }
-  .explainer__summary { margin: 0.65rem 0 0.9rem; font-size: 1.03rem; line-height: 1.45; }
-  .explainer dl { display: grid; gap: 0.45rem; margin: 0; }
-  .explainer dl div { padding: 0.55rem 0.65rem; background: rgba(64, 45, 23, 0.075); border-left: 3px solid var(--gold-tarnished); }
-  .explainer dt,
-  .explainer h3 { font: 0.7rem/1.2 var(--font-pixel); letter-spacing: 0.06em; text-transform: uppercase; color: #675129; }
-  .explainer dd { margin: 0.2rem 0 0; line-height: 1.35; }
-  .explainer section { margin-top: 1rem; }
-  .explainer h3 { margin: 0 0 0.35rem; }
-  .explainer p { margin: 0; }
-  .selected-edge { padding: 0.75rem; border: 1px dashed #9c7731; background: rgba(168, 133, 63, 0.08); }
-  .selected-edge code { display: inline-block; margin-top: 0.45rem; color: #5b421c; }
-  .citations { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
-  .citations a { color: #493a20; font: 0.7rem/1.35 var(--font-pixel); overflow-wrap: anywhere; }
-  .citations a:hover { color: #7a2820; }
-  .path-note { padding-top: 0.85rem; border-top: 1px solid rgba(79, 58, 27, 0.25); }
-  @media (max-width: 1080px) {
-    .atlas__layout { grid-template-columns: 1fr; }
-    .explainer { position: static; }
+  .explainer__path { font-size: 0.9rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .explainer__role { font-size: 0.95rem; color: #7a5b23; margin-top: -0.4rem; }
+  .explainer h2 { margin-top: 0.1rem; }
+  .explainer dl div { margin-bottom: 0.5rem; }
+  .explainer dt { font-weight: 700; }
+  .explainer dd { margin: 0; }
+  .citations a {
+    color: #4a3216;
+    font: 700 0.95rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow-wrap: anywhere;
   }
-  @media (max-width: 680px) {
-    .atlas { padding-inline: 0.55rem; }
-    .atlas__header { display: block; }
-    .stamp { margin-top: 0.7rem; text-align: left; }
-    .boundary { grid-template-columns: 1fr; }
-    .boundary__seam { justify-content: flex-start; padding: 0.25rem 0.65rem; }
-    .boundary__side { flex-wrap: wrap; }
-    .toolbar__spacer { display: none; }
-    .toolbar { align-items: stretch; }
-    .path-tabs { width: 100%; }
-    .path-tabs button { flex: 1 1 auto; }
+  .citations a:hover { color: #762d20; }
+  .explainer code { font-size: 0.95rem; }
+
+  a:focus-visible,
+  button:focus-visible {
+    outline: 3px solid var(--gold-bright);
+    outline-offset: 2px;
   }
+
+  @media (max-width: 900px) {
+    .atlas__layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .flow-frame { height: 460px; }
+    .atlas__header { flex-direction: column; align-items: start; gap: 0.4rem; }
+    .stamp { text-align: left; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .building-labels text { transition: none; }
+    .flow-frame :global(.svelte-flow__edge-path) {
+      transition: none !important;
+    }
   }
 </style>
