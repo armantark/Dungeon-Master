@@ -3,9 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ARCHITECTURE_NODES,
   ARCHITECTURE_PATHS,
-  frontDepth,
   nodeById,
-  nodesInPainterOrder,
+  routeSegmentAt,
 } from "./dev-architecture";
 
 describe("architecture map contracts", () => {
@@ -18,17 +17,9 @@ describe("architecture map contracts", () => {
     }
   });
 
-  it("sorts building groups by their projected front edge", () => {
-    const painted = nodesInPainterOrder(ARCHITECTURE_NODES);
-    for (let index = 1; index < painted.length; index += 1) {
-      const previous = painted[index - 1];
-      const current = painted[index];
-      expect(previous).toBeDefined();
-      expect(current).toBeDefined();
-      expect(frontDepth(previous!), `${previous!.id} before ${current!.id}`).toBeLessThanOrEqual(
-        frontDepth(current!),
-      );
-    }
+  it("keeps one distinct building kind for every infrastructure node", () => {
+    expect(ARCHITECTURE_NODES).toHaveLength(15);
+    expect(new Set(ARCHITECTURE_NODES.map((node) => node.kind)).size).toBe(15);
   });
 
   it("keeps frontend, backend, persistence, and delivery roles represented", () => {
@@ -36,5 +27,24 @@ describe("architecture map contracts", () => {
     expect(roles).toEqual(
       new Set(["client", "python", "structured", "prose", "persist", "desktop"]),
     );
+  });
+
+  it("reveals no connector before the second route node", () => {
+    const path = ARCHITECTURE_PATHS[0]!;
+    expect(routeSegmentAt(path, -1)).toBeUndefined();
+    expect(routeSegmentAt(path, 0)).toBeUndefined();
+    expect(routeSegmentAt(path, path.steps.length)).toBeUndefined();
+  });
+
+  it("reveals exactly the connector at the trace cursor", () => {
+    const path = ARCHITECTURE_PATHS[0]!;
+    expect(routeSegmentAt(path, 1)).toEqual({
+      from: path.steps[0],
+      to: path.steps[1],
+    });
+    expect(routeSegmentAt(path, 2)).toEqual({
+      from: path.steps[1],
+      to: path.steps[2],
+    });
   });
 });

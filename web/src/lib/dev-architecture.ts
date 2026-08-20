@@ -58,6 +58,11 @@ export interface ArchitecturePath {
   steps: PathStep[];
 }
 
+export interface ArchitectureRouteSegment {
+  from: PathStep;
+  to: PathStep;
+}
+
 export const ROLE_META: Record<SystemRole, { label: string; color: string }> = {
   client: { label: "Browser client · TypeScript", color: "#3f8b91" },
   python: { label: "Deterministic Python", color: "#68788f" },
@@ -241,10 +246,12 @@ export function nodeById(id: string): ArchitectureNode | undefined {
   return ARCHITECTURE_NODES.find((node) => node.id === id);
 }
 
-export function frontDepth(node: ArchitectureNode): number {
-  return node.y + 7.75 * (node.width + node.depth);
-}
-
-export function nodesInPainterOrder(nodes: ArchitectureNode[]): ArchitectureNode[] {
-  return [...nodes].sort((a, b) => frontDepth(a) - frontDepth(b));
+export function routeSegmentAt(
+  path: ArchitecturePath,
+  cursor: number,
+): ArchitectureRouteSegment | undefined {
+  if (cursor < 1 || cursor >= path.steps.length) return undefined;
+  const from = path.steps[cursor - 1];
+  const to = path.steps[cursor];
+  return from && to ? { from, to } : undefined;
 }
