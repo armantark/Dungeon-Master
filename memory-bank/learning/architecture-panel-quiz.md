@@ -38,3 +38,4 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | Question | Result | Gaps to revisit |
 | --- | --- | --- |
 | 1. Natural-language turn mental model (2026-08-19) | Partial: correctly identified classification, deterministic mechanics, grounded narration, and post-narration continuity updates. | Correct the ordering; separate NPC/thread context from post-prose updates; explain that rolls are conditional; include atomic persistence and wholesale client-state replacement. |
+| 2. Runtime stage ordering (2026-08-19) | Correct: all six stages were placed in the exact runtime order. | Name the owner and trust boundary for each stage. |
