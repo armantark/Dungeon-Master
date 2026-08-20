@@ -4,14 +4,14 @@ This file tracks the user's preparation for a principal-engineer technical panel
 
 ## Phase 1: Current mental model
 
-- [ ] Trace one natural-language turn from the composer to durable storage.
-- [ ] Separate deterministic Python decisions from structured LLM decisions and prose generation.
+- [x] Trace one natural-language turn from the composer to durable storage.
+- [x] Separate deterministic Python decisions from structured LLM decisions and prose generation.
 - [ ] Explain why the client replaces the complete `GameState` instead of applying local patches.
 
 ## Phase 2: Architecture and boundaries
 
 - [ ] Compare browser development startup with the Tauri desktop startup and late-bound API base.
-- [ ] Explain the typed `TurnPlan` boundary and why the LLM does not directly mutate game state.
+- [x] Explain the typed `TurnPlan` boundary and why the LLM does not directly mutate game state.
 - [ ] Explain Oracle versus Cairn responsibilities and how their results become narration context.
 - [ ] Explain why post-narration thread and NPC continuity work runs after committed prose.
 - [ ] Explain canonical state, append-only events, checkpoints, and derived `MemoryState`.
@@ -42,3 +42,4 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 3. Mechanics-before-narration rationale (2026-08-19) | Strong partial: identified dice as the authority on what happens and independently recalled the chicken-or-egg tension between simulation and ad hoc prose. | Distinguish model-based semantic planning from deterministic Python simulation; explain pre-prose constraints versus post-prose canonization. |
 | 4. Failure-consequence design (2026-08-19) | Strong insight: identified the retroactive-contrivance failure mode where a bad roll forces the narrator to invent an unearned adverse event. | Apply the tabletop principle of establishing meaningful uncertainty and bounded stakes before rolling, then test it against a concrete scene. |
 | 5. Semantic-stakes verification tradeoff (2026-08-19) | Correct critique: recognized that arbitrary-language stakes cannot be proved by deterministic validation and that adding another model judge increases orchestration complexity. | Identify the existing save-review call, then distinguish a runtime guard from an offline evaluation that could justify deleting it. |
+| 6. Runtime reviewer defense and deletion case (2026-08-20) | Strong: defended the current guard because semantic quality is otherwise unmeasured, identified correlated same-model judging, and proposed collapsing the work into one stricter planning contract. | Say `rubric`, not `Rubik`; same-model review can still catch independent-sampling errors, but deletion needs measured planner precision rather than a stricter prompt alone. |
