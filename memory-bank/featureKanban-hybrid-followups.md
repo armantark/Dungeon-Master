@@ -114,6 +114,22 @@ deliberately deferred for later.
 
 ## Icebox
 
+### H-05 Capability-Specialized Model Evaluation
+- Status: `icebox`
+- Priority: `low`
+- Goal: Evaluate a reasoning-strong model for typed/non-narrative work separately
+  from a prose-specialized model selected for genuine narrative creativity.
+- Why:
+  Coding and reasoning benchmark optimization may not correlate with voice,
+  specificity, surprise, or sustained scene-writing quality. The existing typed
+  `LLMProfiles` and runtime presets already separate structured and narration
+  capabilities, so this is primarily a model-selection and evaluation question,
+  not a request for another runtime agentic node.
+- Revisit trigger:
+  Only when the user returns to active play or model-quality work. Compare models
+  on a fixed scene corpus for prose quality, continuity obedience, contrived
+  consequences, latency, and cost before changing the configured model.
+
 ### H-03 Narrative-Embedded Action Affordances
 - Status: `icebox`
 - Priority: `low`

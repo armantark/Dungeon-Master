@@ -64,10 +64,10 @@ uv run dungeon-master            # serves http://127.0.0.1:8000
 # 2) frontend
 cd web
 npm install
-npm run dev                      # serves http://127.0.0.1:5173
+npm run dev                      # serves http://localhost:5173
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` to the FastAPI server.
+Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` to the FastAPI server.
 
 The source-cited architecture map is a development-only frontend endpoint. It does not
 bootstrap campaign state and does not require the backend:
@@ -77,7 +77,7 @@ cd web
 VITE_ENABLE_ARCHITECTURE_MAP=true npm run dev
 ```
 
-Open [http://127.0.0.1:5173/__dev/architecture](http://127.0.0.1:5173/__dev/architecture).
+Open [http://localhost:5173/__dev/architecture](http://localhost:5173/__dev/architecture).
 The exact path falls back to the normal app unless both Vite development mode and the
 flag are active; production builds remove the map chunk entirely.
 

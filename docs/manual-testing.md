@@ -9,7 +9,7 @@ cd web
 VITE_ENABLE_ARCHITECTURE_MAP=true npm run dev
 ```
 
-1. Open `http://127.0.0.1:5173/__dev/architecture` without starting FastAPI.
+1. Open `http://localhost:5173/__dev/architecture` without starting FastAPI.
 1. Confirm the architecture map renders with no `/api` requests or console errors.
 1. Switch among `Turn`, `Startup`, `Persistence`, and `Release`; confirm the route,
    numbered steps, payload labels, and explainer update together.
