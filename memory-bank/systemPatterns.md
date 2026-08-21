@@ -27,6 +27,8 @@ Current graph:
 
 The first implementation expresses this as a lightweight `GameService` rather than a formal LangGraph/Pydantic AI graph. This keeps the deterministic turn loop simple while preserving the same boundaries. The target is still a fully fledged personal agentic game system; avoiding graph-framework bloat is an implementation choice, not a reduced product ambition.
 
+The precise architectural label is a **deterministically orchestrated agentic workflow**: the model-backed `TurnRouter` proposes a typed plan, then Python `GameService` dispatches specialized model workers and deterministic engines in programmatic order. It is not an LLM-as-orchestrator design. Model outputs propose semantic operations and prose; Python validates and applies them to working state, and persisted `GameState` remains campaign canon.
+
 The HTTP surface is intentionally thin. `src/dungeon_master/api.py` exposes one route per `GameService` operation and returns the entire `GameState` from each one. That keeps the frontend reconciler trivial (last response wins) and matches the single-writer single-user assumption. Authentication is omitted on purpose because the server binds to `127.0.0.1` and is meant to run on the user's own machine.
 
 ## Interaction Router

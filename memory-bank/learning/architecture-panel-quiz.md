@@ -4,7 +4,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 
 ## Restarted sequence: 2026-08-21
 
-- [ ] Explain the product constraint and defend the central architectural thesis.
+- [x] Explain the product constraint and defend the central architectural thesis.
 - [ ] Trace one ordinary turn through the current runtime.
 - [ ] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
 - [ ] Explain continuity, persistence, checkpoints, derived memory, and recovery.
@@ -18,6 +18,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | --- | --- | --- |
 | 1. Why not one giant dungeon-master model call? (2026-08-21) | Strong partial: clearly connected the solo-play product need to finite context, long-campaign hallucination/forgetting, persistent external state, orchestration, and separation of concerns. | Runtime campaign authority is canonical JSON state plus events/checkpoints, not Markdown. Describe model calls as specialized structured workers and a prose narrator rather than generic autonomous agents. State the sharp boundary: models interpret and narrate; deterministic Python resolves mechanics; only the backend commits canon. |
 | 1A. Authority-boundary drill (2026-08-21) | Strong correction: distinguished context rot and lossy compaction from raw context-window size, clarified Markdown as a hypothetical rather than a claim about the runtime, and explained task-specific context for specialized model workers. | The current workflow is LLM-planned but Python-orchestrated: `TurnRouter` proposes a typed plan, while `GameService` executes and orders it. Model outputs are proposals until validated and committed. Persisted `GameState` is campaign canon; browser/Tauri state is only its replaceable mirror. |
+| 1B. Final architecture thesis (2026-08-21) | Passed: correctly identified the workflow as programmatically sequenced by Python from the typed router result, retained the useful agentic-workflow label without claiming an LLM orchestrator, expanded Python authority to mechanics/validation/order/cancellation/commit, and identified persisted state as campaign canon with a replaceable client mirror. | Say that models propose typed operations and prose, not a replacement `GameState`; Python constructs and mutates the working state. Prefer `server-authoritative layered architecture with unidirectional state synchronization` over claiming classical MVC. |
 
 ## Archived pre-restart sequence
 
