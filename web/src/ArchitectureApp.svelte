@@ -15,10 +15,9 @@
 </main>
 
 <style>
+  /* The sheet owns the whole window, so nothing of the game's own field shows. */
   .architecture-app {
-    min-height: 100vh;
-    background:
-      radial-gradient(circle at 12% 0%, rgba(63, 139, 145, 0.12), transparent 34%),
-      radial-gradient(circle at 84% 8%, rgba(104, 120, 143, 0.12), transparent 38%);
+    min-height: 100dvh;
+    background: #c7c4ab;
   }
 </style>

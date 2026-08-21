@@ -1,38 +1,59 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+
   import ArchitectureScene from "./ArchitectureScene.svelte";
+  import ArchitectureExplainer from "./ArchitectureExplainer.svelte";
   import {
     ARCHITECTURE_NODES,
     ARCHITECTURE_PATHS,
-    ROLE_META,
     nodeById,
     type ArchitectureNode,
     type ArchitecturePath,
-    type PathStep,
   } from "../../lib/dev-architecture";
+  import { PLACEMENTS, ZONES, membersOf } from "../../lib/architecture-layout";
 
-  const repositoryBase = "https://github.com/armantark/Dungeon-Master/blob/main/";
-  const BOUNDARIES = [
-    { label: "Frontend", detail: "Svelte + TypeScript", color: "#3f8b91" },
-    { label: "Transport", detail: "HTTP + NDJSON", color: "#b88a31" },
-    { label: "Backend", detail: "FastAPI + Python + models", color: "#68788f" },
-    { label: "Persistence", detail: "Canonical saves", color: "#a88434" },
-    { label: "Desktop & Delivery", detail: "Tauri + sidecar + release", color: "#557c5e" },
-  ] as const;
   const defaultPath: ArchitecturePath = ARCHITECTURE_PATHS[0]!;
   const defaultNode: ArchitectureNode = ARCHITECTURE_NODES[0]!;
 
-  let activePathId = $state<ArchitecturePath["id"]>("turn");
+  const roleCount = (...roles: ArchitectureNode["role"][]) =>
+    ARCHITECTURE_NODES.filter((node) => roles.includes(node.role)).length;
+
+  /** Every figure is counted from the same data the drawing is built from. */
+  const TELEMETRY = [
+    { label: "Components", value: ARCHITECTURE_NODES.length },
+    { label: "Paths", value: ARCHITECTURE_PATHS.length },
+    { label: "Boundaries", value: ZONES.length },
+    { label: "Deterministic", value: roleCount("python") },
+    { label: "Model calls", value: roleCount("structured", "prose") },
+    { label: "Canonical stores", value: roleCount("persist") },
+  ] as const;
+
+  let activePathId = $state<ArchitecturePath["id"]>(defaultPath.id);
   let selectedNodeId = $state(defaultPath.steps[0]?.node ?? defaultNode.id);
   let traceIndex = $state(-1);
+  let narrow = $state(false);
 
   const activePath = $derived(
     ARCHITECTURE_PATHS.find((path) => path.id === activePathId) ?? defaultPath,
   );
   const selectedNode = $derived(nodeById(selectedNodeId) ?? defaultNode);
-  const selectedStep = $derived(
-    activePath.steps.find((step) => step.node === selectedNodeId),
+  const stepIndex = $derived(
+    new Map(activePath.steps.map((step, index) => [step.node, index])),
   );
-  const traceComplete = $derived(traceIndex === activePath.steps.length - 1);
+  const selectedStepIndex = $derived(stepIndex.get(selectedNodeId) ?? -1);
+  const selectedStep = $derived(
+    selectedStepIndex >= 0 ? activePath.steps[selectedStepIndex] : undefined,
+  );
+  const atEnd = $derived(traceIndex >= activePath.steps.length - 1);
+  const currentStep = $derived(traceIndex >= 0 ? activePath.steps[traceIndex] : undefined);
+  const currentNode = $derived(currentStep ? nodeById(currentStep.node) : undefined);
+  const announcement = $derived(
+    traceIndex < 0
+      ? `${activePath.name} path ready. ${activePath.steps.length} stops.`
+      : `Stop ${traceIndex + 1} of ${activePath.steps.length}. ${currentNode?.name ?? ""}. ${
+          currentStep?.payload ?? ""
+        }`,
+  );
 
   function choosePath(id: ArchitecturePath["id"]): void {
     const path = ARCHITECTURE_PATHS.find((candidate) => candidate.id === id) ?? defaultPath;
@@ -41,370 +62,549 @@
     selectedNodeId = path.steps[0]?.node ?? defaultNode.id;
   }
 
-  function chooseNode(id: string): void {
-    selectedNodeId = id;
+  function goToStep(index: number): void {
+    const clamped = Math.max(-1, Math.min(index, activePath.steps.length - 1));
+    traceIndex = clamped;
+    selectedNodeId =
+      activePath.steps[Math.max(0, clamped)]?.node ?? activePath.steps[0]?.node ?? defaultNode.id;
   }
 
-  function chooseStep(step: PathStep, index: number): void {
-    selectedNodeId = step.node;
-    traceIndex = index;
-  }
-
-  function traceNext(): void {
-    traceIndex = traceComplete ? 0 : traceIndex + 1;
-    selectedNodeId = activePath.steps[traceIndex]?.node ?? activePath.steps[0]?.node ?? defaultNode.id;
-  }
-
-  function resetTrace(): void {
-    traceIndex = -1;
-    selectedNodeId = activePath.steps[0]?.node ?? defaultNode.id;
-  }
+  onMount(() => {
+    const query = window.matchMedia("(max-width: 860px)");
+    const sync = () => (narrow = query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  });
 </script>
 
 <section class="atlas" aria-labelledby="architecture-title">
-  <header class="atlas__header">
-    <div>
-      <p class="kicker pixel">Dev architecture endpoint</p>
-      <h1 id="architecture-title">Dungeon Master isometric system map</h1>
-      <p class="lede">
-        A depth-tested infrastructure campus showing the real control and data paths from the
-        Svelte composer through deterministic Python, bounded model calls, atomic persistence,
-        and the final client state.
-      </p>
+  <header class="telemetry">
+    <h1 id="architecture-title">
+      Dungeon Master <span>system plan</span>
+    </h1>
+    <dl class="telemetry__figures">
+      {#each TELEMETRY as figure (figure.label)}
+        <div>
+          <dt>{figure.label}</dt>
+          <dd>{figure.value}</dd>
+        </div>
+      {/each}
+    </dl>
+    <div class="telemetry__paths" role="group" aria-label="Choose a path to trace">
+      {#each ARCHITECTURE_PATHS as path (path.id)}
+        <button
+          type="button"
+          class:active={path.id === activePath.id}
+          aria-pressed={path.id === activePath.id}
+          onclick={() => choosePath(path.id)}
+        >
+          {path.name}
+        </button>
+      {/each}
     </div>
-    <p class="stamp pixel">source reconciled on local main</p>
   </header>
 
-  <div class="atlas__layout">
-    <div class="atlas__canvas iron">
-      <div class="toolbar">
-        <div class="path-tabs" role="group" aria-label="Choose an architecture path">
-          {#each ARCHITECTURE_PATHS as path}
-            <button
-              type="button"
-              class:active={path.id === activePath.id}
-              aria-pressed={path.id === activePath.id}
-              onclick={() => choosePath(path.id)}
-            >
-              {path.name}
-            </button>
-          {/each}
-        </div>
-        <span class="toolbar__spacer"></span>
-        <button type="button" onclick={traceNext}>
-          {traceComplete ? "Restart trace" : "Trace next step"}
-        </button>
-        <button type="button" class="ghost" onclick={resetTrace}>Reset</button>
-      </div>
-
-      <p class="path-summary">{activePath.summary}</p>
-
-      <div class="boundary-strip" aria-label="Architecture territories">
-        {#each BOUNDARIES as boundary}
-          <span style={`--boundary:${boundary.color}`}>
-            <strong>{boundary.label}</strong>
-            <small>{boundary.detail}</small>
-          </span>
-        {/each}
-      </div>
-
-      <ArchitectureScene
-        {activePath}
-        {selectedNodeId}
-        {traceIndex}
-        onSelect={chooseNode}
-      />
-
-      <ol class="step-rail" aria-label={`${activePath.name} path steps`}>
-        {#each activePath.steps as step, index}
-          {@const node = nodeById(step.node)}
-          {#if node}
-            <li>
-              <button
-                type="button"
-                class:active={node.id === selectedNode.id}
-                class:current={traceIndex === index}
-                aria-current={traceIndex === index ? "step" : undefined}
-                onclick={() => chooseStep(step, index)}
-              >
-                <span class="step-rail__number pixel">{index + 1}</span>
-                <span>{node.name}</span>
-                {#if traceIndex === index && step.payload}<code>{step.payload}</code>{/if}
-              </button>
-            </li>
+  <div class="atlas__body">
+    <div class="rail">
+      <div class="trace" role="group" aria-label="Step through the path">
+        <p class="trace__where">
+          {#if traceIndex < 0}
+            {activePath.name} · overview
+          {:else}
+            {activePath.name} · stop {traceIndex + 1} of {activePath.steps.length}
           {/if}
-        {/each}
-      </ol>
-
-      <div class="legend" aria-label="Architecture role legend">
-        {#each Object.values(ROLE_META) as meta}
-          <span><i style={`--swatch: ${meta.color}`}></i>{meta.label}</span>
-        {/each}
-        <span><i class="legend__route"></i>Current dependency</span>
+        </p>
+        <div class="trace__buttons">
+          <button
+            type="button"
+            disabled={traceIndex < 0}
+            aria-label="Previous stop"
+            onclick={() => goToStep(traceIndex - 1)}>◀</button
+          >
+          <button
+            type="button"
+            class="trace__next"
+            onclick={() => goToStep(atEnd ? 0 : traceIndex + 1)}
+          >
+            {atEnd ? "Restart" : traceIndex < 0 ? "Trace" : "Next"}
+          </button>
+          <button
+            type="button"
+            disabled={traceIndex < 0}
+            aria-label="Back to overview"
+            onclick={() => goToStep(-1)}>Reset</button
+          >
+        </div>
       </div>
 
-      <details class="node-index">
-        <summary>All infrastructure</summary>
-        <div>
-          {#each ARCHITECTURE_NODES as node}
-            <button
-              type="button"
-              class:active={selectedNode.id === node.id}
-              aria-pressed={selectedNode.id === node.id}
-              onclick={() => chooseNode(node.id)}
-            >
-              <span>{node.name}</span>
-              <small>{ROLE_META[node.role].label}</small>
-            </button>
+      <details class="index" open={!narrow}>
+        <summary>Index · {PLACEMENTS.length} components</summary>
+
+        <div class="index__scroll">
+          {#each ZONES as zone (zone.id)}
+            <section class="group">
+              <h2>
+                <b>{String(zone.index).padStart(2, "0")}</b>
+                {zone.label}
+                <em>{zone.detail}</em>
+              </h2>
+              {#each membersOf(zone.id) as placement (placement.id)}
+                {@const stop = stepIndex.get(placement.id)}
+                <button
+                  type="button"
+                  class="row"
+                  class:active={selectedNodeId === placement.id}
+                  class:row--current={traceIndex >= 0 && traceIndex === stop}
+                  aria-pressed={selectedNodeId === placement.id}
+                  onclick={() => (selectedNodeId = placement.id)}
+                >
+                  <span class="row__code">{placement.code}</span>
+                  <span class="row__name">{placement.node.name}</span>
+                  {#if stop !== undefined}<span class="row__stop">{stop + 1}</span>{/if}
+                </button>
+              {/each}
+            </section>
           {/each}
         </div>
       </details>
     </div>
 
-    <aside class="explainer parchment deckle" aria-live="polite">
-      <p class="explainer__path pixel">{activePath.name} path · {activePath.steps.length} stops</p>
-      <h2>{selectedNode.name}</h2>
-      <p class="explainer__role">{ROLE_META[selectedNode.role].label}</p>
-      <p class="explainer__summary">{selectedNode.responsibility}</p>
+    <div class="plan">
+      <ArchitectureScene
+        {activePath}
+        {selectedNodeId}
+        {traceIndex}
+        onSelect={(id) => (selectedNodeId = id)}
+      />
 
-      <dl>
-        <div><dt>Receives</dt><dd>{selectedNode.input}</dd></div>
-        <div><dt>Produces</dt><dd>{selectedNode.output}</dd></div>
-      </dl>
-
-      <section>
-        <h3>Why this boundary exists</h3>
-        <p>{selectedNode.rationale}</p>
-      </section>
-
-      {#if selectedStep?.detail}
-        <section class="selected-edge">
-          <h3>Selected route step</h3>
-          <p>{selectedStep.detail}</p>
-          {#if selectedStep.payload}<code>{selectedStep.payload}</code>{/if}
-        </section>
+      {#if traceIndex >= 1 && currentStep}
+        <p class="hop">
+          <span class="hop__count">{traceIndex + 1}/{activePath.steps.length}</span>
+          {currentNode?.name}
+          {#if currentStep.payload}<code>{currentStep.payload}</code>{/if}
+        </p>
+      {:else}
+        <p class="hop hop__summary">{activePath.summary}</p>
       {/if}
 
-      <section>
-        <h3>Source</h3>
-        <ul class="citations">
-          {#each selectedNode.citations as citation}
-            <li>
-              <a href={`${repositoryBase}${citation.file}#L${citation.line}`} target="_blank" rel="noreferrer">
-                {citation.file}:{citation.line}
-              </a>
-            </li>
-          {/each}
-        </ul>
-      </section>
+      <p class="hints">
+        Drag to pan · Scroll or ± to zoom · Hover or tab a code to light its building · Click to
+        read it · Trace walks one hop at a time
+      </p>
+    </div>
 
-      <section class="path-note">
-        <h3>{activePath.name}</h3>
-        <p>{activePath.summary}</p>
-      </section>
-    </aside>
+    <details class="reader-wrap" open={!narrow}>
+      <summary>Reading panel · {selectedNode.name}</summary>
+      <ArchitectureExplainer
+        node={selectedNode}
+        path={activePath}
+        step={selectedStep}
+        stepNumber={selectedStepIndex >= 0 ? selectedStepIndex + 1 : undefined}
+        isCurrentStep={selectedStepIndex >= 0 && selectedStepIndex === traceIndex}
+      />
+    </details>
   </div>
+
+  <p class="sr-only" aria-live="polite">{announcement}</p>
 </section>
 
 <style>
   .atlas {
-    width: min(1500px, 100%);
-    margin: 0 auto;
-    padding: 1rem clamp(0.75rem, 2vw, 1.75rem) 2rem;
-    color: var(--paper-bone);
-    font-size: 16px;
-  }
+    /* One desaturated paper field; ink is the only other pigment. */
+    --atlas-paper: #c7c4ab;
+    --atlas-panel: #d0cdb5;
+    --atlas-ink: #16170f;
+    --atlas-ink-body: #2c2e23;
+    --atlas-ink-soft: #4e5142;
+    --atlas-rule: #9a9880;
+    --atlas-highlight: #bcbf96;
 
-  .atlas__header {
-    display: flex;
-    align-items: end;
-    gap: 2rem;
-    justify-content: space-between;
-    padding: 0.65rem 0.2rem 1rem;
-    border-bottom: var(--rule-hair);
-  }
-
-  .kicker,
-  .stamp { color: var(--gold-candle); letter-spacing: 0.08em; }
-  .kicker { margin: 0 0 0.2rem; font-size: 0.85rem; text-transform: uppercase; }
-  h1,
-  h2,
-  h3 { font-family: var(--font-display); font-weight: 400; }
-  h1 { margin: 0; font-size: 2rem; line-height: 1.05; color: var(--paper-warm); }
-  .lede { max-width: 74ch; margin: 0.5rem 0 0; font-size: 1.05rem; color: color-mix(in srgb, var(--paper-bone) 80%, transparent); }
-  .stamp { max-width: 24ch; margin: 0; text-align: right; font-size: 0.85rem; }
-
-  .atlas__layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-    gap: 1rem;
-    align-items: start;
-    margin-top: 1rem;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100dvh;
+    color: var(--atlas-ink-body);
+    background: var(--atlas-paper);
+    font-family: ui-sans-serif, system-ui, sans-serif;
   }
 
-  .atlas__canvas { min-width: 0; border: var(--rule-hair); box-shadow: var(--shadow-deep); }
+  /* --- telemetry strip --------------------------------------------------- */
 
-  .toolbar {
+  .telemetry {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.7rem;
-    border-bottom: var(--rule-hair);
+    gap: 0.5rem 1.1rem;
+    padding: 0.35rem 0.75rem;
+    background: var(--atlas-panel);
+    border-bottom: 1px solid var(--atlas-rule);
   }
 
-  .path-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-  .toolbar button,
-  .path-tabs button {
-    padding: 0.5rem 0.85rem;
-    font: 16px/1.2 ui-sans-serif, system-ui, sans-serif;
-    text-transform: none;
-  }
-  .toolbar__spacer { flex: 1 1 1rem; }
-
-  button.active {
-    border-color: var(--gold-bright);
-    color: #ffe39b;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold-tarnished) 45%, transparent);
-  }
-
-  .path-summary {
+  h1 {
     margin: 0;
-    padding: 0.6rem 0.9rem;
-    color: #e4d7b6;
-    background: rgba(195, 154, 74, 0.08);
-    border-bottom: 1px solid #2c2416;
+    color: var(--atlas-ink);
+    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+  h1 span {
+    color: var(--atlas-ink-soft);
+    font-weight: 400;
   }
 
-  .boundary-strip {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    border-bottom: var(--rule-hair);
-    background: #0b0907;
+  .telemetry__figures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    margin: 0;
   }
-  .boundary-strip span {
+  .telemetry__figures div {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+  }
+  .telemetry__figures dt {
+    color: var(--atlas-ink-soft);
+    font: 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .telemetry__figures dd {
+    margin: 0;
+    color: var(--atlas-ink);
+    font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .telemetry__paths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    margin-left: auto;
+    background: var(--atlas-rule);
+    border: 1px solid var(--atlas-rule);
+  }
+
+  /* --- three column body ------------------------------------------------- */
+
+  .atlas__body {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr) 324px;
+    min-height: 0;
+  }
+
+  /*
+   * The trace controls sit above the index rather than inside it, so they stay
+   * reachable when the index collapses to a summary on a narrow screen.
+   */
+  .rail {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    background: var(--atlas-panel);
+    border-right: 1px solid var(--atlas-rule);
+  }
+
+  /* The summary is hidden on desktop, so the index is a single filling row. */
+  .index {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .index__scroll {
+    min-height: 0;
+    padding-bottom: 1.2rem;
+    overflow-y: auto;
+  }
+
+  .trace {
+    padding: 0.5rem 0.55rem;
+    background: var(--atlas-panel);
+    border-bottom: 1px solid var(--atlas-rule);
+  }
+  .trace__where {
+    margin: 0 0 0.35rem;
+    color: var(--atlas-ink);
+    font: 600 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .trace__buttons {
+    display: flex;
+    gap: 1px;
+    background: var(--atlas-rule);
+    border: 1px solid var(--atlas-rule);
+  }
+  .trace__next {
+    flex: 1 1 auto;
+  }
+
+  .group {
+    padding-top: 0.55rem;
+  }
+  .group h2 {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    margin: 0 0 0.25rem;
+    padding: 0 0.55rem 0.2rem;
+    border-bottom: 1px solid var(--atlas-rule);
+    color: var(--atlas-ink);
+    font: 600 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .group h2 b {
+    padding: 0 0.2rem;
+    color: var(--atlas-panel);
+    background: var(--atlas-ink);
+  }
+  .group h2 em {
+    flex: 1 1 auto;
     min-width: 0;
-    padding: 0.55rem 0.65rem;
-    border-top: 4px solid var(--boundary);
-    border-right: 1px solid #2a2116;
-  }
-  .boundary-strip span:last-child { border-right: 0; }
-  .boundary-strip strong,
-  .boundary-strip small { display: block; }
-  .boundary-strip strong {
-    color: color-mix(in srgb, var(--boundary) 48%, #f1e8d1);
-    font: 700 15px/1.2 ui-sans-serif, system-ui, sans-serif;
-  }
-  .boundary-strip small {
-    margin-top: 0.15rem;
-    color: #bfb293;
-    font: 13px/1.25 ui-sans-serif, system-ui, sans-serif;
+    overflow: hidden;
+    color: var(--atlas-ink-soft);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .step-rail {
+  .row {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    margin: 0;
-    padding: 0.7rem;
-    list-style: none;
-    border-bottom: var(--rule-hair);
-  }
-
-  .step-rail button {
-    display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    padding: 0.45rem 0.7rem;
-    font: 16px/1.2 ui-sans-serif, system-ui, sans-serif;
-    text-transform: none;
-  }
-
-  .step-rail button.current { background: rgba(167, 118, 34, 0.24); }
-  .step-rail__number {
-    display: grid;
-    place-items: center;
-    min-width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 50%;
-    border: 1px solid var(--gold-tarnished);
-    color: var(--gold-bright);
-  }
-  .step-rail code { font-size: 0.95rem; color: #f0d485; }
-
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 1.1rem;
-    padding: 0.7rem 0.9rem;
-    color: #d8cdb2;
-  }
-  .legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
-  .legend i {
-    width: 0.85rem;
-    height: 0.85rem;
-    background: var(--swatch, transparent);
-    border: 1px solid rgba(0, 0, 0, 0.6);
-  }
-  .legend__route {
-    width: 1.4rem !important;
-    height: 0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    border-top: 3px solid #efbd4b !important;
-  }
-
-  .node-index { margin: 0; padding: 0.65rem 0.9rem 0.85rem; border-top: var(--rule-hair); }
-  .node-index summary { cursor: pointer; color: #e0cfaa; font: 600 16px/1.3 ui-sans-serif, system-ui, sans-serif; }
-  .node-index > div { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.65rem; }
-  .node-index button {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    padding: 0.45rem 0.6rem;
-    font: 600 15px/1.15 ui-sans-serif, system-ui, sans-serif;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.28rem 0.55rem;
+    color: var(--atlas-ink-body);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    text-shadow: none;
+    font: 12.5px/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0;
     text-align: left;
     text-transform: none;
+    cursor: pointer;
   }
-  .node-index small { color: #baa982; font-size: 0.78rem; font-weight: 400; }
-
-  .explainer { min-width: 0; font-size: 1.05rem; }
-  .explainer__path { font-size: 0.9rem; letter-spacing: 0.08em; text-transform: uppercase; }
-  .explainer__role { margin-top: -0.4rem; color: #7a5b23; font-size: 0.95rem; }
-  .explainer h2 { margin-top: 0.1rem; }
-  .explainer dl div { margin-bottom: 0.5rem; }
-  .explainer dt { font-weight: 700; }
-  .explainer dd { margin: 0; }
-  .citations a {
-    color: #4a3216;
-    font: 700 0.95rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    overflow-wrap: anywhere;
+  /* The app's cast-iron button skin has no place on a paper sheet. */
+  .row::before {
+    display: none;
   }
-  .citations a:hover { color: #762d20; }
-  .explainer code { font-size: 0.95rem; }
+  .row:hover {
+    color: var(--atlas-ink);
+    background: color-mix(in srgb, var(--atlas-ink) 8%, transparent);
+    filter: none;
+  }
+  .row__code {
+    flex: 0 0 auto;
+    min-width: 1.55rem;
+    padding: 0 0.2rem;
+    border: 1px solid var(--atlas-rule);
+    font: 600 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.05em;
+    text-align: center;
+  }
+  .row__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row__stop {
+    flex: 0 0 auto;
+    min-width: 1.1rem;
+    color: var(--atlas-ink-soft);
+    font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-align: right;
+  }
+  .row.active {
+    color: var(--atlas-panel);
+    background: var(--atlas-ink);
+  }
+  .row.active .row__code {
+    border-color: var(--atlas-panel);
+  }
+  .row.active .row__stop {
+    color: var(--atlas-panel);
+  }
+  .row--current .row__stop {
+    color: var(--atlas-ink);
+    background: var(--atlas-highlight);
+  }
 
-  a:focus-visible,
+  /* --- plan column ------------------------------------------------------- */
+
+  .plan {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .hop {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0.35rem 0.7rem;
+    background: var(--atlas-panel);
+    border-top: 1px solid var(--atlas-rule);
+    color: var(--atlas-ink);
+    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif;
+  }
+  .hop code {
+    min-width: 0;
+    padding: 0 0.2rem;
+    background: var(--atlas-highlight);
+    font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hop__count {
+    padding: 0 0.22rem;
+    color: var(--atlas-panel);
+    background: var(--atlas-ink);
+    font: 600 10.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .hop__summary {
+    color: var(--atlas-ink-body);
+    font-weight: 400;
+  }
+
+  .hints {
+    margin: 0;
+    padding: 0.3rem 0.7rem;
+    background: var(--atlas-panel);
+    border-top: 1px solid var(--atlas-rule);
+    color: var(--atlas-ink-soft);
+    font: 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.05em;
+  }
+
+  /* --- reading panel wrapper --------------------------------------------- */
+
+  .reader-wrap {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* --- controls ---------------------------------------------------------- */
+
+  .telemetry__paths button,
+  .trace__buttons button {
+    padding: 0.3rem 0.55rem;
+    color: var(--atlas-ink);
+    background: var(--atlas-panel);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    text-shadow: none;
+    font: 600 11.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .telemetry__paths button::before,
+  .trace__buttons button::before {
+    display: none;
+  }
+  .telemetry__paths button:hover:not(:disabled),
+  .trace__buttons button:hover:not(:disabled) {
+    color: var(--atlas-paper);
+    background: var(--atlas-ink);
+    filter: none;
+  }
+  .telemetry__paths button:disabled,
+  .trace__buttons button:disabled {
+    color: var(--atlas-ink-soft);
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .telemetry__paths button.active {
+    color: var(--atlas-paper);
+    background: var(--atlas-ink);
+  }
+
   button:focus-visible,
   summary:focus-visible {
-    outline: 3px solid var(--gold-bright);
-    outline-offset: 2px;
+    outline: 2px solid var(--atlas-ink);
+    outline-offset: -2px;
   }
 
-  @media (max-width: 900px) {
-    .atlas__layout { grid-template-columns: minmax(0, 1fr); }
-    .atlas__header { flex-direction: column; align-items: start; gap: 0.4rem; }
-    .stamp { text-align: left; }
+  summary {
+    display: none;
   }
 
-  @media (max-width: 560px) {
-    .toolbar__spacer { display: none; }
-    .toolbar > button { flex: 1 1 auto; }
-    .step-rail { display: grid; }
-    .step-rail button { width: 100%; }
-    .node-index > div { display: grid; grid-template-columns: minmax(0, 1fr); }
-    .boundary-strip {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 1180px) {
+    .atlas__body {
+      grid-template-columns: 204px minmax(0, 1fr) 290px;
     }
-    .boundary-strip span:last-child { grid-column: 1 / -1; }
+  }
+
+  /*
+   * Below 860px the three columns stack. The plan keeps a usable share of the
+   * screen and the two rails become collapsible regions, so the sheet keeps
+   * its identity instead of turning into a list.
+   */
+  @media (max-width: 860px) {
+    .atlas {
+      height: auto;
+      min-height: 100dvh;
+    }
+    .atlas__body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .telemetry {
+      gap: 0.35rem 0.8rem;
+    }
+    .telemetry__paths {
+      margin-left: 0;
+    }
+    .rail,
+    .index,
+    .reader-wrap {
+      display: block;
+      border-right: 0;
+    }
+    .rail,
+    .reader-wrap {
+      border-bottom: 1px solid var(--atlas-rule);
+    }
+    .plan {
+      height: 54vh;
+    }
+    .index__scroll {
+      overflow-y: visible;
+    }
+    summary {
+      display: list-item;
+      padding: 0.5rem 0.7rem;
+      background: var(--atlas-panel);
+      border-top: 1px solid var(--atlas-rule);
+      color: var(--atlas-ink);
+      font: 600 11px/1.5 ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
   }
 </style>
