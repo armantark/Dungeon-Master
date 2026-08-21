@@ -2,6 +2,24 @@
 
 This file tracks the user's preparation for a principal-engineer technical panel. Run one question at a time. Ask the user to explain first, then correct gaps, show the stronger answer, and record the result before continuing.
 
+## Restarted sequence: 2026-08-21
+
+- [ ] Explain the product constraint and defend the central architectural thesis.
+- [ ] Trace one ordinary turn through the current runtime.
+- [ ] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
+- [ ] Explain continuity, persistence, checkpoints, derived memory, and recovery.
+- [ ] Defend full-state client synchronization and the local Tauri sidecar.
+- [ ] Identify scaling boundaries, architectural debt, and evidence-driven migrations.
+- [ ] Complete adversarial principal-engineer panel drills.
+
+### Restarted running record
+
+| Question | Result | Gaps to revisit |
+| --- | --- | --- |
+| 1. Why not one giant dungeon-master model call? (2026-08-21) | Strong partial: clearly connected the solo-play product need to finite context, long-campaign hallucination/forgetting, persistent external state, orchestration, and separation of concerns. | Runtime campaign authority is canonical JSON state plus events/checkpoints, not Markdown. Describe model calls as specialized structured workers and a prose narrator rather than generic autonomous agents. State the sharp boundary: models interpret and narrate; deterministic Python resolves mechanics; only the backend commits canon. |
+
+## Archived pre-restart sequence
+
 ## Phase 1: Current mental model
 
 - [x] Trace one natural-language turn from the composer to durable storage.
