@@ -136,6 +136,9 @@ deliberately deferred for later.
     idempotent commands, conflict policy, authentication, and shared durable
     storage, but does not by itself prove that the local runtime should adopt
     PostgreSQL today.
+  - The current app has no account, campaign-membership, or authorization model.
+    Before shared saves, define identity, ownership, player/GM roles, and tenant
+    isolation; changing databases does not create those application boundaries.
   - Treat SQLite as the proportionate embedded correctness boundary. Reassess a
     server database when hosted multi-user ownership and concurrent writers are
     real requirements, rather than assuming the embedded database is the final

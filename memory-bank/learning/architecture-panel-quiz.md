@@ -28,6 +28,8 @@ This file tracks the user's preparation for a principal-engineer technical panel
   workers.
 - [ ] Separate improvements required for one local solo campaign from those
   required for multi-user, cloud-hosted, or very long-running campaigns.
+- [ ] For multiplayer, define authentication, authorization, campaign ownership,
+  membership roles, and tenant isolation separately from the storage engine.
 - [ ] Propose migrations with baselines, success metrics, rollback plans, and
   the smallest reversible intermediate step.
 
@@ -59,6 +61,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 4E-2. SQLite versus PostgreSQL (2026-08-21) | Strong partial: correctly argued that PostgreSQL adds a server, connection management, and unnecessary operations for the current single-player local app. | Supply the first half explicitly: SQLite buys local atomic transactions without a database service. Docker is an analogous unnecessary deployment layer today, but not the same category: containers package processes; PostgreSQL is the storage service whose operation would need packaging. Add relational-versus-NoSQL selection to the later scaling drill. |
 | 4E-3. SQLite/PostgreSQL completion (2026-08-21) | Partial: correctly identified SQLite's no-hosted-service advantage and connected PostgreSQL to remote multiplayer, but named easy provisioning as the primary gain and used generic `scaling` as the trigger. | Primary gain: ACID/atomic turn commits and crash consistency without an external database service. PostgreSQL trigger: hosted shared authority with multiple concurrent writers or explicit operational needs such as pooled connections, managed backups, replication, and failover. Remote hosting alone does not require PostgreSQL if one application process still serializes all writes. |
 | 4E-4. Database boundary final defense (2026-08-21) | Passed: explicitly compared SQLite with the current multi-file JSON design, tied migration to atomic turn commits/crash consistency, and deferred PostgreSQL until concurrent writers or production operations justify a service. | The prior fill-in prompt was ambiguous about the JSON comparison. Multi-device sync is a concrete concurrency source, but name revisions, idempotency, and conflict policy as the architectural requirements; Convex is one possible product choice rather than the requirement itself. Question 4 is mastered. |
+| 5A. Relational versus NoSQL, first answer (2026-08-21) | Strong partial: identified relational structure, foreign keys, and joins; also recognized that a document model could fit the nested campaign aggregate. Separately identified the missing account/auth/data-isolation boundary for multiplayer. | NoSQL is not inherently faster; performance depends on workload, indexes, consistency, and access patterns. Canonical state is typed by Pydantic, not amorphous. Relational strengths here are multi-record transactions, referential integrity, revision/conflict queries, and future account/campaign/membership relationships. The strongest document-store case is one campaign as one naturally nested aggregate with atomic whole-document turn replacement and flexible schema evolution. |
 
 ## Archived pre-restart sequence
 
