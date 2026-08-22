@@ -17,7 +17,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [ ] Defend staying on per-save JSON, then identify measured triggers for
   SQLite or PostgreSQL and the transaction/query/concurrency gains each would
   buy relative to its operational cost.
-- [ ] Compare relational storage with document, key-value, and event-store
+- [x] Compare relational storage with document, key-value, and event-store
   alternatives for canonical state, events, checkpoints, and derived memory;
   choose from workload and invariants rather than database fashion.
 - [ ] Defend the current structured memory retriever, then identify recall
@@ -63,6 +63,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 4E-4. Database boundary final defense (2026-08-21) | Passed: explicitly compared SQLite with the current multi-file JSON design, tied migration to atomic turn commits/crash consistency, and deferred PostgreSQL until concurrent writers or production operations justify a service. | The prior fill-in prompt was ambiguous about the JSON comparison. Multi-device sync is a concrete concurrency source, but name revisions, idempotency, and conflict policy as the architectural requirements; Convex is one possible product choice rather than the requirement itself. Question 4 is mastered. |
 | 5A. Relational versus NoSQL, first answer (2026-08-21) | Strong partial: identified relational structure, foreign keys, and joins; also recognized that a document model could fit the nested campaign aggregate. Separately identified the missing account/auth/data-isolation boundary for multiplayer. | NoSQL is not inherently faster; performance depends on workload, indexes, consistency, and access patterns. Canonical state is typed by Pydantic, not amorphous. Relational strengths here are multi-record transactions, referential integrity, revision/conflict queries, and future account/campaign/membership relationships. The strongest document-store case is one campaign as one naturally nested aggregate with atomic whole-document turn replacement and flexible schema evolution. |
 | 5A-1. Database-model refresher request (2026-08-21) | Partial: correctly modeled multiplayer membership as a many-to-many relationship suited to relational constraints and joins, but tied document-store suitability to reducing Pydantic so the model can be more emergent. | Separate three axes: model-output constraints govern what an LLM may propose; Pydantic governs application validation; the database model governs persistence, transactions, and access patterns. A document store is favored when one nested campaign aggregate is read/written together with few cross-document invariants, regardless of whether Pydantic validates it. |
+| 5A-2. Hybrid relational/JSON model (2026-08-21) | Passed: placed accounts, memberships, revisions, events, and checkpoints in normalized relational tables while retaining nested `GameState` as one JSON value. | `Hybrid` here means a relational schema with a JSON column in the same SQLite/PostgreSQL database, so normalized rows and the snapshot can commit atomically. It does not imply provisioning MongoDB; that would be polyglot persistence and would require a separate workload strong enough to justify cross-database consistency and operations. |
 
 ## Archived pre-restart sequence
 
