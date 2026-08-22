@@ -114,6 +114,38 @@ deliberately deferred for later.
 
 ## Icebox
 
+### H-09 Transactional Persistence Foundation
+- Status: `icebox`
+- Priority: `medium`
+- Goal: Replace the multi-file canonical turn commit with one atomic storage
+  transaction, while preserving recoverable save migration and export.
+- Why now could be justified:
+  - The current file order has a known crash window: a turn checkpoint and
+    `events.jsonl` can advance before `game_state.json` is replaced.
+  - Embedded SQLite could close that correctness gap without adding a database
+    service to the local browser/Tauri architecture.
+- Required migration proof:
+  - Inventory every canonical, audit, checkpoint, and derived-memory contract;
+    define which records must commit together and which can rebuild afterward.
+  - Import existing per-save JSON with dry-run validation, retain a recoverable
+    backup/export path, and prove semantic parity on real saves before cutover.
+  - Add crash-injection tests around the transaction boundary and verify that
+    startup observes either the complete old turn or the complete new turn.
+- Multiplayer direction:
+  - Future asynchronous multiplayer strengthens the need for revisions,
+    idempotent commands, conflict policy, authentication, and shared durable
+    storage, but does not by itself prove that the local runtime should adopt
+    PostgreSQL today.
+  - Treat SQLite as the proportionate embedded correctness boundary. Reassess a
+    server database when hosted multi-user ownership and concurrent writers are
+    real requirements, rather than assuming the embedded database is the final
+    multiplayer topology.
+- Constraint: LLM assistance lowers implementation effort but does not lower the
+  required bar for migration validation, rollback, schema evolution, or
+  packaged-desktop compatibility.
+- Revisit trigger: Before asynchronous multiplayer work, or when persistence
+  work resumes as an active reliability priority.
+
 ### H-08 Cancel-to-Edit and Roll Finality
 - Status: `icebox`
 - Priority: `medium`
