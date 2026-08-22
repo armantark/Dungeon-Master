@@ -17,6 +17,9 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [ ] Defend staying on per-save JSON, then identify measured triggers for
   SQLite or PostgreSQL and the transaction/query/concurrency gains each would
   buy relative to its operational cost.
+- [ ] Compare relational storage with document, key-value, and event-store
+  alternatives for canonical state, events, checkpoints, and derived memory;
+  choose from workload and invariants rather than database fashion.
 - [ ] Defend the current structured memory retriever, then identify recall
   evidence that would justify vector or hybrid retrieval without making search
   results canonical.
@@ -53,6 +56,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 4D-2. Checkpoint regeneration final restatement (2026-08-21) | Passed: stated that narration is rewritten while the original input and mechanical outcome are not rerolled. | Panel phrasing: restore the mechanics-resolved pre-narration checkpoint, regenerate prose, rerun narration-dependent reconciliation, and recommit without replanning or rerolling the turn. |
 | 4E. Multi-file crash consistency (2026-08-21) | Strong partial: correctly identified that a crash between event/checkpoint writes and canonical-state replacement can leave the files disagreeing, and proposed collapsing persistence into one write boundary. | Use the term `atomic transaction`, not `one record`: state, events, and checkpoints can remain separate logical records while committing all-or-nothing. SQLite is the proportionate local migration; PostgreSQL is justified only by remote multi-process concurrency or operational requirements. A transaction journal plus commit marker is the file-based alternative. |
 | 4E-1. Whether to migrate now (2026-08-21) | Defensible with one panel-language correction: chose migration because the known multi-file crash window is a present correctness issue and future asynchronous multiplayer increases the value of transactional persistence. | Do not argue that LLMs trivialize a data migration. They reduce coding effort but not data inventory, compatibility, cutover, rollback, crash testing, schema evolution, or packaged-runtime risk. Keep two decisions separate: embedded SQLite can fix local atomicity now; hosted multiplayer may later justify PostgreSQL plus revisions, idempotency, authentication, and conflict policy. |
+| 4E-2. SQLite versus PostgreSQL (2026-08-21) | Strong partial: correctly argued that PostgreSQL adds a server, connection management, and unnecessary operations for the current single-player local app. | Supply the first half explicitly: SQLite buys local atomic transactions without a database service. Docker is an analogous unnecessary deployment layer today, but not the same category: containers package processes; PostgreSQL is the storage service whose operation would need packaging. Add relational-versus-NoSQL selection to the later scaling drill. |
 
 ## Archived pre-restart sequence
 
