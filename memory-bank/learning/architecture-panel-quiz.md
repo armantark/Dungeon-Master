@@ -6,7 +6,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 
 - [x] Explain the product constraint and defend the central architectural thesis.
 - [x] Trace one ordinary turn through the current runtime.
-- [ ] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
+- [x] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
 - [ ] Explain continuity, persistence, checkpoints, derived memory, and recovery.
 - [ ] Defend full-state client synchronization and the local Tauri sidecar.
 - [ ] Identify scaling boundaries, architectural debt, and evidence-driven migrations.
@@ -28,6 +28,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 2E-1. Canonical versus derived persistence (2026-08-21) | Passed: correctly identified `game_state.json` as campaign canon and `memory.json` as disposable, rebuildable derived context. | Remember that event history and checkpoints also support reconstruction/recovery even though `game_state.json` is the authoritative current snapshot. |
 | 2F. Commit to client mirror (2026-08-21) | Passed: correctly explained that the frontend stores the returned snapshot in memory and Svelte runes update affected elements without rebuilding the complete DOM. | The exact operation is `this.state = event.state` on a `$state` field; keyed message rendering lets Svelte retain existing DOM nodes by stable message id. Question 2 is mastered across all six seams. |
 | 3A. Semantic interpretation versus mechanical authority (2026-08-21) | Partial: correctly inferred that the coercion scenario calls for a mental-stat save, while noting that the exact Cairn stat felt like mechanics trivia rather than architecture. | Cairn has no INT stat; concrete coercion/exposure maps to `WIL`. More importantly, `TurnRouter` proposes the typed `save`/ability based on meaning, while `CairnEngine` performs the roll and resolves it. Use `proposes`, not `runs`, for router ownership. |
+| 3A-1. Planner versus mechanics restatement (2026-08-21) | Passed: reduced the seam to action versus roll. | Panel phrasing: `TurnRouter` proposes the typed action based on meaning; `CairnEngine` determines the mechanical outcome through canonical rules and randomness. Together with Questions 2B-2E, this completes the interpretation/mechanics/prose/commit objective. |
 
 ## Archived pre-restart sequence
 
