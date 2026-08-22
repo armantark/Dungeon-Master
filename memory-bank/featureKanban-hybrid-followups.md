@@ -114,6 +114,15 @@ deliberately deferred for later.
 
 ## Icebox
 
+### H-06 Human-DM Open-Endedness Pass
+- Status: `icebox`
+- Priority: `low`
+- Goal: Run a focused pass that makes play more open-ended and emergent like a
+  human DM without giving model output direct authority over campaign state.
+- Constraint: Preserve the typed commit boundary; explore broader proposals and
+  novel compositions rather than arbitrary model-authored mutations.
+- Revisit trigger: Only when the user explicitly returns to this design goal.
+
 ### H-05 Capability-Specialized Model Evaluation
 - Status: `icebox`
 - Priority: `low`

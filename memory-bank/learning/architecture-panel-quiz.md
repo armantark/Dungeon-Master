@@ -70,3 +70,4 @@ This file tracks the user's preparation for a principal-engineer technical panel
 
 - 2026-08-20: The user paused the quiz because the repeated architecture-map failures were aggravating. Do not resume, grade, or ask another architecture question until the user explicitly asks to continue.
 - 2026-08-21: The restarted quiz is paused after Question 2's first restatement. On resumption, split the turn trace into one boundary per prompt; do not ask for owner, payload, and authority classification across the entire pipeline at once.
+- 2026-08-21: The user explicitly resumed the quiz after recording H-06. Continue Question 2 one seam at a time, beginning with `Input -> Plan`.
