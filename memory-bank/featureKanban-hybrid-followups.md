@@ -121,6 +121,9 @@ deliberately deferred for later.
   human DM without giving model output direct authority over campaign state.
 - Constraint: Preserve the typed commit boundary; explore broader proposals and
   novel compositions rather than arbitrary model-authored mutations.
+- Companion audit: Apply the deletion test to planner, reviewer, updater, and
+  operation seams before adding capability; remove complexity that is not
+  earning mechanical depth, reliability, or player-visible emergence.
 - Revisit trigger: Only when the user explicitly returns to this design goal.
 
 ### H-05 Capability-Specialized Model Evaluation
