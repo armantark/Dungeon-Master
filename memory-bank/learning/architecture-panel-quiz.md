@@ -7,7 +7,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [x] Explain the product constraint and defend the central architectural thesis.
 - [x] Trace one ordinary turn through the current runtime.
 - [x] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
-- [ ] Explain continuity, persistence, checkpoints, derived memory, and recovery.
+- [x] Explain continuity, persistence, checkpoints, derived memory, and recovery.
 - [ ] Defend full-state client synchronization and the local Tauri sidecar.
 - [ ] Identify scaling boundaries, architectural debt, and evidence-driven migrations.
 - [ ] Complete adversarial principal-engineer panel drills.
@@ -58,6 +58,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 4E-1. Whether to migrate now (2026-08-21) | Defensible with one panel-language correction: chose migration because the known multi-file crash window is a present correctness issue and future asynchronous multiplayer increases the value of transactional persistence. | Do not argue that LLMs trivialize a data migration. They reduce coding effort but not data inventory, compatibility, cutover, rollback, crash testing, schema evolution, or packaged-runtime risk. Keep two decisions separate: embedded SQLite can fix local atomicity now; hosted multiplayer may later justify PostgreSQL plus revisions, idempotency, authentication, and conflict policy. |
 | 4E-2. SQLite versus PostgreSQL (2026-08-21) | Strong partial: correctly argued that PostgreSQL adds a server, connection management, and unnecessary operations for the current single-player local app. | Supply the first half explicitly: SQLite buys local atomic transactions without a database service. Docker is an analogous unnecessary deployment layer today, but not the same category: containers package processes; PostgreSQL is the storage service whose operation would need packaging. Add relational-versus-NoSQL selection to the later scaling drill. |
 | 4E-3. SQLite/PostgreSQL completion (2026-08-21) | Partial: correctly identified SQLite's no-hosted-service advantage and connected PostgreSQL to remote multiplayer, but named easy provisioning as the primary gain and used generic `scaling` as the trigger. | Primary gain: ACID/atomic turn commits and crash consistency without an external database service. PostgreSQL trigger: hosted shared authority with multiple concurrent writers or explicit operational needs such as pooled connections, managed backups, replication, and failover. Remote hosting alone does not require PostgreSQL if one application process still serializes all writes. |
+| 4E-4. Database boundary final defense (2026-08-21) | Passed: explicitly compared SQLite with the current multi-file JSON design, tied migration to atomic turn commits/crash consistency, and deferred PostgreSQL until concurrent writers or production operations justify a service. | The prior fill-in prompt was ambiguous about the JSON comparison. Multi-device sync is a concrete concurrency source, but name revisions, idempotency, and conflict policy as the architectural requirements; Convex is one possible product choice rather than the requirement itself. Question 4 is mastered. |
 
 ## Archived pre-restart sequence
 
