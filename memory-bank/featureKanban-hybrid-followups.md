@@ -184,16 +184,27 @@ deliberately deferred for later.
   - `memory.json` already provides narrow structured retrieval over scene,
     thread, NPC, location, fact, open-loop, and callback records without an
     embedding index.
+  - Point-in-time local baseline on 2026-08-21: the ignored `data/` corpus was
+    59 MB across 455 files, and one case-insensitive `rg` scan for three campaign
+    terms completed in 0.03 seconds. Local text search is not the likely latency
+    bottleneck; repeated model/search round trips are.
   - LiteLLM calls currently declare no explicit prompt-cache controls, and
     application telemetry records total prompt/completion tokens but not cache
     reads, so provider-side cache effectiveness is unproven.
 - Evaluation:
   - Build a fixed long-campaign recall set and measure misses from the current
     structured retriever before testing vector or hybrid retrieval.
+  - Compare four attributable candidates: current typed retrieval, one-pass
+    lexical/SQLite FTS search, a read-only agentic search capped at two query
+    rounds, and vector/hybrid retrieval.
+  - For the agentic candidate, persist query/result/citation traces and enforce
+    hard model-call, token, and latency budgets with a stop condition after the
+    first sufficient evidence set.
   - Add per-route cache-read, cost, and latency telemetry before rearranging
     prompts or opting into provider-specific cache controls.
-  - Adopt vector retrieval only for demonstrated recall gaps; it remains a
-    non-canonical recall aid and must never override typed campaign state.
+  - Keep typed memory as the default, use deeper search only for demonstrated
+    recall gaps, and keep every retrieved result non-canonical regardless of
+    whether it came from lexical, agentic, vector, or hybrid retrieval.
 - Revisit trigger: Sustained long-campaign recall failures or measured model
   spend/latency high enough for caching work to matter.
 
