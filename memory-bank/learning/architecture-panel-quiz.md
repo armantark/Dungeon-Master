@@ -12,6 +12,22 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [ ] Identify scaling boundaries, architectural debt, and evidence-driven migrations.
 - [ ] Complete adversarial principal-engineer panel drills.
 
+### Required hypothetical scaling drills
+
+- [ ] Defend staying on per-save JSON, then identify measured triggers for
+  SQLite or PostgreSQL and the transaction/query/concurrency gains each would
+  buy relative to its operational cost.
+- [ ] Defend the current structured memory retriever, then identify recall
+  evidence that would justify vector or hybrid retrieval without making search
+  results canonical.
+- [ ] Identify thresholds for replacing full-state client snapshots with
+  revisioned deltas, and for moving in-process model work onto durable queues or
+  workers.
+- [ ] Separate improvements required for one local solo campaign from those
+  required for multi-user, cloud-hosted, or very long-running campaigns.
+- [ ] Propose migrations with baselines, success metrics, rollback plans, and
+  the smallest reversible intermediate step.
+
 ### Restarted running record
 
 | Question | Result | Gaps to revisit |
@@ -32,6 +48,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 4A. Derived-memory recovery (2026-08-21) | Passed: correctly chose rebuilding an absent or invalid `memory.json` instead of stopping play or trusting stale derived data. | `memory.json` is best described as a rebuildable derived read model or materialized view for bounded LLM context, not campaign canon. The current rebuild uses `GameState.oracle_history` and `GameState.action_log`, enriched by exact player input and execution context from turn checkpoints. |
 | 4B. Why bound model context (2026-08-21) | Passed: identified both direct inference cost and context rot from sending the complete campaign to every worker. | Add latency, irrelevant-context interference, and separation of concerns. The existing memory layer is already a narrow structured retrieval-augmented pattern without embeddings; vector RAG is not justified until campaign scale or recall measurements show a retrieval problem. Prompt caching can reduce repeated-prefix cost but cannot reduce context rot, and this app currently neither configures explicit cache controls nor records cache-read telemetry. |
 | 4C. Cancellation transaction boundary (2026-08-21) | Passed: correctly identified cancellation as aborting the complete in-flight turn and raised the unresolved roll-finality question. | Current behavior is discard-only: partial prose, state mutations, queued events, checkpoints, memory updates, and resolved rolls remain uncommitted. Resubmission rerolls, so save scumming is possible; the frontend also clears rather than restores the submitted Composer text. Preserving a revealed roll while editing the action is a separate transaction-design problem because the edited action may require different mechanics. |
+| 4D. Turn-checkpoint purpose, first answer (2026-08-21) | Not yet: attributed accepting the next player response or command to the turn checkpoint. | Accepting the next turn comes from loading canonical current `GameState`. The turn checkpoint instead captures the mechanics-resolved, pre-narration boundary plus the original input and execution context. Regeneration restores it so prose and downstream reconciliation can be replaced without rerunning the original plan or dice. |
 
 ## Archived pre-restart sequence
 
