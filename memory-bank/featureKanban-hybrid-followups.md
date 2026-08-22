@@ -114,6 +114,54 @@ deliberately deferred for later.
 
 ## Icebox
 
+### H-08 Cancel-to-Edit and Roll Finality
+- Status: `icebox`
+- Priority: `medium`
+- Goal: Let the player stop an in-flight turn and recover the submitted text for
+  editing, with an explicit policy for rolls that were already revealed.
+- Current behavior:
+  - Backend cancellation is atomic and discard-only. Partial prose, queued
+    events, the working state, turn checkpoint, memory update, and any resolved
+    roll are not committed.
+  - Resubmitting the action creates a new plan and roll, so repeated cancellation
+    can be used for save scumming.
+  - The frontend clears the Composer after a user cancellation instead of
+    restoring the submitted text as an editable draft.
+- Design decision required:
+  - Before mechanics resolve, cancellation can safely restore the editable
+    draft because no outcome has been shown.
+  - After mechanics resolve, unrestricted action editing conflicts with roll
+    finality: the roll belongs to the resolved action and may not even use the
+    same mechanic after an edit. Decide whether Stop continues to discard the
+    attempt, locks the revealed mechanics and only stops/regenerates prose, or
+    records abandoned attempts as part of an anti-save-scumming policy.
+- Constraint: Do not partially commit a roll without a recoverable transaction
+  design; canonical state, event history, checkpoints, and memory must remain
+  mutually consistent.
+- Revisit trigger: Before the next active-play UX pass.
+
+### H-07 Evidence-Gated Retrieval and Prompt-Cache Audit
+- Status: `icebox`
+- Priority: `low`
+- Goal: Measure whether vector retrieval or deliberate prompt caching would
+  improve long-campaign recall, latency, or cost before adding either system.
+- Current baseline:
+  - `memory.json` already provides narrow structured retrieval over scene,
+    thread, NPC, location, fact, open-loop, and callback records without an
+    embedding index.
+  - LiteLLM calls currently declare no explicit prompt-cache controls, and
+    application telemetry records total prompt/completion tokens but not cache
+    reads, so provider-side cache effectiveness is unproven.
+- Evaluation:
+  - Build a fixed long-campaign recall set and measure misses from the current
+    structured retriever before testing vector or hybrid retrieval.
+  - Add per-route cache-read, cost, and latency telemetry before rearranging
+    prompts or opting into provider-specific cache controls.
+  - Adopt vector retrieval only for demonstrated recall gaps; it remains a
+    non-canonical recall aid and must never override typed campaign state.
+- Revisit trigger: Sustained long-campaign recall failures or measured model
+  spend/latency high enough for caching work to matter.
+
 ### H-06 Human-DM Open-Endedness Pass
 - Status: `icebox`
 - Priority: `low`
