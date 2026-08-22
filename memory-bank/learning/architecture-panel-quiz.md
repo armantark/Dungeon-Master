@@ -20,7 +20,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [x] Compare relational storage with document, key-value, and event-store
   alternatives for canonical state, events, checkpoints, and derived memory;
   choose from workload and invariants rather than database fashion.
-- [ ] Defend the current structured memory retriever, then identify recall
+- [x] Defend the current structured memory retriever, then identify recall
   evidence that would justify vector or hybrid retrieval without making search
   results canonical.
 - [ ] Identify thresholds for replacing full-state client snapshots with
@@ -65,6 +65,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 5A-1. Database-model refresher request (2026-08-21) | Partial: correctly modeled multiplayer membership as a many-to-many relationship suited to relational constraints and joins, but tied document-store suitability to reducing Pydantic so the model can be more emergent. | Separate three axes: model-output constraints govern what an LLM may propose; Pydantic governs application validation; the database model governs persistence, transactions, and access patterns. A document store is favored when one nested campaign aggregate is read/written together with few cross-document invariants, regardless of whether Pydantic validates it. |
 | 5A-2. Hybrid relational/JSON model (2026-08-21) | Passed: placed accounts, memberships, revisions, events, and checkpoints in normalized relational tables while retaining nested `GameState` as one JSON value. | `Hybrid` here means a relational schema with a JSON column in the same SQLite/PostgreSQL database, so normalized rows and the snapshot can commit atomically. It does not imply provisioning MongoDB; that would be polyglot persistence and would require a separate workload strong enough to justify cross-database consistency and operations. |
 | 5B. Vector RAG versus agentic grep (2026-08-21) | Strong architecture instinct: challenged an embedding/vector subsystem as likely overengineering and proposed model-directed lexical search while immediately identifying its possible latency cost. | Agentic grep is still retrieval-augmented generation; it changes the retrieval policy from fixed similarity search to multi-step model-directed search. In this repo local grep is cheap, while repeated model decisions dominate latency. Evaluate a ladder of typed retrieval, one-pass lexical/FTS, bounded agentic search, and vectors against recall plus p50/p95 latency, tokens, and model-call count. |
+| 5B-1. Retrieval routing by turn type (2026-08-21) | Passed: kept ordinary turns on the existing bounded memory path and reserved the deeper retrieval ladder for explicit old-history recall. | State the authority precisely: ordinary turns use canonical `GameState` plus the derived `memory.json` view. Deep recall escalates from structured links to one-pass lexical/FTS, then bounded agentic search, with vectors only after measured semantic misses; every retrieved item remains supporting context rather than canon. |
 
 ## Archived pre-restart sequence
 
