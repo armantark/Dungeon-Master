@@ -8,7 +8,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [x] Trace one ordinary turn through the current runtime.
 - [x] Separate semantic interpretation, deterministic authority, prose generation, and canonical commit.
 - [x] Explain continuity, persistence, checkpoints, derived memory, and recovery.
-- [ ] Defend full-state client synchronization and the local Tauri sidecar.
+- [x] Defend full-state client synchronization and the local Tauri sidecar.
 - [ ] Identify scaling boundaries, architectural debt, and evidence-driven migrations.
 - [ ] Complete adversarial principal-engineer panel drills.
 
@@ -74,6 +74,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 5D. Local Tauri sidecar, first defense (2026-08-22) | Strong partial: correctly started from the intended product experience, contrasting a double-click local game with an account-backed web URL. | Connect that choice to system consequences. Local execution supports offline-first play, keeps campaign data on the device, and avoids hosting, accounts, and remote-service operations. Its costs include packaging and supervising Python across desktop platforms, local resource use, updates, and a harder path to cross-device or multiplayer authority. |
 | 5D-1. Hosted-authority trigger (2026-08-22) | Correct with a product qualifier: identified cheat prevention as a reason to move authoritative mechanics and state to a server. | Anti-cheat is not valuable in the current solo product because the player owns both the client and the experience. It becomes an architectural requirement for competitive or shared multiplayer outcomes where participants do not mutually trust their devices; then rolls, validation, authorization, and canonical commit must occur behind the server trust boundary. |
 | 5D-2. Cross-device solo play (2026-08-22) | Passed the main distinction: hosting game execution would simplify synchronization but is not required; local sidecars could exchange state through a direct tunnel. | Separate compute placement from state synchronization. A direct tunnel requires one device to be reachable and online and introduces NAT, discovery, security, and availability work. A narrower hosted sync store can replicate versioned saves while mechanics remain local. The hard boundary is concurrent offline writes, which requires revision and conflict policy regardless of transport. |
+| 5D-3. Divergent cloud-save conflict (2026-08-22) | Passed: recognized the same divergent-save problem handled by Steam Cloud and chose explicit user selection rather than silent overwrite. | Preserve both versions with revision, device, and timestamp metadata before asking. Automatically fast-forward only when one version descends from the other. Divergent narrated turns represent alternative causal campaign histories, so field-level merging is unsafe; the unselected version can be retained as a recoverable branch. Question 5D and the full-state/local-sidecar objective are mastered. |
 
 ## Archived pre-restart sequence
 
