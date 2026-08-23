@@ -23,7 +23,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 - [x] Defend the current structured memory retriever, then identify recall
   evidence that would justify vector or hybrid retrieval without making search
   results canonical.
-- [ ] Identify thresholds for replacing full-state client snapshots with
+- [x] Identify thresholds for replacing full-state client snapshots with
   revisioned deltas, and for moving in-process model work onto durable queues or
   workers.
 - [ ] Separate improvements required for one local solo campaign from those
@@ -82,6 +82,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 5F-1. Low-concurrency control scenario (2026-08-22) | Passed: declined to treat 100 accounts as sufficient reason for a queue when only two short turns run concurrently and restart durability is unnecessary. | Panel phrasing: preserve the in-process path until measurements show saturation, unacceptable tail latency, or lost-work requirements. A queue is a reliability and workload-control boundary, not an automatic consequence of user count. |
 | 5F-2. Redelivery and idempotency, first answer (2026-08-22) | Strong instinct after clarifying that `worker` meant a hypothetical queue consumer running the Python orchestration: expected queued requests to carry an ID and asked whether processed IDs live in a cache. | Queues commonly provide message IDs, but delivery is generally at least once and broker identity alone does not prove the campaign turn committed. Assign an application `turn_id` or idempotency key and store it durably with the canonical commit under a unique constraint. On redelivery, return the recorded result instead of rerolling. An ordinary in-memory cache can disappear or disagree with canonical storage. |
 | 5F-3. Idempotency definition (2026-08-22) | Teaching checkpoint: asked what idempotency means in the queued-turn scenario before answering the atomic-commit question. | Processing the same logical `turn_id` multiple times must have the same canonical effect as processing it once. Redelivery may repeat computation, but it must not create another roll, narrative, event sequence, state revision, or chargeable committed turn. Persist the first committed result so retries can reuse it. |
+| 5F-4. Idempotent redelivery restatement (2026-08-22) | Passed: stated that the worker looks up `abc-123` and returns its existing result instead of executing it again. | The durable lookup and canonical changes must share one transaction so the database cannot claim a turn completed without its state changes, or apply state changes without recording the completed turn. Question 5F and the full-state-to-deltas/in-process-to-queue scaling objective are mastered. |
 
 ## Archived pre-restart sequence
 
