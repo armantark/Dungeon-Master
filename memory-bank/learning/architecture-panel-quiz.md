@@ -14,7 +14,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 
 ### Required hypothetical scaling drills
 
-- [ ] Defend staying on per-save JSON, then identify measured triggers for
+- [x] Defend staying on per-save JSON, then identify measured triggers for
   SQLite or PostgreSQL and the transaction/query/concurrency gains each would
   buy relative to its operational cost.
 - [x] Compare relational storage with document, key-value, and event-store
@@ -30,7 +30,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
   required for multi-user, cloud-hosted, or very long-running campaigns.
 - [ ] For multiplayer, define authentication, authorization, campaign ownership,
   membership roles, and tenant isolation separately from the storage engine.
-- [ ] Propose migrations with baselines, success metrics, rollback plans, and
+- [x] Propose migrations with baselines, success metrics, rollback plans, and
   the smallest reversible intermediate step.
 
 ### Restarted running record
@@ -90,6 +90,7 @@ This file tracks the user's preparation for a principal-engineer technical panel
 | 5G-4. Reverse migration from SQLite (2026-08-22) | Passed the core approach: recognized that retaining a raw `GameState` JSON column should make reconstruction of the old JSON representation straightforward. | Call this a reverse migration or export. The snapshot column covers current `GameState`, but the exporter must also reconstruct any separately stored events, checkpoints, save metadata, and schema shape required by the old runtime. Prove it with a round-trip comparison and by opening the export with the rollback build; do not assume JSON storage alone guarantees compatibility. |
 | 5G-5. Reverse-migration test, first answer (2026-08-22) | Partial: proposed running the migration on a small scale, which is a sound canary strategy but does not define success. | Use a representative copied save, run JSON -> SQLite -> additional turns -> JSON, and assert semantic equality for state, event order/count, checkpoints, save metadata, and revisions. Then start the rollback build against the export and complete another turn. Test size limits blast radius; explicit invariants and old-runtime compatibility prove correctness. |
 | 5G-6. Round-trip assertions and testing objection (2026-08-22) | Partial: proposed checking that fields exist in both representations, then argued that test engineering is obsolete with LLMs. | Field presence does not detect changed values, reordered events, broken checkpoint references, revision loss, or a save that loads but cannot continue. LLMs reduce test-authoring cost but do not create an independent correctness signal; deterministic invariants, crash injection, and rollback-build execution remain the evidence. Distinguish a shrinking manual-QA role from executable verification, especially in a principal-engineer panel. |
+| 5G-7. Testing philosophy clarification and revision assertion (2026-08-22) | Passed and corrected the grading premise: `fields` meant comparing field values, not merely key presence; explicitly required revision values to match. Clarified that the objection targets routine unit/integration test engineering, while daily experience finds the highest-value failures through E2E and manual testing and does not justify lower-level suites for every tiny change. | Apply proportional verification: migration and crash semantics are substantial enough for focused invariant/fault-injection checks, while E2E rollback execution and manual canary validation remain the strongest system evidence. Do not restate the user's position as opposition to verification. Question 5G and the evidence-driven SQLite migration/rollback objective are mastered. |
 
 ## Archived pre-restart sequence
 
