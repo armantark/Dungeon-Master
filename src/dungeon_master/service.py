@@ -8,7 +8,17 @@ from typing import Protocol
 
 from pydantic import Field, ValidationError
 
-from dungeon_master.application.continuity import ContinuityReconciler, NarratedTurn
+from dungeon_master.application import turn_commit
+from dungeon_master.application.continuity import (
+    ContinuityReconciler,
+    NarratedTurn,
+)
+from dungeon_master.application.continuity import (
+    NPCUpdater as ContinuityNPCUpdaterPort,
+)
+from dungeon_master.application.continuity import (
+    ThreadUpdater as ThreadUpdaterPort,
+)
 from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignGenerator,
@@ -24,13 +34,10 @@ from dungeon_master.capability_oracle_guard import (
     CapabilityOracleGuard,
     CapabilityOracleGuardResult,
 )
-from dungeon_master.character_effect_updater import (
-    CharacterEffectUpdater,
-    CharacterEffectUpdateResult,
-)
+from dungeon_master.character_effect_updater import CharacterEffectUpdater
 from dungeon_master.config import LLMRuntimeBundle, build_llm_runtime, single_llm_runtime
 from dungeon_master.explainer import ExplainerEngine, ExplanationResult
-from dungeon_master.inventory_updater import InventoryUpdater, InventoryUpdateResult
+from dungeon_master.inventory_updater import InventoryUpdater
 from dungeon_master.memory import (
     CURRENT_MEMORY_SCHEMA_VERSION,
     CommittedTurnMemory,
@@ -60,7 +67,6 @@ from dungeon_master.models import (
     GameState,
     JSONValue,
     Likelihood,
-    NPCPlayerLabelKind,
     NPCStatus,
     OracleKind,
     OracleOutcome,
@@ -84,20 +90,11 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
-from dungeon_master.npc_updater import (
-    GeneratedNPCUpdateBatch,
-    LegacyNPCRosterRepairResult,
-    NPCUpdater,
-    NPCUpdateResult,
-)
+from dungeon_master.npc_updater import LegacyNPCRosterRepairResult, NPCUpdater
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.prompt_fragments import JSON_ONLY
 from dungeon_master.state_store import StateStore, TurnCheckpointRecord
-from dungeon_master.thread_updater import (
-    GeneratedThreadUpdateBatch,
-    ThreadUpdater,
-    ThreadUpdateResult,
-)
+from dungeon_master.thread_updater import ThreadUpdater
 from dungeon_master.turn_router import PlannedTurnOp, PlannedTurnOpKind, TurnPlan, TurnRouter
 
 CURRENT_NPC_ROSTER_VERSION = 2
@@ -577,75 +574,7 @@ class ExplainerPort(Protocol):
         raise NotImplementedError
 
 
-class ThreadUpdaterPort(Protocol):
-    def update_threads(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None = None,
-        narrative_text: str | None = None,
-        memory_context: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> ThreadUpdateResult:
-        raise NotImplementedError
-
-    def generate_thread_updates(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None = None,
-        narrative_text: str | None = None,
-        memory_context: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> GeneratedThreadUpdateBatch | None:
-        raise NotImplementedError
-
-    def apply_generated_updates(
-        self,
-        state: GameState,
-        generated: GeneratedThreadUpdateBatch,
-    ) -> ThreadUpdateResult:
-        raise NotImplementedError
-
-
-class NPCUpdaterPort(Protocol):
-    def update_npcs(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None = None,
-        narrative_text: str | None = None,
-        memory_context: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> NPCUpdateResult:
-        raise NotImplementedError
-
-    def generate_npc_updates(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None = None,
-        narrative_text: str | None = None,
-        memory_context: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> GeneratedNPCUpdateBatch | None:
-        raise NotImplementedError
-
-    def apply_generated_updates(
-        self,
-        state: GameState,
-        generated: GeneratedNPCUpdateBatch,
-    ) -> NPCUpdateResult:
-        raise NotImplementedError
-
+class NPCUpdaterPort(ContinuityNPCUpdaterPort, Protocol):
     def reseed_legacy_roster(
         self,
         state: GameState,
@@ -669,34 +598,6 @@ class CapabilityOracleGuardPort(Protocol):
         raise NotImplementedError
 
 
-class CharacterEffectUpdaterPort(Protocol):
-    def update_character_effects(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None,
-        narrative_text: str,
-        cancel_token: CancellationToken | None = None,
-    ) -> CharacterEffectUpdateResult:
-        raise NotImplementedError
-
-
-class InventoryUpdaterPort(Protocol):
-    def update_inventory(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None,
-        narrative_text: str,
-        cancel_token: CancellationToken | None = None,
-    ) -> InventoryUpdateResult:
-        raise NotImplementedError
-
-
 class GameService:
     def __init__(  # noqa: PLR0913
         self,
@@ -711,8 +612,8 @@ class GameService:
         memory_manager: MemoryManager | None = None,
         thread_updater: ThreadUpdaterPort | None = None,
         npc_updater: NPCUpdaterPort | None = None,
-        character_effect_updater: CharacterEffectUpdaterPort | None = None,
-        inventory_updater: InventoryUpdaterPort | None = None,
+        character_effect_updater: turn_commit.CharacterEffectUpdater | None = None,
+        inventory_updater: turn_commit.InventoryUpdater | None = None,
         capability_oracle_guard: CapabilityOracleGuardPort | None = None,
         llm_runtime: LLMRuntimeBundle | None = None,
     ) -> None:
@@ -743,6 +644,13 @@ class GameService:
         self._continuity_reconciler = ContinuityReconciler(
             thread_updater=self._thread_updater,
             npc_updater=self._npc_updater,
+        )
+        self._turn_committer = turn_commit.TurnCommitter(
+            memory_manager=self._memory,
+            context_memory_for_state=self._context_memory_for_state,
+            continuity_reconciler=self._continuity_reconciler,
+            character_effect_updater=self._character_effect_updater,
+            inventory_updater=self._inventory_updater,
         )
         self._capability_oracle_guard = capability_oracle_guard or CapabilityOracleGuard(
             config=resolved_runtime.structured,
@@ -776,6 +684,13 @@ class GameService:
         self._continuity_reconciler = ContinuityReconciler(
             thread_updater=self._thread_updater,
             npc_updater=self._npc_updater,
+        )
+        self._turn_committer = turn_commit.TurnCommitter(
+            memory_manager=self._memory,
+            context_memory_for_state=self._context_memory_for_state,
+            continuity_reconciler=self._continuity_reconciler,
+            character_effect_updater=self._character_effect_updater,
+            inventory_updater=self._inventory_updater,
         )
         self._capability_oracle_guard = CapabilityOracleGuard(config=runtime.structured)
 
@@ -832,7 +747,7 @@ class GameService:
             cancel_token=cancel_token,
         )
         terminal_state_synced = self._sync_terminal_state_on_load(working)
-        party_members_synced = self._sync_party_members_from_visible_npcs(working)
+        party_members_synced = turn_commit.sync_party_members_from_visible_npcs(working)
         schema_defaults_persisted = self._ensure_current_save_schema(working)
         state_changed = (
             character_backfilled
@@ -889,7 +804,7 @@ class GameService:
             state,
             cancel_token=cancel_token,
         ) or changed
-        changed = self._sync_party_members_from_visible_npcs(state) or changed
+        changed = turn_commit.sync_party_members_from_visible_npcs(state) or changed
         changed = self._sync_terminal_state_on_load(state) or changed
         if changed:
             self._store.save(state, create_checkpoint=False)
@@ -911,7 +826,7 @@ class GameService:
             state,
             cancel_token=cancel_token,
         )
-        self._sync_party_members_from_visible_npcs(state)
+        turn_commit.sync_party_members_from_visible_npcs(state)
         self._sync_terminal_state_on_load(state)
         return state
 
@@ -1641,28 +1556,20 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
-        revealed_npc_ids = self._disclose_npcs_from_text(restored_state, narration.content)
-        if revealed_npc_ids:
-            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
-            outcome.referenced_npc_ids = merged_npcs
-            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
-        working_memory = self._apply_post_narration_continuity_for_turn(
+        committed_turn = self._turn_committer.apply(
             restored_state,
-            player_input=checkpoint.player_input,
-            outcome=outcome,
-            execution_context=checkpoint.execution_context,
-            narrative_text=narration.content,
+            NarratedTurn(
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+                execution_context=checkpoint.execution_context,
+                narrative_text=narration.content,
+            ),
             working_memory=working_memory,
         )
         self._save_state_commit(
             restored_state,
             create_checkpoint=True,
-            committed_turn=CommittedTurnMemory(
-                player_input=checkpoint.player_input,
-                outcome=outcome,
-                narrative_text=narration.content,
-                execution_context=checkpoint.execution_context or "",
-            ),
+            committed_turn=committed_turn,
         )
         return restored_state
 
@@ -1841,18 +1748,15 @@ class GameService:
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
-        revealed_npc_ids = self._disclose_npcs_from_text(restored_state, narration.content)
-        if revealed_npc_ids:
-            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
-            outcome.referenced_npc_ids = merged_npcs
-            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
         yield self._stage_delta("reconciling_continuity", StreamStageStatus.ACTIVE, tracker=tracker)
-        working_memory = self._apply_post_narration_continuity_for_turn(
+        committed_turn = self._turn_committer.apply(
             restored_state,
-            player_input=checkpoint.player_input,
-            outcome=outcome,
-            execution_context=checkpoint.execution_context,
-            narrative_text=narration.content,
+            NarratedTurn(
+                player_input=checkpoint.player_input,
+                outcome=outcome,
+                execution_context=checkpoint.execution_context,
+                narrative_text=narration.content,
+            ),
             cancel_token=cancel_token,
             working_memory=working_memory,
         )
@@ -1873,12 +1777,7 @@ class GameService:
             restored_state,
             queued_events,
             cancel_token=cancel_token,
-            committed_turn=CommittedTurnMemory(
-                player_input=checkpoint.player_input,
-                outcome=outcome,
-                narrative_text=narration.content,
-                execution_context=checkpoint.execution_context or "",
-            ),
+            committed_turn=committed_turn,
         )
         return restored_state
 
@@ -2643,32 +2542,14 @@ class GameService:
                 oracle_outcome_id=outcome.id,
             ),
         )
-        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
-        if revealed_npc_ids:
-            self._sync_party_members_from_visible_npcs(state, npc_ids=revealed_npc_ids)
-            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
-            outcome.referenced_npc_ids = merged_npcs
-            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
-        self._apply_character_effects_from_narration(
+        committed_turn = self._turn_committer.apply(
             state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
-        )
-        self._apply_inventory_updates_from_narration(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
-        )
-        working_memory = self._apply_post_narration_continuity_for_turn(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
+            NarratedTurn(
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+            ),
             working_memory=working_memory,
         )
         if terminal_event is not None:
@@ -2676,12 +2557,7 @@ class GameService:
         self._save_state_commit(
             state,
             create_checkpoint=True,
-            committed_turn=CommittedTurnMemory(
-                player_input=player_input,
-                outcome=outcome,
-                narrative_text=narration.content,
-                execution_context=execution_context or "",
-            ),
+            committed_turn=committed_turn,
         )
 
     def _stream_oracle_turn(  # noqa: PLR0913
@@ -2739,39 +2615,19 @@ class GameService:
             cancel_token=cancel_token,
         )
         yield self._stage_delta("streaming_narration", StreamStageStatus.DONE, tracker=tracker)
-        revealed_npc_ids = self._disclose_npcs_from_text(state, narration.content)
-        if revealed_npc_ids:
-            self._sync_party_members_from_visible_npcs(state, npc_ids=revealed_npc_ids)
-            merged_npcs = self._merged_npc_ids(outcome, revealed_npc_ids)
-            outcome.referenced_npc_ids = merged_npcs
-            outcome.referenced_npc_id = merged_npcs[0] if merged_npcs else None
-        self._apply_character_effects_from_narration(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
-            cancel_token=cancel_token,
-        )
         yield self._stage_delta(
             "reconciling_continuity",
             StreamStageStatus.ACTIVE,
             tracker=tracker,
         )
-        self._apply_inventory_updates_from_narration(
+        committed_turn = self._turn_committer.apply(
             state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
-            cancel_token=cancel_token,
-        )
-        working_memory = self._apply_post_narration_continuity_for_turn(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narration.content,
+            NarratedTurn(
+                player_input=player_input,
+                outcome=outcome,
+                execution_context=execution_context,
+                narrative_text=narration.content,
+            ),
             cancel_token=cancel_token,
             working_memory=working_memory,
         )
@@ -2803,12 +2659,7 @@ class GameService:
             queued_events,
             turn_checkpoint=turn_checkpoint,
             cancel_token=cancel_token,
-            committed_turn=CommittedTurnMemory(
-                player_input=player_input,
-                outcome=outcome,
-                narrative_text=narration.content,
-                execution_context=execution_context or "",
-            ),
+            committed_turn=committed_turn,
         )
         return state
 
@@ -3172,40 +3023,6 @@ class GameService:
             memory,
         )
 
-    def _memory_context_for_thread_updater(
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        working_memory: MemoryState | None = None,
-    ) -> tuple[str | None, MemoryState]:
-        memory = self._context_memory_for_state(state, working_memory)
-        context = self._memory.retrieve_for_thread_updater(
-            state,
-            memory,
-            player_input,
-            outcome,
-        ).render()
-        return (context or None), memory
-
-    def _memory_context_for_npc_updater(
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        working_memory: MemoryState | None = None,
-    ) -> tuple[str | None, MemoryState]:
-        memory = self._context_memory_for_state(state, working_memory)
-        context = self._memory.retrieve_for_npc_updater(
-            state,
-            memory,
-            player_input,
-            outcome,
-        ).render()
-        return (context or None), memory
-
     def _load_turn_memory_state(self, state: GameState) -> MemoryState:
         return self._memory_for_state(
             state,
@@ -3244,143 +3061,6 @@ class GameService:
             memory.current_scene_turns = []
         return memory
 
-    def _apply_post_narration_continuity_for_turn(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None,
-        narrative_text: str,
-        cancel_token: CancellationToken | None = None,
-        working_memory: MemoryState | None = None,
-    ) -> MemoryState:
-        memory = self._memory_for_state(state, existing_memory=working_memory)
-        thread_context, memory = self._memory_context_for_thread_updater(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            working_memory=memory,
-        )
-        npc_context, _ = self._memory_context_for_npc_updater(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            working_memory=memory,
-        )
-        changes = self._continuity_reconciler.reconcile(
-            state,
-            NarratedTurn(
-                player_input=player_input,
-                outcome=outcome,
-                execution_context=execution_context,
-                narrative_text=narrative_text,
-            ),
-            thread_memory_context=thread_context,
-            npc_memory_context=npc_context,
-            cancel_token=cancel_token,
-        )
-        if changes.touched_npc_ids:
-            self._sync_party_members_from_visible_npcs(
-                state,
-                npc_ids=changes.touched_npc_ids,
-            )
-        self._apply_thread_references(outcome, changes.touched_thread_ids)
-        self._apply_npc_references(state, outcome, changes.touched_npc_ids)
-        return self._memory_for_state(state, existing_memory=memory)
-
-    def _apply_character_effects_from_narration(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None,
-        narrative_text: str,
-        cancel_token: CancellationToken | None = None,
-    ) -> CharacterEffectUpdateResult:
-        return self._character_effect_updater.update_character_effects(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narrative_text,
-            cancel_token=cancel_token,
-        )
-
-    def _apply_inventory_updates_from_narration(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None,
-        narrative_text: str,
-        cancel_token: CancellationToken | None = None,
-    ) -> InventoryUpdateResult:
-        return self._inventory_updater.update_inventory(
-            state,
-            player_input=player_input,
-            outcome=outcome,
-            execution_context=execution_context,
-            narrative_text=narrative_text,
-            cancel_token=cancel_token,
-        )
-
-    def _apply_thread_references(
-        self,
-        outcome: OracleOutcome,
-        touched_thread_ids: tuple[str, ...],
-    ) -> None:
-        merged = self._merged_thread_ids(outcome, touched_thread_ids)
-        outcome.referenced_thread_ids = merged
-        outcome.referenced_thread_id = merged[0] if merged else None
-
-    def _apply_npc_references(
-        self,
-        state: GameState,
-        outcome: OracleOutcome,
-        touched_npc_ids: tuple[str, ...],
-    ) -> None:
-        merged = self._visible_npc_ids(
-            state,
-            self._merged_npc_ids(outcome, touched_npc_ids),
-        )
-        outcome.referenced_npc_ids = merged
-        outcome.referenced_npc_id = merged[0] if merged else None
-
-    def _sync_party_members_from_visible_npcs(
-        self,
-        state: GameState,
-        *,
-        npc_ids: tuple[str, ...] | None = None,
-    ) -> bool:
-        visible_by_id = {npc.id: npc for npc in state.npcs}
-        allowed_ids = None if npc_ids is None else set(npc_ids)
-        changed = False
-        for member in state.party_members:
-            if member.npc_id is None or not member.active:
-                continue
-            if allowed_ids is not None and member.npc_id not in allowed_ids:
-                continue
-            npc = visible_by_id.get(member.npc_id)
-            if npc is None:
-                continue
-            label = npc.display_label().strip()
-            if label and member.sheet.name != label:
-                member.sheet.name = label
-                changed = True
-            if npc.role and member.sheet.archetype != npc.role:
-                member.sheet.archetype = npc.role
-                changed = True
-            if npc.disposition and member.sheet.epithet != npc.disposition:
-                member.sheet.epithet = npc.disposition
-                changed = True
-            if npc.disposition and member.loyalty != npc.disposition:
-                member.loyalty = npc.disposition
-                changed = True
-        return changed
-
     def _repair_npc_roster_on_load(
         self,
         state: GameState,
@@ -3408,92 +3088,11 @@ class GameService:
         ).render()
         return context or None
 
-    def _disclose_npcs_from_text(
-        self,
-        state: GameState,
-        text: str,
-    ) -> tuple[str, ...]:
-        lowered = text.lower()
-        revealed = [
-            npc.id
-            for npc in state.npcs
-            if self._maybe_promote_visible_npc_label_from_text(npc, lowered)
-        ]
-        still_hidden = []
-        for npc in state.hidden_npcs:
-            if self._npc_name_appears_in_text(lowered, npc.name):
-                npc.player_label = npc.name
-                npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
-                state.npcs.append(npc)
-                revealed.append(npc.id)
-            elif (
-                npc.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR
-                and self._npc_label_appears_in_text(lowered, npc.display_label())
-            ):
-                state.npcs.append(npc)
-                revealed.append(npc.id)
-            else:
-                still_hidden.append(npc)
-        state.hidden_npcs = still_hidden
-        return tuple(revealed)
-
     def _npc_label_has_text_support(self, lowered_text: str, npc: NPC) -> bool:
         return self._npc_label_appears_in_text(lowered_text, npc.display_label())
 
-    def _maybe_promote_visible_npc_label_from_text(
-        self,
-        npc: NPC,
-        lowered_text: str,
-    ) -> bool:
-        if npc.player_label_kind == NPCPlayerLabelKind.PROPER_NAME:
-            return False
-        if not self._npc_name_appears_in_text(lowered_text, npc.name):
-            return False
-        npc.player_label = npc.name
-        npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
-        return True
-
-    def _npc_name_appears_in_text(self, lowered_text: str, npc_name: str) -> bool:
-        return self._npc_label_appears_in_text(lowered_text, npc_name)
-
     def _npc_label_appears_in_text(self, lowered_text: str, label: str) -> bool:
         return " ".join(label.lower().split()) in lowered_text
-
-    def _merged_thread_ids(
-        self,
-        outcome: OracleOutcome,
-        touched_thread_ids: tuple[str, ...],
-    ) -> list[str]:
-        merged: list[str] = []
-        if outcome.referenced_thread_id is not None:
-            merged.append(outcome.referenced_thread_id)
-        for thread_id in outcome.referenced_thread_ids:
-            if thread_id not in merged:
-                merged.append(thread_id)
-        for thread_id in touched_thread_ids:
-            if thread_id not in merged:
-                merged.append(thread_id)
-        return merged
-
-    def _merged_npc_ids(
-        self,
-        outcome: OracleOutcome,
-        touched_npc_ids: tuple[str, ...],
-    ) -> list[str]:
-        merged: list[str] = []
-        if outcome.referenced_npc_id is not None:
-            merged.append(outcome.referenced_npc_id)
-        for npc_id in outcome.referenced_npc_ids:
-            if npc_id not in merged:
-                merged.append(npc_id)
-        for npc_id in touched_npc_ids:
-            if npc_id not in merged:
-                merged.append(npc_id)
-        return merged
-
-    def _visible_npc_ids(self, state: GameState, npc_ids: list[str]) -> list[str]:
-        visible_ids = {npc.id for npc in state.npcs}
-        return [npc_id for npc_id in npc_ids if npc_id in visible_ids]
 
     def _save_state_commit(
         self,

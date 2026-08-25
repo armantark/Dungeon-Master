@@ -92,10 +92,10 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
   {
     id: "depot", name: "Stream Depot", kind: "depot", role: "python",
     x: 405, y: 178, width: 3, depth: 1.8, height: 44,
-    responsibility: "FastAPI entry point and per-turn stream session. It accepts the turn and is the single writer of response frames.",
+    responsibility: "FastAPI entry point plus the detached stream runtime. It accepts a request while one registry owns cancellation, replay, and response frames.",
     input: "POST /api/turn/stream { text }", output: "meta · stage · thinking_delta · content_delta · final_state · error",
     rationale: "One session object owns the wire vocabulary, replay, and live-tail behavior.",
-    citations: [{ file: "src/dungeon_master/api.py", line: 566 }, { file: "src/dungeon_master/stream_session.py", line: 21 }],
+    citations: [{ file: "src/dungeon_master/api.py", line: 839 }, { file: "src/dungeon_master/transport/stream_runtime.py", line: 140 }],
   },
   {
     id: "foundry", name: "Turn Foundry", kind: "foundry", role: "python",
@@ -103,7 +103,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "The deterministic service orchestrator. It drives state loading, planning, rules, narration, continuity, and commit in one ordered pipeline.",
     input: "Turn text · active save · derived recall", output: "Stage events + one new GameState",
     rationale: "Turn order lives in Python rather than being distributed across model calls.",
-    citations: [{ file: "src/dungeon_master/service.py", line: 1716 }, { file: "src/dungeon_master/service.py", line: 1904 }],
+    citations: [{ file: "src/dungeon_master/service.py", line: 1513 }, { file: "src/dungeon_master/service.py", line: 1680 }],
   },
   {
     id: "memory", name: "Memory Cistern", kind: "cistern", role: "python",
@@ -111,7 +111,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Rebuildable recall derived from committed events and canonical state.",
     input: "events.jsonl + canonical GameState", output: "memory.json + prompt-ready recall",
     rationale: "A bad summary can degrade one turn, but it cannot corrupt canon because the sidecar is disposable.",
-    citations: [{ file: "src/dungeon_master/memory.py", line: 335 }, { file: "src/dungeon_master/service.py", line: 1904 }],
+    citations: [{ file: "src/dungeon_master/memory.py", line: 335 }, { file: "src/dungeon_master/service.py", line: 3013 }],
   },
   {
     id: "router", name: "Router Observatory", kind: "observatory", role: "structured",
@@ -119,7 +119,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "The first model step. It returns a schema-validated TurnPlan describing the turn and its bounded operations.",
     input: "Turn text + state summary + recall", output: "Validated TurnPlan",
     rationale: "Downstream code branches on typed fields, never on model prose.",
-    citations: [{ file: "src/dungeon_master/turn_router.py", line: 497 }, { file: "src/dungeon_master/service.py", line: 3189 }],
+    citations: [{ file: "src/dungeon_master/turn_router.py", line: 460 }, { file: "src/dungeon_master/service.py", line: 3013 }],
   },
   {
     id: "oracle", name: "Oracle Tower & Cairn Hall", kind: "tower", role: "python",
@@ -127,7 +127,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Deterministic uncertainty and rules resolution. Dice and Cairn consequences are settled before prose begins.",
     input: "TurnPlan + canonical state", output: "Rolled outcome + rule effects",
     rationale: "The model may describe success or failure, but Python decides which occurred.",
-    citations: [{ file: "src/dungeon_master/oracle.py", line: 30 }, { file: "src/dungeon_master/cairn.py", line: 706 }, { file: "src/dungeon_master/service.py", line: 1760 }],
+    citations: [{ file: "src/dungeon_master/oracle.py", line: 30 }, { file: "src/dungeon_master/cairn.py", line: 707 }, { file: "src/dungeon_master/service.py", line: 1838 }],
   },
   {
     id: "narrative", name: "Narrative Theater", kind: "theater", role: "prose",
@@ -135,7 +135,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "The prose model streams a scene that is grounded in a resolved mechanical outcome.",
     input: "TurnPlan + resolved outcome + recall", output: "thinking_delta + content_delta",
     rationale: "Narration can interpret an outcome but cannot invent or mutate it.",
-    citations: [{ file: "src/dungeon_master/narrative.py", line: 201 }, { file: "src/dungeon_master/service.py", line: 3095 }],
+    citations: [{ file: "src/dungeon_master/narrative.py", line: 210 }, { file: "src/dungeon_master/service.py", line: 2936 }],
   },
   {
     id: "loom", name: "Thread & NPC Loom", kind: "loom", role: "structured",
@@ -143,7 +143,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Post-prose structured workers propose durable thread, NPC, inventory, and character-effect changes implied by the scene.",
     input: "Final prose + existing canon", output: "Validated update proposals",
     rationale: "Continuity is reconciled from the exact prose the player saw, not from a pre-prose guess.",
-    citations: [{ file: "src/dungeon_master/service.py", line: 3551 }],
+    citations: [{ file: "src/dungeon_master/application/turn_commit.py", line: 53 }, { file: "src/dungeon_master/application/continuity.py", line: 67 }],
   },
   {
     id: "vault", name: "Archive Vault", kind: "vault", role: "persist",
@@ -151,7 +151,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Atomic persistence for canonical state, append-only events, ordinary checkpoints, and turn checkpoints.",
     input: "New GameState + turn events", output: "game_state.json · events.jsonl · checkpoints/ · turn-checkpoints/",
     rationale: "A partial turn cannot replace the previous valid save, and a bad narration can be regenerated from its named checkpoint.",
-    citations: [{ file: "src/dungeon_master/state_store.py", line: 21 }, { file: "src/dungeon_master/service.py", line: 3918 }],
+    citations: [{ file: "src/dungeon_master/state_store.py", line: 44 }, { file: "src/dungeon_master/service.py", line: 3165 }],
   },
   {
     id: "library", name: "Save Library", kind: "library", role: "persist",
@@ -167,7 +167,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Reads NDJSON frames, renders provisional deltas, then replaces the client store with the final full GameState.",
     input: "NDJSON frames", output: "Rendered scene + replaced GameState",
     rationale: "Wholesale replacement prevents client-side merge rules from drifting from server authority.",
-    citations: [{ file: "web/src/lib/streaming.ts", line: 109 }, { file: "web/src/lib/store.svelte.ts", line: 1507 }],
+    citations: [{ file: "web/src/lib/streaming.ts", line: 107 }, { file: "web/src/lib/store/stream-runner.ts", line: 61 }, { file: "web/src/lib/store.svelte.ts", line: 1483 }],
   },
   {
     id: "shell", name: "Tauri Shell & Vite Proxy", kind: "shell", role: "desktop",
@@ -201,8 +201,8 @@ export const ARCHITECTURE_PATHS: ArchitecturePath[] = [
     steps: [
       { node: "composer" },
       { node: "relay", payload: "{ text }", detail: "Ordinary prose leaves the composer untouched; the browser does not infer mechanics." },
-      { node: "depot", payload: "POST /api/turn/stream", detail: "The HTTP response remains open and carries newline-delimited JSON." },
-      { node: "foundry", payload: "stream session", detail: "A per-turn session owns every frame and supports replay after a disconnect." },
+      { node: "depot", payload: "POST /api/turn/stream", detail: "A detached session starts the turn and exposes replayable newline-delimited JSON." },
+      { node: "foundry", payload: "turn generator", detail: "The service yields ordered progress while the transport session survives disconnects." },
       { node: "memory", payload: "canonical state + recall", detail: "The service loads source-of-truth state before using rebuildable recall." },
       { node: "router", payload: "bounded context", detail: "The router sees a state summary and recall, not the whole save directory." },
       { node: "oracle", payload: "TurnPlan", detail: "Python resolves typed operations, chance, and Cairn consequences." },

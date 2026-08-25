@@ -1435,7 +1435,9 @@ def test_transfer_item_repairs_complete_derived_state_for_both_actors() -> None:
     weapon = state.character.inventory[0]
     weapon.cairn.tags.append(CairnItemTag.ARMOR)
     weapon.cairn.armor_bonus = 2
-    state.character.cairn.primary_weapon_item_id = weapon.id
+    state.character.cairn = state.character.cairn.model_copy(
+        update={"primary_weapon_item_id": weapon.id},
+    )
     state.character.cairn.dex_score = 0
     state.character.cairn.survival.watches_since_meal = 3
     state.character.cairn.slots_used = 99
@@ -1455,8 +1457,9 @@ def test_transfer_item_repairs_complete_derived_state_for_both_actors() -> None:
         target_actor_id=companion.id,
     )
 
+    repaired_primary_weapon_id = state.character.cairn.primary_weapon_item_id
     assert weapon.cairn.equipped is False
-    assert state.character.cairn.primary_weapon_item_id is None
+    assert repaired_primary_weapon_id is None
     assert state.character.cairn.armor == 0
     assert state.character.cairn.slots_used == 1
     assert state.character.cairn.overloaded is False

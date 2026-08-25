@@ -54,7 +54,7 @@ def _generate_current_baseline(output_path: Path) -> None:
             continue
         state = sample_eval_state()
         case = eval_case_for(user_input)
-        routed = router.route(text=user_input)
+        plan = router.plan(text=user_input)
         narration = narrator.generate(
             state=state,
             player_input=case.user_input,
@@ -62,9 +62,12 @@ def _generate_current_baseline(output_path: Path) -> None:
             execution_context=case.execution_context,
         )
         baseline[user_input] = EvalBaselineRecord(
-            route=routed.route.value,
-            target_name=routed.target_name,
-            routed_text=routed.text,
+            route=plan.route.value,
+            target_name=next(
+                (op.target_name for op in reversed(plan.ops) if op.target_name is not None),
+                None,
+            ),
+            routed_text=plan.text,
             narration=narration,
         )
         write_baseline(baseline, output_path)

@@ -46,11 +46,9 @@ export interface EnemyCombatant {
   armor: number;
   weapon_name: string;
   weapon_damage_die: number;
-  // Optional only for compatibility with saves created before F-19.
-  // The current backend always publishes all three values.
-  threat_level?: EncounterThreatLevel;
-  weakness?: string;
-  tactics?: string;
+  threat_level: EncounterThreatLevel;
+  weakness: string;
+  tactics: string;
   leader: boolean;
   critically_wounded: boolean;
   defeated: boolean;
@@ -62,16 +60,13 @@ export interface EncounterState {
   active: boolean;
   round_number: number;
   first_round_dex_gate_pending: boolean;
-  // Optional only for compatibility with saves created before F-05.
-  // The current backend publishes either an initiator or null.
-  initiator?: EncounterInitiator | null;
+  initiator: EncounterInitiator | null;
   casualty_morale_checked: boolean;
   half_force_morale_checked: boolean;
   player_disengaged: boolean;
   pursuit_active: boolean;
   end_reason: EncounterEndReason | null;
   combatants: EnemyCombatant[];
-  // Optional only for compatibility with saves created before F-18.
-  pending_advantages?: PendingEncounterAdvantage[];
+  pending_advantages: PendingEncounterAdvantage[];
   notes: string;
 }

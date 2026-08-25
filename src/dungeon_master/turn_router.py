@@ -34,7 +34,7 @@ from dungeon_master.prompt_fragments import JSON_ONLY
 
 
 class TurnRoute(StrEnum):
-    """Legacy summary route surfaced to the rest of the backend/frontend."""
+    """High-level summary of the typed operations in a turn plan."""
 
     PLAYER_ACTION = "player_action"
     YES_NO = "yes_no"
@@ -105,32 +105,6 @@ class TurnPlan:
     survival_actions: tuple[CairnSurvivalAction, ...] = ()
 
 
-@dataclass(frozen=True)
-class RoutedTurn:
-    route: TurnRoute
-    text: str
-    likelihood: Likelihood | None = None
-    ability: CairnAbility | None = None
-    target_name: str | None = None
-    stance: AttackStance | None = None
-    rest_kind: CairnRestKind | None = None
-    item_name: str | None = None
-    npc_name: str | None = None
-    actor_name: str | None = None
-    supporting_actor_names: tuple[str, ...] = ()
-    source_actor_name: str | None = None
-    target_actor_name: str | None = None
-    equipped: bool | None = None
-    harm_amount: int | None = None
-    harm_source: str | None = None
-    armor_applies: bool | None = None
-    in_combat: bool | None = None
-    advantage_payoff: EncounterAdvantagePayoff | None = None
-    time_advance: CairnTimeAdvance = CairnTimeAdvance.NONE
-    survival_actions: tuple[CairnSurvivalAction, ...] = ()
-    plan: TurnPlan | None = None
-
-
 class GeneratedPlannedTurnOp(StrictModel):
     kind: PlannedTurnOpKind
     text: str = Field(min_length=1)
@@ -171,7 +145,7 @@ class GeneratedSaveMechanicsReview(StrictModel):
     reason: str = Field(min_length=1)
 
 
-RouterClassifier = Callable[[str, Likelihood | None], RoutedTurn | TurnPlan]
+RouterClassifier = Callable[[str, Likelihood | None], TurnPlan]
 
 
 class EmptyRouteContentError(ValueError):
@@ -512,7 +486,7 @@ class TurnRouter:
 
         if self._classifier is not None:
             classified = self._classifier(normalized, likelihood)
-            plan = self._normalize_classifier_result(classified, normalized, likelihood)
+            plan = self._finalize_plan(classified, normalized, likelihood)
             self._log_plan_decision(plan, source="classifier")
             return plan
 
@@ -873,25 +847,6 @@ class TurnRouter:
         ):
             return None
 
-    def route(
-        self,
-        text: str,
-        *,
-        memory_context: str | None = None,
-        scene_messages: list[dict[str, str]] | None = None,
-        combat_encounter_hint: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> RoutedTurn:
-        return self._routed_turn_from_plan(
-            self.plan(
-                text,
-                memory_context=memory_context,
-                scene_messages=scene_messages,
-                combat_encounter_hint=combat_encounter_hint,
-                cancel_token=cancel_token,
-            ),
-        )
-
     def _log_plan_decision(self, plan: TurnPlan, *, source: str) -> None:
         ops = ",".join(op.kind.value for op in plan.ops)
         log_decision(
@@ -910,26 +865,6 @@ class TurnRouter:
             ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
             time_advance=CairnTimeAdvance.NONE,
             survival_actions=(),
-        )
-
-    def _normalize_classifier_result(
-        self,
-        classified: RoutedTurn | TurnPlan,
-        normalized_text: str,
-        likelihood: Likelihood | None,
-    ) -> TurnPlan:
-        if isinstance(classified, TurnPlan):
-            return self._finalize_plan(classified, normalized_text, likelihood)
-        return self._finalize_plan(
-            TurnPlan(
-                route=classified.route,
-                text=classified.text,
-                ops=(self._planned_op_from_routed_turn(classified),),
-                time_advance=classified.time_advance,
-                survival_actions=classified.survival_actions,
-            ),
-            normalized_text,
-            likelihood,
         )
 
     def _normalize_generated_plan(
@@ -1100,86 +1035,6 @@ class TurnRouter:
             in_combat=op.in_combat,
             advantage_payoff=op.advantage_payoff,
         )
-
-    def _planned_op_from_routed_turn(self, routed: RoutedTurn) -> PlannedTurnOp:
-        kind = {
-            TurnRoute.YES_NO: PlannedTurnOpKind.YES_NO,
-            TurnRoute.RANDOM_EVENT: PlannedTurnOpKind.RANDOM_EVENT,
-            TurnRoute.SCENE_CHECK: PlannedTurnOpKind.SCENE_CHECK,
-            TurnRoute.SAVE: PlannedTurnOpKind.SAVE,
-            TurnRoute.ATTACK: PlannedTurnOpKind.ATTACK,
-            TurnRoute.HARM: PlannedTurnOpKind.HARM,
-            TurnRoute.RECOVERY: PlannedTurnOpKind.RECOVERY,
-            TurnRoute.EQUIP: PlannedTurnOpKind.EQUIP,
-            TurnRoute.RETREAT: PlannedTurnOpKind.RETREAT,
-            TurnRoute.PLAYER_ACTION: PlannedTurnOpKind.NARRATE,
-        }[routed.route]
-        return PlannedTurnOp(
-            kind=kind,
-            text=routed.text,
-            likelihood=routed.likelihood,
-            ability=routed.ability,
-            target_name=routed.target_name,
-            stance=routed.stance,
-            rest_kind=routed.rest_kind,
-            item_name=routed.item_name,
-            npc_name=routed.npc_name,
-            actor_name=routed.actor_name,
-            supporting_actor_names=routed.supporting_actor_names,
-            source_actor_name=routed.source_actor_name,
-            target_actor_name=routed.target_actor_name,
-            equipped=routed.equipped,
-            harm_amount=routed.harm_amount,
-            harm_source=routed.harm_source,
-            armor_applies=routed.armor_applies,
-            in_combat=routed.in_combat,
-            advantage_payoff=routed.advantage_payoff,
-        )
-
-    def _routed_turn_from_plan(self, plan: TurnPlan) -> RoutedTurn:
-        primary = self._primary_op(plan)
-        return RoutedTurn(
-            route=plan.route,
-            text=plan.text,
-            likelihood=primary.likelihood if plan.route == TurnRoute.YES_NO else None,
-            ability=primary.ability,
-            target_name=primary.target_name,
-            stance=primary.stance,
-            rest_kind=primary.rest_kind,
-            item_name=primary.item_name,
-            npc_name=primary.npc_name,
-            actor_name=primary.actor_name,
-            supporting_actor_names=primary.supporting_actor_names,
-            source_actor_name=primary.source_actor_name,
-            target_actor_name=primary.target_actor_name,
-            equipped=primary.equipped,
-            harm_amount=primary.harm_amount,
-            harm_source=primary.harm_source,
-            armor_applies=primary.armor_applies,
-            in_combat=primary.in_combat,
-            advantage_payoff=primary.advantage_payoff,
-            time_advance=plan.time_advance,
-            survival_actions=plan.survival_actions,
-            plan=plan,
-        )
-
-    def _primary_op(self, plan: TurnPlan) -> PlannedTurnOp:
-        legacy_kind = {
-            TurnRoute.YES_NO: PlannedTurnOpKind.YES_NO,
-            TurnRoute.RANDOM_EVENT: PlannedTurnOpKind.RANDOM_EVENT,
-            TurnRoute.SCENE_CHECK: PlannedTurnOpKind.SCENE_CHECK,
-            TurnRoute.SAVE: PlannedTurnOpKind.SAVE,
-            TurnRoute.ATTACK: PlannedTurnOpKind.ATTACK,
-            TurnRoute.HARM: PlannedTurnOpKind.HARM,
-            TurnRoute.RECOVERY: PlannedTurnOpKind.RECOVERY,
-            TurnRoute.EQUIP: PlannedTurnOpKind.EQUIP,
-            TurnRoute.RETREAT: PlannedTurnOpKind.RETREAT,
-            TurnRoute.PLAYER_ACTION: PlannedTurnOpKind.NARRATE,
-        }[plan.route]
-        for op in reversed(plan.ops):
-            if op.kind == legacy_kind:
-                return op
-        return plan.ops[-1]
 
     def _strip_likelihood_hint(self, text: str) -> tuple[str, Likelihood | None]:
         match = re.search(r"\[([^\]]+)\]\s*$", text)

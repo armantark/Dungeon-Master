@@ -92,9 +92,8 @@ export interface CombatEncounterState {
   // F-05: who started the fight. `enemy` means the encounter was
   // opened by an ambush / hostile opener and the tracker should
   // label that explicitly so the player's first read of the rail is
-  // "you got jumped" rather than "you swung first". `null` for
-  // older state blobs that pre-date the field — we treat the absence
-  // as "unknown initiator" and degrade gracefully (no ambush flag).
+  // "you got jumped" rather than "you swung first". `null` means
+  // no initiator has been recorded.
   initiator: EncounterInitiator | null;
   // Tracked hostile combatants. The list is the source of truth — the
   // backend should not also publish a flat `combatants` field on
@@ -118,20 +117,14 @@ export interface CombatEncounterState {
 export type CombatStateSlot = CombatEncounterState | null;
 
 // Returns the tracker-friendly shape derived from `state.encounter`.
-// Returns null when there is no encounter (backend default) or when
-// the encounter has no combatants and isn't active — that's the
-// "exploration" steady state and the tracker should stay collapsed.
-//
-// The partial pick keeps legacy fixtures and pre-encounter saves safe
-// while making the wire type itself canonical and cast-free.
+// Returns null when the encounter has no combatants and isn't active —
+// that's the "exploration" steady state and the tracker should stay collapsed.
 export function combatFromState(
-  state: { encounter?: EncounterState | null },
+  state: { encounter: EncounterState },
 ): CombatStateSlot {
   const candidate = state.encounter;
-  if (candidate === null || candidate === undefined) return null;
-  if (typeof candidate !== "object") return null;
 
-  const combatants = (candidate.combatants ?? []).map(adaptCombatant);
+  const combatants = candidate.combatants.map(adaptCombatant);
   if (!candidate.active && combatants.length === 0 && !candidate.notes) {
     // Default-empty encounter; treat as "no encounter tracked".
     return null;
@@ -143,9 +136,7 @@ export function combatFromState(
   // (a foe specifically broken by a successful morale roll); for now
   // we leave it false everywhere and surface the encounter-level flag
   // via `morale_triggered` instead.
-  const pending: PendingEncounterAdvantage[] = [
-    ...(candidate.pending_advantages ?? []),
-  ];
+  const pending: PendingEncounterAdvantage[] = [...candidate.pending_advantages];
 
   return {
     active: candidate.active,
@@ -153,10 +144,7 @@ export function combatFromState(
     player_ready: !candidate.first_round_dex_gate_pending,
     morale_triggered:
       candidate.casualty_morale_checked || candidate.half_force_morale_checked,
-    // Default missing → null so older state blobs don't accidentally
-    // light up the ambush cue. The UI checks `=== "enemy"` everywhere
-    // and treats null as "no signal".
-    initiator: candidate.initiator ?? null,
+    initiator: candidate.initiator,
     combatants,
     pending_advantages: pending,
     summary: candidate.notes && candidate.notes.trim() !== "" ? candidate.notes : null,
@@ -185,12 +173,9 @@ function adaptCombatant(foe: EnemyCombatant): CombatantState {
     morale: null,
     morale_broken: false,
     status: deriveCombatantStatus(foe),
-    // F-19 defaults — older state blobs that pre-date the threat /
-    // weakness / tactics fields still adapt cleanly: ordinary tier
-    // and empty hint strings reproduce the pre-F-19 rendering.
-    threat_level: foe.threat_level ?? "ordinary",
-    weakness: foe.weakness ?? "",
-    tactics: foe.tactics ?? "",
+    threat_level: foe.threat_level,
+    weakness: foe.weakness,
+    tactics: foe.tactics,
   };
 }
 

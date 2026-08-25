@@ -3,7 +3,7 @@
 //
 // Why this exists:
 //   The backend now keeps stream sessions alive past a subscriber
-//   disconnect (see src/dungeon_master/stream_session.py and
+//   disconnect (see src/dungeon_master/transport/stream_runtime.py and
 //   GET /api/requests/{request_id}/stream). The browser-side half of
 //   that contract is "remember which request_id was in flight when the
 //   tab last saw it" so the next bootstrap can call back and tail the

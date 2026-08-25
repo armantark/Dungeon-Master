@@ -38,7 +38,7 @@ These captures use the isolated fixture save library (`dungeon-master-fixtures`)
 ```text
 +------------------+       HTTP / JSON or NDJSON       +-----------------------+
 |  Svelte 5 + TS   |  <----------------------------->  |       FastAPI         |
-|  store mirror    |             /api/*                |  routes + cancellation|
+|  store mirror    |             /api/*                | routes + stream sessions|
 +------------------+                                   +-----------+-----------+
                                                                     |
                                                                     v
@@ -72,7 +72,7 @@ These captures use the isolated fixture save library (`dungeon-master-fixtures`)
                                                       complete GameState replaces client mirror
 ```
 
-The HTTP surface is intentionally thin: every committed mutation returns the complete `GameState`, so the frontend replaces its local mirror instead of reconciling partial diffs. Model outputs remain proposals until Python validates and commits them. Optional mechanics and continuity stages run only when the typed plan or resulting narration requires them.
+The HTTP surface is intentionally thin: every committed mutation returns the complete `GameState`, so the frontend replaces its local mirror instead of reconciling partial diffs. Model outputs remain proposals until Python validates and commits them. Typed mechanics run only when the plan requires them; after narration, the continuity workers always get one bounded reconciliation opportunity and may return no changes.
 
 ## Run
 

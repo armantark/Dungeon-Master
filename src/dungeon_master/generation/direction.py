@@ -68,4 +68,3 @@ def render_danger_guidance(danger_profile: CampaignDangerProfile) -> str:
             "around 6 HP, serious threats only when telegraphed."
         )
     return f"{shared} {detail}"
-

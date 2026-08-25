@@ -17,7 +17,6 @@ import {
   saveStreamResume,
   updateStreamResumeStages,
 } from "./stream-resume";
-import { fetchSaveBinding, type SaveBinding } from "./store/save-binding";
 import {
   applyStageEvent,
   applyStateTerminal,
@@ -394,12 +393,12 @@ class GameStore {
         this.state = null;
         return;
       }
-      const binding = await this.#fetchSaveBinding(response.active_save_id);
-      if (binding === null) {
+      const state = await this.#fetchSaveState();
+      if (state === null) {
         this.libraryStatus = "selecting";
         return;
       }
-      this.#publishSaveBinding(binding);
+      this.#publishSaveBinding(response.active_save_id, state);
       this.#hydrateOocNotes();
       this.libraryStatus = "ready";
       // After the canonical state is bound we check for an in-flight
@@ -446,13 +445,13 @@ class GameStore {
         if (response.active_save_id === null) {
           throw new Error("The new save was created without becoming active.");
         }
-        const binding = await this.#fetchSaveBinding(response.active_save_id);
-        if (binding === null) {
+        const state = await this.#fetchSaveState();
+        if (state === null) {
           this.libraryStatus = "selecting";
           return created?.save_id ?? null;
         }
         this.#resetEphemera();
-        this.#publishSaveBinding(binding);
+        this.#publishSaveBinding(response.active_save_id, state);
         this.#hydrateOocNotes();
         this.libraryStatus = "ready";
       }
@@ -489,13 +488,13 @@ class GameStore {
       if (response.active_save_id === null) {
         throw new Error("The selected save did not become active.");
       }
-      const binding = await this.#fetchSaveBinding(response.active_save_id);
-      if (binding === null) {
+      const state = await this.#fetchSaveState();
+      if (state === null) {
         this.libraryStatus = "selecting";
         return;
       }
       this.#resetEphemera();
-      this.#publishSaveBinding(binding);
+      this.#publishSaveBinding(response.active_save_id, state);
       this.#hydrateOocNotes();
       this.libraryStatus = "ready";
     } catch (exc) {
@@ -1108,23 +1107,21 @@ class GameStore {
 
   // --- internals ---
 
-  async #fetchSaveBinding(saveId: string): Promise<SaveBinding | null> {
-    const binding = await this.#call((signal) =>
-      fetchSaveBinding(saveId, () => api.getState(signal)),
-    );
-    if (binding === null) {
+  async #fetchSaveState(): Promise<GameState | null> {
+    const state = await this.#call((signal) => api.getState(signal));
+    if (state === null) {
       this.libraryError = this.error;
       return null;
     }
-    return binding;
+    return state;
   }
 
-  #publishSaveBinding(binding: SaveBinding): void {
+  #publishSaveBinding(saveId: string, state: GameState): void {
     // Both writes are synchronous after the state fetch has completed;
     // Svelte batches them into one render, so consumers never observe
     // the selected id paired with the previous save's GameState.
-    this.activeSaveId = binding.saveId;
-    this.state = binding.state;
+    this.activeSaveId = saveId;
+    this.state = state;
   }
 
   /**

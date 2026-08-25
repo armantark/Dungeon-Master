@@ -13,7 +13,7 @@ from dungeon_master.campaign import (
     CharacterQuizResult,
     CharacterTemplatesResult,
 )
-from dungeon_master.cancel import CancellationRegistry, CancellationToken, RequestCancelledError
+from dungeon_master.cancel import CancellationToken, RequestCancelledError
 from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
 from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
 from dungeon_master.config import LLMConfig, LLMRuntimeBundle, single_llm_runtime
@@ -83,7 +83,6 @@ from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpda
 from dungeon_master.turn_router import (
     PlannedTurnOp,
     PlannedTurnOpKind,
-    RoutedTurn,
     TurnPlan,
     TurnRoute,
     TurnRouter,
@@ -1339,40 +1338,86 @@ class ResourceTrackingFakeCairnEngine(FakeCairnEngine):
         )
 
 
-def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:  # noqa: PLR0911
+def scripted_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:  # noqa: PLR0911
     if text == "Is the abbey gate watched?":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.YES_NO,
             text=text,
-            likelihood=likelihood or Likelihood.LIKELY,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.YES_NO,
+                    text=text,
+                    likelihood=likelihood or Likelihood.LIKELY,
+                ),
+            ),
         )
     if text == "I cross the bone bridge before dawn.":
-        return RoutedTurn(route=TurnRoute.SCENE_CHECK, text=text)
+        return TurnPlan(
+            route=TurnRoute.SCENE_CHECK,
+            text=text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.SCENE_CHECK, text=text),),
+        )
     if text == "I balance across the abbey beam.":
-        return RoutedTurn(route=TurnRoute.SAVE, text=text, ability=CairnAbility.DEX)
+        return TurnPlan(
+            route=TurnRoute.SAVE,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SAVE,
+                    text=text,
+                    ability=CairnAbility.DEX,
+                ),
+            ),
+        )
     if text == "I swing my cudgel at the abbey ghoul.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.ATTACK,
             text=text,
-            target_name="Abbey ghoul",
-            stance=AttackStance.NORMAL,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ATTACK,
+                    text=text,
+                    target_name="Abbey ghoul",
+                    stance=AttackStance.NORMAL,
+                ),
+            ),
         )
     if text == "I catch my breath and drink water.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.RECOVERY,
             text=text,
-            rest_kind=CairnRestKind.BREATHER,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECOVERY,
+                    text=text,
+                    rest_kind=CairnRestKind.BREATHER,
+                ),
+            ),
         )
     if text == "I draw the test knife.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.EQUIP,
             text=text,
-            item_name="Test knife",
-            equipped=True,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.EQUIP,
+                    text=text,
+                    item_name="Test knife",
+                    equipped=True,
+                ),
+            ),
         )
     if text == "I fall back through the chapel arch.":
-        return RoutedTurn(route=TurnRoute.RETREAT, text=text)
-    return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=text)
+        return TurnPlan(
+            route=TurnRoute.RETREAT,
+            text=text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.RETREAT, text=text),),
+        )
+    return TurnPlan(
+        route=TurnRoute.PLAYER_ACTION,
+        text=text,
+        ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+    )
 
 
 def test_service_commits_oracle_turn_with_narration(tmp_path: Path) -> None:
@@ -3179,6 +3224,42 @@ def test_regenerate_response_preserves_oracle_outcome(tmp_path: Path) -> None:
     assert repaired.action_log[-1].content.startswith("GEN 2:")
 
 
+def test_regenerate_response_reapplies_all_narration_derived_state(tmp_path: Path) -> None:
+    narrative = CountingNarrative()
+
+    def mutate_character(state: GameState, narrative_text: str) -> tuple[str, ...]:
+        state.character.cairn.abilities.append(narrative_text)
+        return ("Narrated ability applied.",)
+
+    def mutate_inventory(state: GameState, outcome: OracleOutcome) -> tuple[str, ...]:
+        del outcome
+        state.character.inventory.append(
+            InventoryItem(name="Narrated token", details="Derived from the replacement prose."),
+        )
+        return ("Narrated inventory applied.",)
+
+    character_updater = FakeCharacterEffectUpdater(mutate=mutate_character)
+    inventory_updater = FakeInventoryUpdater(mutate=mutate_inventory)
+    service = GameService(
+        store=StateStore(tmp_path / "game_state.json"),
+        oracle=OracleEngine(seed=1),
+        narrative=narrative,
+        campaign_generator=FakeCampaignGenerator(),
+        character_generator=FakeCharacterGenerator(),
+        cairn_engine=FakeCairnEngine(),
+        character_effect_updater=character_updater,
+        inventory_updater=inventory_updater,
+    )
+
+    first = service.ask_oracle("Is the abbey gate watched?", Likelihood.LIKELY)
+    repaired = service.regenerate_response(first.action_log[-1].id)
+
+    assert len(character_updater.calls) == 2
+    assert len(inventory_updater.calls) == 2
+    assert repaired.character.cairn.abilities[-1].startswith("GEN 2:")
+    assert [item.name for item in repaired.character.inventory].count("Narrated token") == 1
+
+
 def test_streamed_regenerate_does_not_duplicate_prior_narrative(tmp_path: Path) -> None:
     narrative = CountingNarrative()
     service = GameService(
@@ -3504,7 +3585,7 @@ def test_service_recon_turn_does_not_advance_scene_and_reconciles_after_narratio
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
 
-    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
         if text == "Are there enemies along the goat-path?":
             return TurnPlan(
                 route=TurnRoute.PLAYER_ACTION,
@@ -4190,8 +4271,7 @@ def test_stream_cancel_discards_inflight_turn_state(tmp_path: Path) -> None:
         cairn_engine=FakeCairnEngine(),
     )
     before = service.load_state()
-    registry = CancellationRegistry()
-    token = registry.register("req_test")
+    token = CancellationToken("req_test")
 
     stream = service.stream_submit_player_action(
         "I wait in silence.",
@@ -4468,7 +4548,7 @@ def test_streamed_pure_narrate_turn_has_one_continuity_stage(
 def test_streamed_recon_turn_has_one_continuity_stage(
     tmp_path: Path,
 ) -> None:
-    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
         if text == "Are there enemies along the goat-path?":
             return TurnPlan(
                 route=TurnRoute.PLAYER_ACTION,

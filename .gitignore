@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.deepeval/
 *.egg-info/
 
 # Persisted game state — regenerated on every campaign reset

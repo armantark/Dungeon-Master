@@ -17,7 +17,6 @@ from dungeon_master.turn_router import (
     TURN_ROUTER_SYSTEM_PROMPT,
     PlannedTurnOp,
     PlannedTurnOpKind,
-    RoutedTurn,
     TurnPlan,
     TurnRoute,
     TurnRouter,
@@ -140,28 +139,40 @@ class SaveReviewRouterCompletion:
 
 def test_preserves_explicit_likelihood_hint_for_classifier() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.YES_NO,
             text=text,
-            likelihood=likelihood,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.YES_NO,
+                    text=text,
+                    likelihood=likelihood,
+                ),
+            ),
         ),
     )
-    routed = router.route("Is the abbey gate watched? [unlikely]")
+    routed = router.plan("Is the abbey gate watched? [unlikely]")
 
     assert routed.route == TurnRoute.YES_NO
     assert routed.text == "Is the abbey gate watched?"
-    assert routed.likelihood == Likelihood.UNLIKELY
+    assert routed.ops[0].likelihood == Likelihood.UNLIKELY
 
 
 def test_classifier_can_return_scene_check() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.SCENE_CHECK,
             text=text,
-            likelihood=likelihood,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SCENE_CHECK,
+                    text=text,
+                    likelihood=likelihood,
+                ),
+            ),
         ),
     )
-    routed = router.route("I cross the bone bridge before dawn.")
+    routed = router.plan("I cross the bone bridge before dawn.")
 
     assert routed.route == TurnRoute.SCENE_CHECK
     assert routed.text == "I cross the bone bridge before dawn."
@@ -169,24 +180,30 @@ def test_classifier_can_return_scene_check() -> None:
 
 def test_classifier_can_return_random_event() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.RANDOM_EVENT,
             text=text,
-            likelihood=likelihood,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RANDOM_EVENT,
+                    text=text,
+                    likelihood=likelihood,
+                ),
+            ),
         ),
     )
-    routed = router.route("Something happens in the chapel.")
+    routed = router.plan("Something happens in the chapel.")
 
     assert routed.route == TurnRoute.RANDOM_EVENT
 
 
 def test_unconfigured_router_falls_back_to_player_action() -> None:
-    routed = TurnRouter(config=NarrativeConfig(model="", api_key=None, base_url=None)).route(
+    routed = TurnRouter(config=NarrativeConfig(model="", api_key=None, base_url=None)).plan(
         "I listen at the abbey door.",
     )
 
     assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.likelihood is None
+    assert routed.ops[0].likelihood is None
 
 
 def test_router_prompt_avoids_saves_when_context_already_grants_opening() -> None:
@@ -260,49 +277,67 @@ def test_router_logs_decision_and_traces_request(caplog: pytest.LogCaptureFixtur
 
 def test_classifier_can_return_dex_save() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.SAVE,
             text=text,
-            likelihood=likelihood,
-            ability=CairnAbility.DEX,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SAVE,
+                    text=text,
+                    likelihood=likelihood,
+                    ability=CairnAbility.DEX,
+                ),
+            ),
         ),
     )
-    routed = router.route("I balance across the abbey beam.")
+    routed = router.plan("I balance across the abbey beam.")
 
     assert routed.route == TurnRoute.SAVE
-    assert routed.ability == CairnAbility.DEX
+    assert routed.ops[0].ability == CairnAbility.DEX
 
 
 def test_classifier_can_return_wil_save() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.SAVE,
             text=text,
-            likelihood=likelihood,
-            ability=CairnAbility.WIL,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SAVE,
+                    text=text,
+                    likelihood=likelihood,
+                    ability=CairnAbility.WIL,
+                ),
+            ),
         ),
     )
-    routed = router.route("I persuade the guard to lower the pike.")
+    routed = router.plan("I persuade the guard to lower the pike.")
 
     assert routed.route == TurnRoute.SAVE
-    assert routed.ability == CairnAbility.WIL
+    assert routed.ops[0].ability == CairnAbility.WIL
 
 
 def test_classifier_can_return_attack_route() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.ATTACK,
             text=text,
-            likelihood=likelihood,
-            target_name="Abbey ghoul",
-            stance=AttackStance.NORMAL,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ATTACK,
+                    text=text,
+                    likelihood=likelihood,
+                    target_name="Abbey ghoul",
+                    stance=AttackStance.NORMAL,
+                ),
+            ),
         ),
     )
-    routed = router.route("I swing my cudgel at the abbey ghoul.")
+    routed = router.plan("I swing my cudgel at the abbey ghoul.")
 
     assert routed.route == TurnRoute.ATTACK
-    assert routed.target_name == "Abbey ghoul"
-    assert routed.stance == AttackStance.NORMAL
+    assert routed.ops[0].target_name == "Abbey ghoul"
+    assert routed.ops[0].stance == AttackStance.NORMAL
 
 
 def test_turn_router_prompt_keeps_broad_combat_intent_out_of_attack() -> None:
@@ -312,7 +347,7 @@ def test_turn_router_prompt_keeps_broad_combat_intent_out_of_attack() -> None:
         completion_function=completion,
     )
 
-    routed = router.route("Let's find a fight.")
+    routed = router.plan("Let's find a fight.")
 
     assert routed.route == TurnRoute.PLAYER_ACTION
     assert completion.messages is not None
@@ -428,11 +463,10 @@ def test_model_attack_plan_requires_structured_combat_review_approval() -> None:
         completion_function=completion,
     )
 
-    routed = router.route("Let us find a fight.")
+    routed = router.plan("Let us find a fight.")
 
     assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.plan is not None
-    assert [op.kind for op in routed.plan.ops] == [PlannedTurnOpKind.NARRATE]
+    assert [op.kind for op in routed.ops] == [PlannedTurnOpKind.NARRATE]
     assert [request.trace_route for request in completion.requests] == [
         "turn_router.plan",
         "turn_router.combat_review",
@@ -446,10 +480,10 @@ def test_structured_combat_review_can_allow_explicit_attack_plan() -> None:
         completion_function=completion,
     )
 
-    routed = router.route("I swing my cudgel at the abbey ghoul.")
+    routed = router.plan("I swing my cudgel at the abbey ghoul.")
 
     assert routed.route == TurnRoute.ATTACK
-    assert routed.target_name == "Abbey ghoul"
+    assert routed.ops[0].target_name == "Abbey ghoul"
     assert [request.trace_route for request in completion.requests] == [
         "turn_router.plan",
         "turn_router.combat_review",
@@ -463,11 +497,10 @@ def test_model_save_plan_requires_structured_save_review_approval() -> None:
         completion_function=completion,
     )
 
-    routed = router.route("I keep the persona going.")
+    routed = router.plan("I keep the persona going.")
 
     assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.plan is not None
-    assert [op.kind for op in routed.plan.ops] == [PlannedTurnOpKind.NARRATE]
+    assert [op.kind for op in routed.ops] == [PlannedTurnOpKind.NARRATE]
     assert [request.trace_route for request in completion.requests] == [
         "turn_router.plan",
         "turn_router.save_review",
@@ -481,10 +514,10 @@ def test_structured_save_review_can_allow_risky_save_plan() -> None:
         completion_function=completion,
     )
 
-    routed = router.route("I keep my nerve under pressure.")
+    routed = router.plan("I keep my nerve under pressure.")
 
     assert routed.route == TurnRoute.SAVE
-    assert routed.ability == CairnAbility.WIL
+    assert routed.ops[0].ability == CairnAbility.WIL
     assert [request.trace_route for request in completion.requests] == [
         "turn_router.plan",
         "turn_router.save_review",
@@ -657,17 +690,23 @@ def test_combat_review_allows_active_companion_weapon_command_prompt() -> None:
 
 def test_classifier_can_return_recovery_route() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.RECOVERY,
             text=text,
-            likelihood=likelihood,
-            rest_kind=CairnRestKind.BREATHER,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECOVERY,
+                    text=text,
+                    likelihood=likelihood,
+                    rest_kind=CairnRestKind.BREATHER,
+                ),
+            ),
         ),
     )
-    routed = router.route("I catch my breath and drink water.")
+    routed = router.plan("I catch my breath and drink water.")
 
     assert routed.route == TurnRoute.RECOVERY
-    assert routed.rest_kind == CairnRestKind.BREATHER
+    assert routed.ops[0].rest_kind == CairnRestKind.BREATHER
 
 
 def test_classifier_can_return_survival_time_and_actions() -> None:
@@ -682,40 +721,49 @@ def test_classifier_can_return_survival_time_and_actions() -> None:
     )
 
     planned = router.plan("I eat some trail rations and keep moving.")
-    routed = router.route("I eat some trail rations and keep moving.")
 
     assert planned.time_advance == CairnTimeAdvance.WATCH
     assert planned.survival_actions == (CairnSurvivalAction.EAT,)
-    assert routed.time_advance == CairnTimeAdvance.WATCH
-    assert routed.survival_actions == (CairnSurvivalAction.EAT,)
 
 
 def test_classifier_can_return_equip_route() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.EQUIP,
             text=text,
-            likelihood=likelihood,
-            item_name="Test knife",
-            equipped=True,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.EQUIP,
+                    text=text,
+                    likelihood=likelihood,
+                    item_name="Test knife",
+                    equipped=True,
+                ),
+            ),
         ),
     )
-    routed = router.route("I draw the test knife.")
+    routed = router.plan("I draw the test knife.")
 
     assert routed.route == TurnRoute.EQUIP
-    assert routed.item_name == "Test knife"
-    assert routed.equipped is True
+    assert routed.ops[0].item_name == "Test knife"
+    assert routed.ops[0].equipped is True
 
 
 def test_classifier_can_return_retreat_route() -> None:
     router = TurnRouter(
-        classifier=lambda text, likelihood: RoutedTurn(
+        classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.RETREAT,
             text=text,
-            likelihood=likelihood,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RETREAT,
+                    text=text,
+                    likelihood=likelihood,
+                ),
+            ),
         ),
     )
-    routed = router.route("I fall back through the chapel arch.")
+    routed = router.plan("I fall back through the chapel arch.")
 
     assert routed.route == TurnRoute.RETREAT
     assert routed.text == "I fall back through the chapel arch."
@@ -736,12 +784,10 @@ def test_classifier_can_return_recon_search_scene_plan() -> None:
     )
 
     planned = router.plan("Are there enemies along the goat-path?")
-    routed = router.route("Are there enemies along the goat-path?")
 
     assert planned.route == TurnRoute.PLAYER_ACTION
     assert [op.kind for op in planned.ops] == [PlannedTurnOpKind.SEARCH_SCENE]
-    assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.text == "Are there enemies along the goat-path?"
+    assert planned.text == "Are there enemies along the goat-path?"
 
 
 def test_classifier_can_return_committed_scene_transition_plan() -> None:
@@ -759,15 +805,13 @@ def test_classifier_can_return_committed_scene_transition_plan() -> None:
     )
 
     planned = router.plan("I continue down the goat-path.")
-    routed = router.route("I continue down the goat-path.")
 
     assert planned.route == TurnRoute.SCENE_CHECK
     assert [op.kind for op in planned.ops] == [PlannedTurnOpKind.SCENE_CHECK]
-    assert routed.route == TurnRoute.SCENE_CHECK
-    assert routed.text == "I continue down the goat-path."
+    assert planned.text == "I continue down the goat-path."
 
 
-def test_classifier_can_return_compound_plan_and_route_uses_primary_op() -> None:
+def test_classifier_can_return_compound_plan() -> None:
     router = TurnRouter(
         classifier=lambda text, likelihood: TurnPlan(
             route=TurnRoute.ATTACK,
@@ -791,15 +835,13 @@ def test_classifier_can_return_compound_plan_and_route_uses_primary_op() -> None
     )
 
     planned = router.plan("I draw the knife and strike the abbey ghoul.")
-    routed = router.route("I draw the knife and strike the abbey ghoul.")
 
     assert planned.route == TurnRoute.ATTACK
     assert [op.kind for op in planned.ops] == [
         PlannedTurnOpKind.EQUIP,
         PlannedTurnOpKind.ATTACK,
     ]
-    assert routed.route == TurnRoute.ATTACK
-    assert routed.target_name == "Abbey ghoul"
+    assert planned.ops[-1].target_name == "Abbey ghoul"
 
 
 def test_classifier_can_return_inventory_acquisition_plan() -> None:
@@ -826,16 +868,14 @@ def test_classifier_can_return_inventory_acquisition_plan() -> None:
     )
 
     planned = router.plan("I loot the abbey ghoul for a lantern and a purse of coins.")
-    routed = router.route("I loot the abbey ghoul for a lantern and a purse of coins.")
 
     assert planned.route == TurnRoute.PLAYER_ACTION
     assert [op.kind for op in planned.ops] == [
         PlannedTurnOpKind.ACQUIRE_ITEM,
         PlannedTurnOpKind.EQUIP,
     ]
-    assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.item_name == "Pilgrim lantern"
-    assert routed.equipped is True
+    assert planned.ops[-1].item_name == "Pilgrim lantern"
+    assert planned.ops[-1].equipped is True
 
 
 def test_classifier_can_return_inventory_transfer_plan() -> None:
@@ -857,15 +897,12 @@ def test_classifier_can_return_inventory_transfer_plan() -> None:
     router = TurnRouter(classifier=transfer_classifier)
 
     planned = router.plan("I hand the test map to Brother Sava.")
-    routed = router.route("I hand the test map to Brother Sava.")
 
     assert planned.route == TurnRoute.PLAYER_ACTION
     assert planned.ops[0].kind == PlannedTurnOpKind.TRANSFER_ITEM
     assert planned.ops[0].source_actor_name == "player"
     assert planned.ops[0].target_actor_name == "Brother Sava"
-    assert routed.item_name == "Test map"
-    assert routed.source_actor_name == "player"
-    assert routed.target_actor_name == "Brother Sava"
+    assert planned.ops[0].item_name == "Test map"
 
 
 def test_classifier_can_return_npc_recruitment_plan() -> None:
@@ -885,12 +922,10 @@ def test_classifier_can_return_npc_recruitment_plan() -> None:
     router = TurnRouter(classifier=recruit_classifier)
 
     planned = router.plan("I ask Brother Sava to join us.")
-    routed = router.route("I ask Brother Sava to join us.")
 
     assert planned.route == TurnRoute.PLAYER_ACTION
     assert planned.ops[0].kind == PlannedTurnOpKind.RECRUIT_NPC
     assert planned.ops[0].npc_name == "Brother Sava"
-    assert routed.npc_name == "Brother Sava"
 
 
 def test_classifier_can_return_holy_relic_use_plan() -> None:
@@ -910,13 +945,10 @@ def test_classifier_can_return_holy_relic_use_plan() -> None:
     router = TurnRouter(classifier=relic_classifier)
 
     planned = router.plan("I kiss the leaden icon and ask for intercession.")
-    routed = router.route("I kiss the leaden icon and ask for intercession.")
 
     assert planned.route == TurnRoute.PLAYER_ACTION
     assert planned.ops[0].kind == PlannedTurnOpKind.USE_ITEM
     assert planned.ops[0].item_name == "leaden icon"
-    assert routed.route == TurnRoute.PLAYER_ACTION
-    assert routed.item_name == "leaden icon"
 
 
 def test_classifier_can_return_enemy_opener_plan_while_preserving_harm_route() -> None:
@@ -940,15 +972,10 @@ def test_classifier_can_return_enemy_opener_plan_while_preserving_harm_route() -
     planned = router.plan(
         "The abbey ghoul drops from the choir loft and claws me before I can raise my cudgel.",
     )
-    routed = router.route(
-        "The abbey ghoul drops from the choir loft and claws me before I can raise my cudgel.",
-    )
 
     assert planned.route == TurnRoute.HARM
     assert planned.ops[0].kind == PlannedTurnOpKind.ENEMY_OPENER
     assert planned.ops[0].harm_source == "Abbey ghoul"
-    assert routed.route == TurnRoute.HARM
-    assert routed.harm_source == "Abbey ghoul"
 
 
 def test_router_prompt_includes_bounded_memory_context() -> None:

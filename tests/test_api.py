@@ -17,12 +17,14 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from dungeon_master import __version__
 from dungeon_master.api import (
     PlayerTurnRequest,
     create_app,
     reattach_request_stream,
     submit_turn_stream,
 )
+from dungeon_master.application.continuity import ThreadUpdater as ThreadUpdaterPort
 from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignWorldResult,
@@ -94,13 +96,12 @@ from dungeon_master.npc_updater import (
 )
 from dungeon_master.oracle import OracleEngine
 from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService, NPCUpdaterPort, ThreadUpdaterPort
+from dungeon_master.service import GameService, NPCUpdaterPort
 from dungeon_master.state_store import StateStore
 from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
 from dungeon_master.turn_router import (
     PlannedTurnOp,
     PlannedTurnOpKind,
-    RoutedTurn,
     TurnPlan,
     TurnRoute,
     TurnRouter,
@@ -672,6 +673,37 @@ class FakeCairnEngine:
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
 
+    def transfer_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        source_actor_id: str | None,
+        target_actor_id: str | None,
+    ) -> str:
+        def actor_sheet(actor_id: str | None) -> CharacterSheet:
+            if actor_id is None:
+                return state.character
+            member = next(
+                (candidate for candidate in state.party_members if candidate.id == actor_id),
+                None,
+            )
+            if member is None:
+                message = f"Unknown actor: {actor_id}"
+                raise ValueError(message)
+            return member.sheet
+
+        source = actor_sheet(source_actor_id)
+        target = actor_sheet(target_actor_id)
+        item = next((candidate for candidate in source.inventory if candidate.id == item_id), None)
+        if item is None:
+            message = f"Unknown inventory item: {item_id}"
+            raise ValueError(message)
+        source.inventory = [candidate for candidate in source.inventory if candidate.id != item_id]
+        item.cairn.equipped = False
+        target.inventory.append(item)
+        return f"Transferred {item.name}."
+
     def backfill_companion_sheet(
         self,
         state: GameState,
@@ -1122,38 +1154,80 @@ class FakeNpcUpdater:
         return self._repair or LegacyNPCRosterRepairResult()
 
 
-def scripted_classifier(text: str, likelihood: Likelihood | None) -> RoutedTurn:  # noqa: PLR0911
+def scripted_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:  # noqa: PLR0911
     if text == "Is the abbey gate watched?":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.YES_NO,
             text=text,
-            likelihood=likelihood or Likelihood.UNLIKELY,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.YES_NO,
+                    text=text,
+                    likelihood=likelihood or Likelihood.UNLIKELY,
+                ),
+            ),
         )
     if text == "I balance across the abbey beam.":
-        return RoutedTurn(route=TurnRoute.SAVE, text=text, ability=CairnAbility.DEX)
+        return TurnPlan(
+            route=TurnRoute.SAVE,
+            text=text,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.SAVE,
+                    text=text,
+                    ability=CairnAbility.DEX,
+                ),
+            ),
+        )
     if text == "I swing my cudgel at the abbey ghoul.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.ATTACK,
             text=text,
-            target_name="Abbey ghoul",
-            stance=AttackStance.NORMAL,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.ATTACK,
+                    text=text,
+                    target_name="Abbey ghoul",
+                    stance=AttackStance.NORMAL,
+                ),
+            ),
         )
     if text == "I catch my breath and drink water.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.RECOVERY,
             text=text,
-            rest_kind=CairnRestKind.BREATHER,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.RECOVERY,
+                    text=text,
+                    rest_kind=CairnRestKind.BREATHER,
+                ),
+            ),
         )
     if text == "I draw the test knife.":
-        return RoutedTurn(
+        return TurnPlan(
             route=TurnRoute.EQUIP,
             text=text,
-            item_name="Test knife",
-            equipped=True,
+            ops=(
+                PlannedTurnOp(
+                    kind=PlannedTurnOpKind.EQUIP,
+                    text=text,
+                    item_name="Test knife",
+                    equipped=True,
+                ),
+            ),
         )
     if text == "I fall back through the chapel arch.":
-        return RoutedTurn(route=TurnRoute.RETREAT, text=text)
-    return RoutedTurn(route=TurnRoute.PLAYER_ACTION, text=text)
+        return TurnPlan(
+            route=TurnRoute.RETREAT,
+            text=text,
+            ops=(PlannedTurnOp(kind=PlannedTurnOpKind.RETREAT, text=text),),
+        )
+    return TurnPlan(
+        route=TurnRoute.PLAYER_ACTION,
+        text=text,
+        ops=(PlannedTurnOp(kind=PlannedTurnOpKind.NARRATE, text=text),),
+    )
 
 
 def _client(  # noqa: PLR0913
@@ -1313,6 +1387,14 @@ def test_health(tmp_path: Path) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_openapi_uses_package_version(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"]["version"] == __version__
+
+
 def test_cancel_unknown_request_returns_false(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         response = client.post("/api/requests/req_missing/cancel")
@@ -1322,11 +1404,15 @@ def test_cancel_unknown_request_returns_false(tmp_path: Path) -> None:
 
 def test_cancel_live_request_returns_true(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        token = cast("Any", client.app).state.cancellation_registry.register("req_live")
+        session = cast("Any", client.app).state.stream_runtime.sessions.register(
+            "req_live",
+            route="test",
+            save_id=None,
+        )
         response = client.post("/api/requests/req_live/cancel")
     assert response.status_code == 200
     assert response.json() == {"cancelled": True}
-    assert token.cancelled
+    assert session.cancel_token.cancelled
 
 
 def test_library_bootstrap_returns_empty_when_no_saves_exist(tmp_path: Path) -> None:
@@ -1515,7 +1601,11 @@ def test_llm_settings_endpoint_rejects_switch_while_request_is_in_flight(
     with TestClient(
         create_app(save_library=library, runtime_settings_store=settings_store),
     ) as client:
-        cast("Any", client.app).state.cancellation_registry.register("req_live")
+        cast("Any", client.app).state.stream_runtime.sessions.register(
+            "req_live",
+            route="test",
+            save_id=None,
+        )
         response = client.post(
             "/api/settings/llm",
             json={"preset": LLMPreset.GEMINI_SPLIT.value},
@@ -1587,7 +1677,11 @@ def test_select_save_endpoint_rejects_switch_while_request_is_in_flight(
     second_id = library.create_save(create_state=service.new_setup_state(), select=False)
 
     with TestClient(create_app(service=service, save_library=library)) as client:
-        cast("Any", client.app).state.cancellation_registry.register("req_live")
+        cast("Any", client.app).state.stream_runtime.sessions.register(
+            "req_live",
+            route="test",
+            save_id=library.active_save_id(),
+        )
         response = client.post("/api/library/select", json={"save_id": second_id})
 
     assert response.status_code == 409
@@ -1618,8 +1712,7 @@ def test_reattach_request_stream_rejects_different_active_save(tmp_path: Path) -
         response = submit_turn_stream(
             request=_request_for_app(app, "/api/turn/stream"),
             svc=app.state.service,
-            registry=app.state.cancellation_registry,
-            session_registry=app.state.session_registry,
+            stream_runtime=app.state.stream_runtime,
             payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
         )
         initial_events = asyncio.run(_collect_stream_events(response.body_iterator, limit=1))
@@ -1629,7 +1722,7 @@ def test_reattach_request_stream_rejects_different_active_save(tmp_path: Path) -
         resumed = reattach_request_stream(
             request=_request_for_app(app, f"/api/requests/{request_id}/stream"),
             request_id=request_id,
-            session_registry=app.state.session_registry,
+            stream_runtime=app.state.stream_runtime,
         )
         resumed_events = asyncio.run(_collect_stream_events(resumed.body_iterator))
         assert resumed_events[-1]["type"] == "final_state"
@@ -1785,7 +1878,7 @@ def test_submit_turn_routes_natural_question(tmp_path: Path) -> None:
 
 
 def test_submit_turn_recon_question_does_not_advance_scene(tmp_path: Path) -> None:
-    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
+    def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan:
         if text == "Are there enemies along the goat-path?":
             return TurnPlan(
                 route=TurnRoute.PLAYER_ACTION,
@@ -2248,8 +2341,7 @@ def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> Non
         response = submit_turn_stream(
             request=_request_for_app(app, "/api/turn/stream"),
             svc=app.state.service,
-            registry=app.state.cancellation_registry,
-            session_registry=app.state.session_registry,
+            stream_runtime=app.state.stream_runtime,
             payload=PlayerTurnRequest(text="I swing my cudgel at the abbey ghoul."),
         )
         initial_events = asyncio.run(
@@ -2271,7 +2363,7 @@ def test_submit_turn_stream_can_reattach_after_disconnect(tmp_path: Path) -> Non
         resumed = reattach_request_stream(
             request=_request_for_app(app, f"/api/requests/{request_id}/stream"),
             request_id=request_id,
-            session_registry=app.state.session_registry,
+            stream_runtime=app.state.stream_runtime,
         )
         resumed_events = asyncio.run(
             _collect_stream_events(

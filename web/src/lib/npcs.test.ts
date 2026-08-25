@@ -94,6 +94,20 @@ function state(overrides: Partial<GameState>): GameState {
     oracle_history: overrides.oracle_history ?? [],
     action_log: overrides.action_log ?? [],
     campaign_seed: overrides.campaign_seed ?? defaultCampaignSeed(),
+    encounter: overrides.encounter ?? {
+      active: false,
+      round_number: 0,
+      first_round_dex_gate_pending: false,
+      initiator: null,
+      casualty_morale_checked: false,
+      half_force_morale_checked: false,
+      player_disengaged: false,
+      pursuit_active: false,
+      end_reason: null,
+      combatants: [],
+      pending_advantages: [],
+      notes: "",
+    },
   };
 }
 

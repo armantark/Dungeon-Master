@@ -961,9 +961,7 @@ export interface GameState {
   hidden_npcs: NPC[];
   // Canonical backend encounter payload. Combat components adapt this
   // wire shape into a presentation-only view model in `combat.ts`.
-  // Optional only for legacy saves and narrow test fixtures; current
-  // backend responses always publish it.
-  encounter?: EncounterState;
+  encounter: EncounterState;
   oracle_tables: OracleTables;
   oracle_history: OracleOutcome[];
   action_log: GameEvent[];

@@ -50,6 +50,20 @@ function endedState(overrides: Partial<GameState>): GameState {
     action_log: [],
     campaign_seed: defaultCampaignSeed(),
     ...overrides,
+    encounter: overrides.encounter ?? {
+      active: false,
+      round_number: 0,
+      first_round_dex_gate_pending: false,
+      initiator: null,
+      casualty_morale_checked: false,
+      half_force_morale_checked: false,
+      player_disengaged: false,
+      pursuit_active: false,
+      end_reason: null,
+      combatants: [],
+      pending_advantages: [],
+      notes: "",
+    },
   };
 }
 

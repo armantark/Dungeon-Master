@@ -243,4 +243,3 @@ class CampaignGenerator:
         if self.config.app_name is not None:
             headers["X-Title"] = self.config.app_name
         return headers or None
-

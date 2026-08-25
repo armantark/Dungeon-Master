@@ -324,6 +324,9 @@ describe("combatFromState", () => {
       armor: 1,
       weapon_name: "Cleaver",
       weapon_damage_die: 6,
+      threat_level: "ordinary",
+      weakness: "",
+      tactics: "",
       leader: false,
       critically_wounded: false,
       defeated: false,
@@ -332,14 +335,6 @@ describe("combatFromState", () => {
       ...overrides,
     };
   }
-
-  it("returns null when state has no encounter field", () => {
-    expect(combatFromState({})).toBeNull();
-  });
-
-  it("returns null when encounter is explicitly null", () => {
-    expect(combatFromState({ encounter: null })).toBeNull();
-  });
 
   it("returns null for a default-empty encounter (no foes, inactive, no notes)", () => {
     expect(combatFromState({ encounter: backendEncounter() })).toBeNull();
@@ -441,33 +436,7 @@ describe("combatFromState", () => {
     expect(playerAdapted?.initiator).toBe("player");
   });
 
-  it("defaults a missing initiator (legacy state) to null instead of throwing", () => {
-    // Pre-F-05 state blobs don't include the field. Adapting them
-    // must produce a usable encounter — the absent field collapses
-    // to null and the UI degrades to the pre-F-05 behavior of
-    // "no ambush cue".
-    const adapted = combatFromState({
-      encounter: {
-        active: true,
-        round_number: 1,
-        first_round_dex_gate_pending: true,
-        casualty_morale_checked: false,
-        half_force_morale_checked: false,
-        player_disengaged: false,
-        pursuit_active: false,
-        end_reason: null,
-        combatants: [backendFoe()],
-        notes: "",
-      },
-    });
-    expect(adapted?.initiator).toBeNull();
-  });
-
-  it("defaults missing F-19 threat fields to ordinary tier and empty hint strings", () => {
-    // Pre-F-19 state blobs don't include `threat_level` /
-    // `weakness` / `tactics`. Adapting them should produce an
-    // ordinary-tier foe with no advisory text — the tracker
-    // degrades gracefully back to the pre-scaling render.
+  it("threads through ordinary threat fields", () => {
     const adapted = combatFromState({
       encounter: backendEncounter({
         active: true,
@@ -501,15 +470,7 @@ describe("combatFromState", () => {
     expect(foe.tactics).toContain("cover");
   });
 
-  it("threads through F-18 pending advantages, defaulting missing wire to []", () => {
-    // Older saves that pre-date pending_advantages still adapt:
-    // missing field collapses to an empty list so the tracker
-    // never crashes on a legacy encounter blob.
-    const legacy = combatFromState({
-      encounter: backendEncounter({ active: true, combatants: [backendFoe()] }),
-    });
-    expect(legacy?.pending_advantages).toEqual([]);
-
+  it("threads through F-18 pending advantages", () => {
     const live = combatFromState({
       encounter: {
         ...backendEncounter({ active: true, combatants: [backendFoe()] }),

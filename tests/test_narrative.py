@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.cancel import CancellationRegistry, RequestCancelledError
+from dungeon_master.cancel import CancellationToken, RequestCancelledError
 from dungeon_master.models import (
     CairnCharacterState,
     CairnItemState,
@@ -768,8 +768,7 @@ def test_narrative_engine_allows_fixed_medium_reasoning() -> None:
 
 
 def test_narrative_stream_raises_on_cancellation_without_fallback() -> None:
-    registry = CancellationRegistry()
-    token = registry.register("req_test")
+    token = CancellationToken("req_test")
     state = sample_state()
     outcome = OracleOutcome(
         kind=OracleKind.PLAYER_ACTION,
