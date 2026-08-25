@@ -1,6 +1,6 @@
 # Dungeon Master
 
-A personal solo TTRPG harness where Python owns deterministic mechanics and a LiteLLM-routed model is restricted to narration. The frontend is a bespoke Svelte 5 grimoire UI; the backend is a FastAPI server.
+A personal solo TTRPG harness where Python owns mechanics, validation, pipeline order, and canonical commits. LiteLLM-routed model workers produce typed semantic proposals and narration, but they never write campaign state directly. The frontend is a bespoke Svelte 5 grimoire UI; the backend is a FastAPI server.
 
 [![Desktop beta v0.1.1](https://img.shields.io/badge/desktop%20beta-v0.1.1-b08a36)](https://github.com/armantark/Dungeon-Master/releases/tag/desktop-v0.1.1)
 [![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-6f5f2f)](https://github.com/armantark/Dungeon-Master/releases/download/desktop-v0.1.1/Dungeon.Master_0.1.1_aarch64.dmg)
@@ -22,35 +22,57 @@ These captures use the isolated fixture save library (`dungeon-master-fixtures`)
 
 ## What It Does
 
-- Tracks canonical state in `data/game_state.json` and writes append-only events to `data/events.jsonl`.
-- Snapshots a checkpoint into `data/checkpoints/` after every meaningful turn.
+- Manages local campaigns through `data/library.json`, with each save stored under `data/saves/<save_id>/`.
+- Keeps canonical state in each save's `game_state.json`, events in `events.jsonl`, and recovery snapshots in `checkpoints/` and `turn-checkpoints/`.
+- Builds bounded model context in a derived `memory.json` sidecar that can be rebuilt from canonical state and committed turns.
 - Uses a deterministic oracle for yes/no questions, random events, and scene checks.
 - Adds a Cairn 2e-inspired backend rules layer: `STR` / `DEX` / `WIL`, HP, armor, burden, item tags, saves, auto-hit damage, critical damage, scars, and recovery.
 - Performs a one-time mechanics backfill for the current authored character when that character first becomes mechanically active, so existing setup work is preserved.
-- Generates the opening scene, threads, NPCs, and oracle word banks on first launch (or after a reset) using the configured LLM.
-- Keeps the LLM out of dice rolls, chaos factor, threads, NPCs, and any state mutation.
+- Generates the opening scene, threads, hidden continuity cast, and oracle word banks when a campaign starts using the configured LLM.
+- Uses model workers for typed action planning, prose, and bounded continuity proposals for threads, NPCs, inventory, and character effects.
+- Keeps dice rolls, rules, validation, cancellation boundaries, and canonical state mutation in Python.
 - Falls back to deterministic placeholder narration when no model is configured.
 
 ## Architecture
 
 ```text
-+------------------+        HTTP / JSON          +-----------------------+
-|  Svelte 5 + TS   |  <----------------------->  |       FastAPI         |
-|  (web/, Vite)    |        /api/*               |  (dungeon_master.api) |
-+------------------+                             +-----------+-----------+
-                                                             |
-                                                             v
-                                          +-----------------------------------+
-                                          |        GameService                |
-                                          |  - OracleEngine (Python, dice)    |
-                                          |  - CairnEngine  (Python, rules)   |
-                                          |  - StateStore   (json + events)   |
-                                          |  - CampaignGenerator (LLM bootstrap) |
-                                          |  - NarrativeEngine   (LLM via LiteLLM) |
-                                          +-----------------------------------+
++------------------+       HTTP / JSON or NDJSON       +-----------------------+
+|  Svelte 5 + TS   |  <----------------------------->  |       FastAPI         |
+|  store mirror    |             /api/*                |  routes + cancellation|
++------------------+                                   +-----------+-----------+
+                                                                    |
+                                                                    v
+                                                       +-----------------------+
+                                                       |      GameService      |
+                                                       | ordered orchestration |
+                                                       +-----------+-----------+
+                                                                   |
+                          +----------------------------------------+-------------------+
+                          |                                        |                   |
+                          v                                        v                   v
+                 +------------------+                    +------------------+  +------------------+
+                 | TurnRouter       |                    | Oracle / Cairn   |  | NarrativeEngine  |
+                 | typed LLM plan   |                    | Python mechanics |  | prose model      |
+                 +------------------+                    +------------------+  +------------------+
+                                                                   |                   |
+                                                                   +---------+---------+
+                                                                             v
+                                                      +----------------------------------+
+                                                      | Post-narration reconciliation    |
+                                                      | typed continuity proposals       |
+                                                      +----------------+-----------------+
+                                                                       |
+                                                                       v
+                                                      +----------------------------------+
+                                                      | Python validation + commit       |
+                                                      | StateStore + derived memory      |
+                                                      +----------------+-----------------+
+                                                                       |
+                                                                       v
+                                                      complete GameState replaces client mirror
 ```
 
-The HTTP surface is intentionally thin: every mutation returns the entire `GameState`, so the frontend never reconciles partial diffs.
+The HTTP surface is intentionally thin: every committed mutation returns the complete `GameState`, so the frontend replaces its local mirror instead of reconciling partial diffs. Model outputs remain proposals until Python validates and commits them. Optional mechanics and continuity stages run only when the typed plan or resulting narration requires them.
 
 ## Run
 
@@ -120,10 +142,11 @@ It currently targets:
 
 These beta artifacts are unsigned. macOS may require right-click Open / quarantine removal, and Windows may show SmartScreen warnings until signing is added later.
 
-## Configure The Narrative Model
+## Configure Models
 
-Default preset is OpenRouter Kimi K2.6. The backend now also supports an app-global Gemini split preset:
-- `kimi`: current behavior, using `openrouter/moonshotai/kimi-k2.6` for all backend LLM work
+The code default is OpenRouter Kimi K2.6. This checkout currently selects the app-global `gemini_split` preset in `data/runtime_settings.json`:
+
+- `kimi`: use `openrouter/moonshotai/kimi-k2.6` for all backend LLM work
 - `gemini_split`: `gemini/gemini-3.5-flash-preview` for structured routing/update work and `gemini/gemini-3.1-pro-preview` for narration plus heavier generation
 
 The active preset is stored separately from `.env` in `data/runtime_settings.json` by default and can be read/updated through `GET /api/settings/llm` and `POST /api/settings/llm`.
@@ -133,7 +156,7 @@ Credential behavior now depends on how you run the app:
 - Terminal/dev workflow: `.env` still works exactly as before.
 - Desktop beta: if no usable provider key is present in the environment, the app prompts for a Gemini or OpenRouter key on first launch and stores it in a local runtime credentials file under the app-data directory.
 
-Character interview, character drafting, and campaign bootstrap internally raise their own token budgets above the base `.env` default because Kimi K2.6 Thinking spends a large chunk of the budget on reasoning before it writes visible output.
+When the Kimi preset is active, character interview, character drafting, and campaign bootstrap raise their token budgets above the base `.env` default because Kimi K2.6 Thinking spends a large part of the budget on reasoning before it writes visible output.
 
 Copy `.env.example` to `.env` and fill in the provider keys you want available:
 
@@ -153,6 +176,8 @@ DUNGEON_MASTER_STATE_PATH=data/game_state.json
 DUNGEON_MASTER_RUNTIME_SETTINGS_PATH=data/runtime_settings.json
 DUNGEON_MASTER_CREDENTIALS_PATH=data/llm_credentials.json
 ```
+
+`DUNGEON_MASTER_STATE_PATH` remains the legacy-save and data-root anchor. `SaveLibrary` uses its parent directory for `library.json` and `saves/`, and migrates an existing flat save when it first initializes.
 
 If you stay on the default Kimi preset, `LITELLM_MODEL` remains the active backend model slug. If you switch to `gemini_split`, the backend uses the fixed Gemini 3.x LiteLLM slugs above and ignores `LITELLM_MODEL` for those runtime-routed capabilities.
 
@@ -177,6 +202,8 @@ The backend now exposes explicit Cairn-inspired mechanics routes in addition to 
 - `POST /api/cairn/attack` — resolve outgoing player damage against target armor
 - `POST /api/cairn/harm` — apply incoming damage to the player, including scars / critical damage when relevant
 - `POST /api/cairn/recover` — breather, full rest, or week-scale recovery
+- `POST /api/cairn/retreat` — resolve withdrawal from the active encounter
+- `POST /api/cairn/acquire` — turn a natural-language acquisition into validated canonical inventory
 - `POST /api/cairn/equip` — toggle item equipped state so armor / weapon semantics stay canonical
 
 All of these return the full `GameState`, just like the rest of the API.
