@@ -117,12 +117,14 @@ describe("stream resume across reloads", () => {
         route: "player_action",
       });
       captured.value = loadStreamResume(SAVE_ID);
-      handlers.onFinalState?.({
-        type: "final_state",
-        state: fakeState() as never,
-        thinking: null,
-      });
-      return Promise.resolve({ kind: "final" } as never);
+      return Promise.resolve({
+        kind: "final",
+        final: {
+          type: "final_state",
+          state: fakeState() as never,
+          thinking: null,
+        },
+      } as never);
     });
 
     await game.submitTurn("I look around");
@@ -187,12 +189,14 @@ describe("stream resume across reloads", () => {
           request_id: "req_resume",
           route: "player_action",
         });
-        handlers.onFinalState?.({
-          type: "final_state",
-          state: fakeState() as never,
-          thinking: null,
-        });
-        return Promise.resolve({ kind: "final" } as never);
+        return Promise.resolve({
+          kind: "final",
+          final: {
+            type: "final_state",
+            state: fakeState() as never,
+            thinking: null,
+          },
+        } as never);
       });
 
     await game.bootstrap();

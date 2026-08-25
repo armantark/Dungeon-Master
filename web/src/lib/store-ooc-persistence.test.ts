@@ -61,15 +61,15 @@ describe("OOC explainer persistence across reloads", () => {
     // reload (or even closing the tab) loses the OOC scrollback —
     // which is the bug we're fixing.
     game.activeSaveId = SAVE_ID;
-    vi.spyOn(api, "streamExplain").mockImplementation((_question, handlers) => {
-      handlers.onFinalPayload?.({
+    vi.spyOn(api, "streamExplain").mockResolvedValue({
+      kind: "final",
+      final: {
         type: "final_payload",
         kind: "explanation",
         payload: { answer: "Saves use a d20 vs the relevant attribute." },
         thinking: null,
-      });
-      return Promise.resolve({ kind: "final" } as never);
-    });
+      },
+    } as never);
 
     await game.submit("/explain how do saves work?");
 
@@ -165,6 +165,7 @@ describe("OOC explainer persistence across reloads", () => {
 
     await game.bootstrap();
 
+    expect(game.activeSaveId).toBe(SAVE_ID);
     const oocNotes = game.notes.filter((n) => n.kind === "explanation");
     expect(oocNotes).toHaveLength(1);
     expect(oocNotes[0]?.id).toBe("note_old");

@@ -33,7 +33,9 @@ function event(overrides: Partial<GameEvent>): GameEvent {
     event_type: overrides.event_type ?? "narrative",
     title: overrides.title ?? "",
     content: overrides.content ?? "",
+    thinking: overrides.thinking ?? "",
     oracle_outcome_id: overrides.oracle_outcome_id ?? null,
+    stage_timings: overrides.stage_timings ?? [],
   };
 }
 
@@ -166,6 +168,7 @@ describe("deriveTranscriptRows", () => {
           id: "ev_narr",
           event_type: "narrative",
           content: "The gate is watched.",
+          thinking: "The oracle supports pressure at the gate.",
           created_at: "2024-01-01T00:02:01Z",
           oracle_outcome_id: "o1",
         }),
@@ -177,6 +180,8 @@ describe("deriveTranscriptRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["dm"]);
     expect(rows[0]!.id).toBe("ev_narr");
     expect(rows[0]!.outcomeSummary).toBe("Yes (78%)");
+    expect(rows[0]!.outcome?.id).toBe("o1");
+    expect(rows[0]!.thinking).toContain("oracle supports pressure");
   });
 
   it("orders rows chronologically and interleaves client notes", () => {
@@ -205,6 +210,34 @@ describe("deriveTranscriptRows", () => {
     expect(rows.map((r) => r.id)).toEqual(["p1", "note1", "n1"]);
     expect(rows[1]!.isNote).toBe(true);
     expect(rows[1]!.kind).toBe("system");
+    expect(rows[1]!.speaker).toBe("system");
+  });
+
+  it("preserves OOC note presentation while indexing its question", () => {
+    const gs = state({
+      action_log: [
+        event({
+          id: "n1",
+          event_type: "narrative",
+          content: "The road forks.",
+        }),
+      ],
+    });
+    const notes: ClientNote[] = [{
+      id: "note_ooc",
+      kind: "explanation",
+      text: "A save rolls d20 at or under the ability.",
+      question: "How do saves work?",
+      created_at: "2024-01-01T00:01:00Z",
+    }];
+
+    const rows = deriveTranscriptRows(gs, notes);
+    const ooc = rows.find((row) => row.id === "note_ooc")!;
+
+    expect(ooc.speaker).toBe("ooc");
+    expect(ooc.text).toBe("A save rolls d20 at or under the ability.");
+    expect(ooc.question).toBe("How do saves work?");
+    expect(searchTranscript(rows, "how do saves", { includeNotes: true })).toHaveLength(1);
   });
 });
 

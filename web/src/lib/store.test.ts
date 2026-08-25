@@ -3,6 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { game } from "./store.svelte";
 
+function completedStateStream(): never {
+  return {
+    kind: "final",
+    final: {
+      type: "final_state",
+      state: { id: "state_after", oracle_history: [] },
+      thinking: null,
+    },
+  } as never;
+}
+
 describe("GameStore setup streaming", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -26,6 +37,10 @@ describe("GameStore setup streaming", () => {
     game.inspectorOpen = false;
     game.scrollRequest = null;
     game.inspectorFocusRequest = null;
+    game.activeSaveId = null;
+    game.library = [];
+    game.libraryStatus = "loading";
+    game.libraryError = null;
   });
 
   it("requestScrollTo bumps a unique seq for repeat calls so the feed re-fires", () => {
@@ -56,6 +71,52 @@ describe("GameStore setup streaming", () => {
     expect(game.scrollRequest).toBeNull();
   });
 
+  it("keeps the previous save binding visible until the selected state is fetched", async () => {
+    const oldState = { id: "state_old", oracle_history: [] } as never;
+    const newState = { id: "state_new", oracle_history: [] } as never;
+    game.activeSaveId = "save_old";
+    game.state = oldState;
+
+    vi.spyOn(api, "selectSave").mockResolvedValue({
+      active_save_id: "save_new",
+      saves: [],
+    });
+    let resolveState!: (state: typeof newState) => void;
+    vi.spyOn(api, "getState").mockReturnValue(
+      new Promise((resolve) => {
+        resolveState = resolve;
+      }),
+    );
+
+    const selecting = game.selectSave("save_new");
+    await Promise.resolve();
+    expect(game.activeSaveId).toBe("save_old");
+    expect(game.state).toBe(oldState);
+
+    resolveState(newState);
+    await selecting;
+    expect(game.activeSaveId).toBe("save_new");
+    expect(game.state).toBe(newState);
+  });
+
+  it("does not rebind the loaded save from a shelf-only library refresh", async () => {
+    const loadedState = { id: "state_old", oracle_history: [] } as never;
+    game.activeSaveId = "save_old";
+    game.state = loadedState;
+    game.libraryStatus = "ready";
+    vi.spyOn(api, "bootstrapLibrary").mockResolvedValue({
+      active_save_id: "save_changed_elsewhere",
+      saves: [],
+    });
+
+    game.openLibrary();
+    await vi.waitFor(() => expect(api.bootstrapLibrary).toHaveBeenCalledTimes(1));
+
+    expect(game.activeSaveId).toBe("save_old");
+    expect(game.state).toBe(loadedState);
+    expect(game.libraryStatus).toBe("selecting");
+  });
+
   it("requestInspectorFocus opens the inspector and bumps a unique seq for repeat clicks", () => {
     game.inspectorOpen = false;
 
@@ -78,7 +139,7 @@ describe("GameStore setup streaming", () => {
   it("translates /retreat into a free-text turn so the planner runs", async () => {
     const streamSpy = vi
       .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue({ kind: "final" } as never);
+      .mockResolvedValue(completedStateStream());
 
     const consumed = await game.submit("/retreat down the chapel stair");
 
@@ -93,7 +154,7 @@ describe("GameStore setup streaming", () => {
   it("uses a neutral default text when /retreat has no reason", async () => {
     const streamSpy = vi
       .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue({ kind: "final" } as never);
+      .mockResolvedValue(completedStateStream());
 
     await game.submit("/retreat");
 
@@ -109,7 +170,7 @@ describe("GameStore setup streaming", () => {
     // framing (looting vs. buying vs. taking).
     const streamSpy = vi
       .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue({ kind: "final" } as never);
+      .mockResolvedValue(completedStateStream());
 
     const cases: Array<[string, string]> = [
       ["/loot the captain's chest", "I loot the captain's chest."],
@@ -135,7 +196,7 @@ describe("GameStore setup streaming", () => {
     // double-punctuation.
     const streamSpy = vi
       .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue({ kind: "final" } as never);
+      .mockResolvedValue(completedStateStream());
 
     await game.submit("/loot the chest before the guards return!");
 
@@ -158,14 +219,8 @@ describe("GameStore setup streaming", () => {
 
   it("keeps composer text available when a backend turn submission fails", async () => {
     vi.spyOn(api, "streamSubmitTurn").mockImplementation(
-      (_text, handlers) => {
-        handlers.onError?.({
-          type: "error",
-          message: "Turn planning failed before any deterministic resolution could be chosen.",
-          code: "planning_failed",
-          state: null,
-        });
-        return Promise.resolve({
+      () =>
+        Promise.resolve({
           kind: "error",
           event: {
             type: "error",
@@ -173,8 +228,7 @@ describe("GameStore setup streaming", () => {
             code: "planning_failed",
             state: null,
           },
-        } as never);
-      },
+        } as never),
     );
 
     const consumed = await game.submit("I ask the patriarch's name.");
@@ -266,23 +320,23 @@ describe("GameStore setup streaming", () => {
     // The OOC explainer must hit `streamExplain` (not the unary
     // `/explain` endpoint) on the happy path so the player gets
     // streamed feedback. We mock the streaming call to mimic a
-    // real `final_payload` arrival by invoking the handler the
-    // store wires up; that's how `#runStreamingPayload` extracts
-    // the answer string. We also assert that the persisted note
+    // real `final_payload` result returned by the transport; that's
+    // how `#runStreamingPayload` extracts the answer string. We also
+    // assert that the persisted note
     // is OOC (kind `"explanation"`) and carries the player's
     // verbatim question on the same record so the chat feed can
     // render a Q+A pair.
     const streamSpy = vi
       .spyOn(api, "streamExplain")
-      .mockImplementation((_question, handlers) => {
-        handlers.onFinalPayload?.({
+      .mockResolvedValue({
+        kind: "final",
+        final: {
           type: "final_payload",
           kind: "explanation",
           payload: { answer: "Atk targets a foe; the receipt records the d20 roll." },
           thinking: null,
-        });
-        return Promise.resolve({ kind: "final" } as never);
-      });
+        },
+      } as never);
 
     const consumed = await game.submit("/explain how does atk work?");
 
@@ -441,7 +495,6 @@ describe("GameStore setup streaming", () => {
         // stable ordering before the stream completes, including a
         // stage that arrived after prose was already flowing.
         observedDuringStream = getStages();
-        handlers.onFinalState?.({ type: "final_state", state: finalState, thinking: null });
         return Promise.resolve({ kind: "final", final: { type: "final_state", state: finalState, thinking: null } } as never);
       },
     );
