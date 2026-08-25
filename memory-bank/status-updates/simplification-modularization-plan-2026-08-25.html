@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dungeon Master simplification plan</title>
+  <style>
+    :root{--bg:#0c0e12;--surface:#161a21;--surface-2:#1e232c;--border:#2a3040;--text:#e8ecf4;--text-dim:#8b95a8;--accent:#4f8cff;--accent-glow:rgba(79,140,255,.15);--red:#ff5c5c;--green:#4ade80;--amber:#fbbf24;--purple:#a78bfa;--radius:12px}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0,var(--accent-glow),transparent 34%),var(--bg);color:var(--text);font:15px/1.5 Outfit,Inter,system-ui,sans-serif}.wrap{width:min(1180px,calc(100% - 32px));margin:0 auto;padding:42px 0 64px}.badge,.tag,.priority{font:700 11px/1.2 "JetBrains Mono",ui-monospace,monospace;text-transform:uppercase;letter-spacing:.1em}.badge{display:inline-block;padding:7px 10px;border:1px solid var(--accent);border-radius:999px;color:#9ec1ff;background:var(--accent-glow)}h1{margin:16px 0 8px;font-size:clamp(28px,5vw,48px);line-height:1.05}.lead{max-width:760px;color:var(--text-dim);font-size:17px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:28px 0}.stat,.card,.flow{background:linear-gradient(145deg,var(--surface),#11151b);border:1px solid var(--border);border-radius:var(--radius)}.stat{padding:14px}.stat b{display:block;font-size:24px}.stat span{color:var(--text-dim)}.flow{padding:18px;margin:20px 0}.track{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.node{padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);position:relative}.node:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:29%;z-index:2;color:var(--accent);font-size:20px}.node small{display:block;color:var(--text-dim)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:20px}.card h2{margin:8px 0;font-size:20px}.card p{color:var(--text-dim)}.priority{color:var(--amber)}.priority.green{color:var(--green)}.priority.purple{color:var(--purple)}.tags{display:flex;flex-wrap:wrap;gap:6px}.tag{padding:5px 7px;border-radius:6px;background:var(--surface-2);color:#b7c0d2}.criteria{margin:14px 0 0;padding-left:20px}.criteria li{margin:6px 0}.guard{margin-top:18px;padding:16px;border-left:3px solid var(--red);background:rgba(255,92,92,.07);border-radius:0 10px 10px 0}.guard strong{color:#ff9b9b}@media(max-width:800px){.stats,.track,.grid{grid-template-columns:1fr}.node:not(:last-child)::after{content:"↓";right:12px;top:auto;bottom:-18px}.wrap{width:min(100% - 20px,1180px);padding-top:24px}}
+  </style>
+</head>
+<body><main class="wrap">
+  <span class="badge">Pre-implementation plan</span>
+  <h1>Cut the god files at real seams.</h1>
+  <p class="lead">The program removes split ownership first. It then moves implementation behind small, stable interfaces. Public imports, saves, HTTP payloads, and the full-state client contract stay stable.</p>
+  <section class="stats" aria-label="Plan facts">
+    <div class="stat"><b>4</b><span>runtime god files</span></div><div class="stat"><b>3</b><span>parallel Wave 1 owners</span></div><div class="stat"><b>1</b><span>shared application facade</span></div><div class="stat"><b>0</b><span>planned wire breaks</span></div>
+  </section>
+  <section class="flow"><div class="track">
+    <div class="node"><b>Remove duplication</b><small>Fix split authority.</small></div><div class="node"><b>Freeze interfaces</b><small>Keep caller contracts.</small></div><div class="node"><b>Extract modules</b><small>Move deep implementation.</small></div><div class="node"><b>Verify the system</b><small>Run backend and frontend gates.</small></div>
+  </div></section>
+  <section class="grid">
+    <article class="card"><span class="priority">Wave 1A</span><h2>Campaign generation</h2><p>Split character generation from world generation. A failed world call must not create active placeholder canon.</p><div class="tags"><span class="tag">campaign.py</span><span class="tag">generation/</span></div><ol class="criteria"><li>Keep the current public imports.</li><li>Keep offline character fallbacks.</li><li>Raise an explicit world-generation error.</li></ol></article>
+    <article class="card"><span class="priority">Wave 1B</span><h2>Inventory mechanics</h2><p>Move item transfer and complete loadout repair into the deterministic mechanics module.</p><div class="tags"><span class="tag">cairn.py</span><span class="tag">mechanics/</span></div><ol class="criteria"><li>Resolve stable actor identities.</li><li>Repair both actor sheets.</li><li>Keep `CairnEngine` as the interface.</li></ol></article>
+    <article class="card"><span class="priority green">Wave 1C</span><h2>Frontend ownership</h2><p>Give terminal events one owner. Publish a save id and state together. Use canonical encounter and transcript data.</p><div class="tags"><span class="tag">store/</span><span class="tag">contracts/</span></div><ol class="criteria"><li>Apply each terminal once.</li><li>Remove unsafe wire casts.</li><li>Delete unused UI code.</li></ol></article>
+    <article class="card"><span class="priority purple">Driver</span><h2>Turn continuity</h2><p>Move every turn to post-narration reconciliation. Delete the old pre-narration lane and delegate inventory transfer.</p><div class="tags"><span class="tag">service.py</span><span class="tag">application/</span></div><ol class="criteria"><li>Keep `GameService` as the interface.</li><li>Require final narration.</li><li>Preserve commit and cancel rules.</li></ol></article>
+  </section>
+  <div class="guard"><strong>Stop condition:</strong> Do not start Wave 2 until all backend and frontend checks pass. Reject new pass-through modules that only move code.</div>
+</main></body></html>

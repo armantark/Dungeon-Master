@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dungeon Master — Principal Engineer Panel Playbook</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f8cff'/%3E%3Cpath d='M16 18h32v8H16zm4 12h24v18H20z' fill='%230c0e12'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --surface: #161a21;
+      --surface-2: #1e232c;
+      --border: #2a3040;
+      --text: #e8ecf4;
+      --text-dim: #8b95a8;
+      --accent: #4f8cff;
+      --accent-glow: rgba(79, 140, 255, 0.15);
+      --red: #ff5c5c;
+      --green: #4ade80;
+      --amber: #fbbf24;
+      --purple: #a78bfa;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 85% 0%, rgba(167,139,250,.10), transparent 28rem), var(--bg);
+      color: var(--text);
+      font: 15px/1.5 Outfit, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: #8fb5ff; text-decoration-thickness: 1px; text-underline-offset: 3px; overflow-wrap: anywhere; }
+    a:hover, a:focus-visible { color: #bdd3ff; }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 72px; }
+    header { padding: 28px; border: 1px solid var(--border); border-radius: 18px; background: linear-gradient(135deg, rgba(79,140,255,.12), rgba(167,139,250,.06) 55%, var(--surface)); box-shadow: 0 18px 60px rgba(0,0,0,.28); }
+    .badge, .eyebrow, .tag, .optional, .always { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .08em; }
+    .badge { display: inline-flex; color: var(--accent); border: 1px solid rgba(79,140,255,.5); background: var(--accent-glow); border-radius: 99px; padding: 5px 9px; font-size: 11px; }
+    h1 { margin: 12px 0 6px; max-width: 850px; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.02; letter-spacing: -.035em; }
+    .subtitle { max-width: 850px; margin: 0; color: var(--text-dim); font-size: 1rem; }
+    nav { position: sticky; top: 0; z-index: 5; margin: 16px 0 24px; padding: 10px; display: flex; gap: 7px; overflow-x: auto; background: rgba(12,14,18,.92); border: 1px solid var(--border); border-radius: var(--radius); backdrop-filter: blur(12px); }
+    nav a { white-space: nowrap; text-decoration: none; font-size: 12px; color: var(--text-dim); padding: 6px 9px; border-radius: 7px; }
+    nav a:hover, nav a:focus-visible { color: var(--text); background: var(--surface-2); }
+    section { scroll-margin-top: 74px; margin-top: 28px; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 2px 12px; }
+    h2 { margin: 0; font-size: 1.45rem; letter-spacing: -.02em; }
+    h3 { margin: 0 0 8px; font-size: 1rem; }
+    p { margin: 0 0 10px; }
+    ul, ol { margin: 8px 0 0; padding-left: 20px; }
+    li + li { margin-top: 5px; }
+    .muted, .section-note { color: var(--text-dim); }
+    .section-note { font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgba(0,0,0,.13); }
+    .card.accent { border-color: rgba(79,140,255,.58); background: linear-gradient(145deg, rgba(79,140,255,.11), var(--surface) 45%); }
+    .card.warning { border-color: rgba(251,191,36,.48); }
+    .eyebrow { margin-bottom: 7px; color: var(--accent); font-size: 10px; }
+    .thesis { font-size: 1.1rem; line-height: 1.4; }
+    .anchor-list { list-style: none; padding: 0; }
+    .anchor-list li { position: relative; padding-left: 18px; }
+    .anchor-list li::before { content: "→"; position: absolute; left: 0; color: var(--accent); }
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .step { position: relative; min-width: 0; padding: 13px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .step::after { content: "›"; position: absolute; right: -8px; top: 32%; z-index: 1; color: var(--accent); font-size: 22px; }
+    .step:nth-child(5n)::after, .step:last-child::after { display: none; }
+    .num { display: inline-grid; place-items: center; width: 23px; height: 23px; margin-bottom: 8px; border-radius: 6px; background: var(--accent-glow); color: var(--accent); font: 700 11px "JetBrains Mono", monospace; }
+    .step strong { display: block; font-size: 13px; }
+    .step small { display: block; margin-top: 5px; color: var(--text-dim); line-height: 1.35; }
+    .always, .optional { display: inline-block; margin-top: 8px; padding: 3px 5px; border-radius: 4px; font-size: 8px; }
+    .always { color: var(--green); background: rgba(74,222,128,.10); }
+    .optional { color: var(--amber); background: rgba(251,191,36,.10); }
+    .table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); }
+    th, td { padding: 12px 13px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--text-dim); background: var(--surface-2); font: 600 10px "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .07em; }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { color: var(--text); font-weight: 650; }
+    .decision { display: grid; grid-template-rows: auto 1fr; }
+    .decision dl { margin: 10px 0 0; }
+    .decision dt { margin-top: 10px; color: var(--text-dim); font: 600 10px "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .06em; }
+    .decision dd { margin: 3px 0 0; }
+    .cost { color: var(--amber); }
+    .trigger { color: var(--green); }
+    .timeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+    .phase { padding: 18px; border: 1px solid var(--border); background: var(--surface); }
+    .phase:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+    .phase:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+    .phase + .phase { border-left: 0; }
+    .incident { border-left: 4px solid var(--red); }
+    .incident-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .label { color: var(--red); font: 600 10px "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .07em; }
+    .answer-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    details { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+    summary { cursor: pointer; padding: 12px 14px; font-weight: 650; }
+    details p { padding: 0 14px 13px; color: var(--text-dim); }
+    .file-groups { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    .files { list-style: none; padding: 0; margin: 0; }
+    .files li { padding: 7px 0; border-bottom: 1px solid rgba(42,48,64,.7); }
+    .files li:last-child { border: 0; }
+    .files a { font: 11px/1.4 "JetBrains Mono", ui-monospace, monospace; }
+    .recovery { border-color: rgba(167,139,250,.55); background: linear-gradient(145deg, rgba(167,139,250,.09), var(--surface)); }
+    blockquote { margin: 0; padding: 9px 0 9px 14px; border-left: 2px solid var(--purple); font-size: 1rem; }
+    blockquote + blockquote { margin-top: 5px; }
+    .checklist { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+    .checklist li { margin: 0; padding: 10px 12px 10px 36px; position: relative; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .checklist li::before { content: "□"; position: absolute; left: 13px; color: var(--green); font-size: 18px; line-height: 1; }
+    .snapshot { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .tag { padding: 4px 7px; border-radius: 6px; color: var(--text-dim); background: var(--surface-2); font-size: 9px; }
+    footer { margin-top: 28px; color: var(--text-dim); text-align: center; font-size: 12px; }
+    @media (max-width: 900px) {
+      .grid, .grid.three, .file-groups, .answer-grid { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .step:nth-child(5n)::after { display: block; }
+      .step:nth-child(2n)::after, .step:last-child::after { display: none; }
+      .timeline { grid-template-columns: 1fr; }
+      .phase:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+      .phase:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+      .phase + .phase { border-left: 1px solid var(--border); border-top: 0; }
+    }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 20px, 1180px); padding-top: 10px; }
+      header { padding: 20px; }
+      nav { margin-top: 10px; }
+      .flow, .incident-grid, .checklist { grid-template-columns: 1fr; }
+      .step::after { display: none !important; }
+      th, td { padding: 10px; }
+    }
+    @media print {
+      :root { --bg: #fff; --surface: #fff; --surface-2: #f2f4f7; --border: #c7ccd4; --text: #11151b; --text-dim: #4b5563; --accent: #174ea6; --accent-glow: #e8f0fe; --purple: #5b3da5; --green: #176b35; --amber: #8a5a00; --red: #a61b1b; }
+      body { background: #fff; font-size: 10.5pt; }
+      .shell { width: 100%; padding: 0; }
+      header, .card, .step, details, .phase, .checklist li { box-shadow: none; break-inside: avoid; }
+      nav { display: none; }
+      section { margin-top: 18px; break-inside: auto; }
+      a { color: #174ea6; text-decoration: none; }
+      .flow { grid-template-columns: repeat(5, 1fr); }
+      .answer-grid { grid-template-columns: repeat(2, 1fr); }
+      details p { display: block; }
+      summary { list-style: none; }
+      footer { display: none; }
+    }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header id="start">
+    <span class="badge">Panel playbook · current snapshot · 2026-08-25</span>
+    <h1>Dungeon Master: durable canon around an LLM</h1>
+    <p class="subtitle">A principal-engineer reference for product intent, orchestration, authority, failure analysis, trade-offs, and future scale.</p>
+    <div class="snapshot" aria-label="Current implementation snapshot">
+      <span class="tag">Solo tabletop RPG</span><span class="tag">FastAPI + Python</span><span class="tag">Svelte 5 + Tauri</span><span class="tag">Cairn-inspired rules</span><span class="tag">gemini_split</span>
+    </div>
+  </header>
+
+  <nav aria-label="Playbook sections">
+    <a href="#start-here">Start here</a><a href="#lifecycle">Turn lifecycle</a><a href="#authority">Authority</a><a href="#decisions">Decisions</a><a href="#persistence">Persistence</a><a href="#failure">Failure</a><a href="#future">Next steps</a><a href="#interruptions">Interruptions</a><a href="#files">File map</a><a href="#recovery">Recovery</a><a href="#final-five">Final five</a>
+  </nav>
+
+  <section id="start-here">
+    <div class="section-head"><h2>1. Start here</h2><span class="section-note">Natural 90-second opening</span></div>
+    <div class="grid">
+      <article class="card accent">
+        <div class="eyebrow">Architecture thesis</div>
+        <p class="thesis"><strong>The model proposes semantics and prose. Python validates, orders, resolves, and commits.</strong></p>
+        <p class="muted">Persisted game state is canon. Derived memory and browser state can be rebuilt or replaced.</p>
+      </article>
+      <article class="card">
+        <div class="eyebrow">Speaking prompts</div>
+        <ul class="anchor-list">
+          <li>I ran solo campaigns in ChatGPT. Old details disappeared or contradicted later turns.</li>
+          <li>I built a local game system that keeps campaign canon outside the model context.</li>
+          <li>Specialized calls interpret actions, propose updates, and write narration.</li>
+          <li>Python owns Cairn-inspired mechanics, validation, order, cancellation, and canonical commits.</li>
+          <li>The result is creative model output inside a deterministic, inspectable state machine.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section id="lifecycle">
+    <div class="section-head"><h2>2. Turn lifecycle</h2><span class="section-note">Every turn has a typed plan; some work is conditional.</span></div>
+    <div class="flow" aria-label="Turn lifecycle stepper">
+      <div class="step"><span class="num">01</span><strong>Browser</strong><small>Sends the action and receives a streamed response.</small><span class="always">Every turn</span></div>
+      <div class="step"><span class="num">02</span><strong>FastAPI</strong><small>Registers the request and starts the stream session.</small><span class="always">Every turn</span></div>
+      <div class="step"><span class="num">03</span><strong>GameService</strong><small>Owns the end-to-end pipeline and its working state.</small><span class="always">Every turn</span></div>
+      <div class="step"><span class="num">04</span><strong>TurnRouter</strong><small>Creates an ordered typed plan: actions, checks, mechanics, narration, and updater work.</small><span class="always">Every turn</span></div>
+      <div class="step"><span class="num">05</span><strong>Oracle + Cairn</strong><small>Python resolves planned uncertainty and mechanics.</small><span class="optional">When planned</span></div>
+      <div class="step"><span class="num">06</span><strong>NarrativeEngine</strong><small>Streams prose from the resolved outcome and canonical context.</small><span class="always">Every turn</span></div>
+      <div class="step"><span class="num">07</span><strong>Continuity scope</strong><small>Classifies whether threads, non-player characters, or both need updates.</small><span class="optional">When needed</span></div>
+      <div class="step"><span class="num">08</span><strong>Typed updaters</strong><small>Thread and non-player character workers propose bounded changes.</small><span class="optional">By scope</span></div>
+      <div class="step"><span class="num">09</span><strong>StateStore</strong><small>Writes checkpoint, events, state, and rebuilt memory sidecar.</small><span class="always">Commit path</span></div>
+      <div class="step"><span class="num">10</span><strong>Client replacement</strong><small>The final event replaces the browser copy of GameState.</small><span class="always">On success</span></div>
+    </div>
+    <p class="section-note" style="margin-top:10px">Cancellation uses a server token. Before persistence, cancellation leaves canonical state unchanged. A detached stream session also supports client reattachment.</p>
+  </section>
+
+  <section id="authority">
+    <div class="section-head"><h2>3. Authority boundaries</h2><span class="section-note">Proposal is not canon.</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>It can do</th><th>It cannot decide</th><th>Authority status</th></tr></thead>
+        <tbody>
+          <tr><td>Structured model workers</td><td>Interpret intent and propose typed semantic changes.</td><td>Final mechanics, order, or canonical state.</td><td>Proposal</td></tr>
+          <tr><td>Narrative model</td><td>Produce player-facing prose from resolved context.</td><td>Dice, state mutation, or campaign truth.</td><td>Presentation</td></tr>
+          <tr><td>Python pipeline</td><td>Validate proposals, resolve deterministic mechanics and rolls, control order, cancel work, and commit.</td><td>It does not replace the creative prose role.</td><td>Decision authority</td></tr>
+          <tr><td>Persisted GameState</td><td>Hold the current scene, character, threads, non-player characters, encounter, history, and log.</td><td>Nothing else can silently outrank it.</td><td>Canon</td></tr>
+          <tr><td><code>memory.json</code></td><td>Provide bounded narrator context from committed turns.</td><td>Override canonical state.</td><td>Derived and rebuildable</td></tr>
+          <tr><td>Browser store</td><td>Render and compose against the latest returned state.</td><td>Become an independent source of truth.</td><td>Disposable mirror</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="decisions">
+    <div class="section-head"><h2>4. Three consequential decisions</h2><span class="section-note">Problem → choice → trade-off → change trigger</span></div>
+    <div class="grid three">
+      <article class="card decision">
+        <div><div class="eyebrow">Decision 1</div><h3>Deterministic Python skeleton</h3></div>
+        <dl><dt>Problem</dt><dd>One unconstrained model can mix rules, prose, state changes, and hidden assumptions.</dd><dt>Chosen design</dt><dd>Typed model proposals run inside a Python-owned pipeline.</dd><dt>Why proportionate</dt><dd>The game needs creativity, but it also needs repeatable mechanics and inspectable canon.</dd><dt>Cost</dt><dd class="cost">More orchestration code and more role boundaries.</dd><dt>Change when</dt><dd class="trigger">A simpler model workflow matches correctness on a fixed campaign corpus.</dd></dl>
+      </article>
+      <article class="card decision">
+        <div><div class="eyebrow">Decision 2</div><h3>JSON persistence for the local prototype</h3></div>
+        <dl><dt>Problem</dt><dd>The prototype needed durable, readable local saves without service operations.</dd><dt>Chosen design</dt><dd>Use JSON state, append-only events, checkpoints, and a derived memory sidecar.</dd><dt>Why proportionate</dt><dd>One local player has low write contention and benefits from direct inspection.</dd><dt>Cost</dt><dd class="cost">No atomic transaction across the related files.</dd><dt>Change when</dt><dd class="trigger">Crash recovery, concurrent writes, or history queries become product requirements.</dd></dl>
+      </article>
+      <article class="card decision">
+        <div><div class="eyebrow">Decision 3</div><h3>Bounded derived memory</h3></div>
+        <dl><dt>Problem</dt><dd>A full transcript grows without bound and can carry obsolete details forward.</dd><dt>Chosen design</dt><dd>Rebuild bounded narrator context from committed turns and linked checkpoints.</dd><dt>Why proportionate</dt><dd>The local corpus is structured and chronological. Exact current canon matters more than semantic search.</dd><dt>Cost</dt><dd class="cost">Compression can omit useful color and requires careful derivation.</dd><dt>Change when</dt><dd class="trigger">A measured retrieval corpus proves that semantic retrieval improves continuity without stale-context regressions.</dd></dl>
+      </article>
+    </div>
+  </section>
+
+  <section id="persistence">
+    <div class="section-head"><h2>5. Persistence evolution</h2><span class="section-note">Use the smallest store that meets the actual operating model.</span></div>
+    <div class="timeline">
+      <article class="phase"><div class="eyebrow">Current · local</div><h3>JSON is acceptable</h3><p>Files are readable and easy to inspect. Each file uses a temporary file and replace operation. One player creates little contention.</p><p class="cost"><strong>Weakness:</strong> the full save is not one transaction. A crash can leave events or checkpoints ahead of <code>game_state.json</code>.</p></article>
+      <article class="phase"><div class="eyebrow">Likely next</div><h3>SQLite</h3><p>Use atomic transactions, crash recovery, queryable history, and serialized writes in one local database.</p><p><strong>Keep revision numbers in the application schema.</strong> SQLite gives transactions. It does not create revision semantics.</p></article>
+      <article class="phase"><div class="eyebrow">Only with a product trigger</div><h3>Postgres</h3><p>Use Postgres for remote hosting, accounts, or multiplayer. Do not add network operations before those needs exist.</p><p class="muted">The database choice follows the concurrency and deployment model.</p></article>
+    </div>
+  </section>
+
+  <section id="failure">
+    <div class="section-head"><h2>6. Difficult failure: the obsolete chapel</h2><span class="section-note">Verified in commit d48eca8</span></div>
+    <article class="card incident">
+      <div class="incident-grid">
+        <div><span class="label">Symptom</span><p>Narration kept referring to leaving the chapel after the character had already left.</p></div>
+        <div><span class="label">Cause</span><p>Stale derived memory and an over-broad scene summary leaked obsolete context into the narrator prompt.</p></div>
+        <div><span class="label">Investigation</span><p>Compare committed turns, linked checkpoints, canonical game state, and the exact narrator context. This separates bad canon from bad derivation.</p></div>
+        <div><span class="label">Fixes</span><p>Rebuild context from checkpoint-linked committed turns. Prefer the canonical current scene. Pass the deferred checkpoint override into streamed narration.</p></div>
+        <div><span class="label">Proof</span><p>The regression injects obsolete chapel text into the sidecar. It asserts that the next narrator context excludes it and includes checkpoint-linked turn material.</p></div>
+        <div><span class="label">Lesson</span><p><strong>Derived context must never outrank canonical state.</strong> Treat memory as a cache with provenance, not as an independent truth source.</p></div>
+      </div>
+      <p style="margin-top:12px"><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_service.py">Regression: tests/test_service.py:1525–1618</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/service.py">Rebuild path: service.py:3223–3251, 3918–4022</a></p>
+    </article>
+  </section>
+
+  <section id="future">
+    <div class="section-head"><h2>7. Limitations and next steps</h2><span class="section-note">All items below are future work, not current behavior.</span></div>
+    <div class="grid">
+      <article class="card"><h3>Reliability and scale</h3><ul><li>Move related save writes into SQLite transactions.</li><li>Add accounts and authentication before multiplayer.</li><li>Add idempotency keys and queued turns if asynchronous play needs them.</li></ul></article>
+      <article class="card"><h3>Evidence before more architecture</h3><ul><li>Evaluate model roles on a fixed campaign corpus.</li><li>Use a separate prose model only if the evaluation proves a gain.</li><li>Do a rules-chassis comparison audit.</li><li>Do an emergence and simplification audit.</li></ul></article>
+    </div>
+  </section>
+
+  <section id="interruptions">
+    <div class="section-head"><h2>8. Principal-engineer interruptions</h2><span class="section-note">Open a prompt for a ~30-second answer anchor.</span></div>
+    <div class="answer-grid">
+      <details><summary>Why not one smart model?</summary><p>One call couples interpretation, mechanics, mutation, and prose. Typed roles make failures local. Python still enforces the final contract.</p></details>
+      <details><summary>Why is Python authoritative?</summary><p>Rules and state changes need repeatability, validation, and tests. The model proposes meaning. Python owns irreversible decisions.</p></details>
+      <details><summary>What exactly is canon?</summary><p>The persisted GameState is current canon. Committed events and checkpoints provide history. Derived memory and browser state cannot override it.</p></details>
+      <details><summary>Why JSON?</summary><p>It matched one local player, low contention, and direct inspection. It reduced operating work while the product shape changed.</p></details>
+      <details><summary>Why SQLite next?</summary><p>SQLite keeps local deployment while adding atomic multi-record commits, crash recovery, serialized writes, and queryable history.</p></details>
+      <details><summary>Why replace complete client state?</summary><p>The server owns truth. Full replacement avoids a second reconciliation system and prevents client patches from drifting from canonical state.</p></details>
+      <details><summary>What is memory.json?</summary><p>It is a bounded, derived narrator-context sidecar. The service rebuilds it from canonical state, committed turns, and linked checkpoints.</p></details>
+      <details><summary>Why not retrieval-augmented generation?</summary><p>The current corpus is local, ordered, and structured. Retrieval adds indexing and stale-result failure modes before measured need exists.</p></details>
+      <details><summary>What happens on turn cancel?</summary><p>The client asks the server to cancel, clears provisional output, then aborts locally. Before persistence, tests prove canonical state stays unchanged.</p></details>
+      <details><summary>What failed in production-like use?</summary><p>Stale memory made narration reuse an obsolete chapel scene. The fix made checkpoint-linked committed turns and current canonical state authoritative.</p></details>
+      <details><summary>What comes next?</summary><p>First, SQLite transactions. Then measure model roles and rules choices on fixed corpora before adding more model or retrieval architecture.</p></details>
+      <details><summary>How would this support multiplayer?</summary><p>Add identity and authorization first. Then add transactional writes, revision checks, idempotency, queued turns, and a clear concurrency policy.</p></details>
+    </div>
+  </section>
+
+  <section id="files">
+    <div class="section-head"><h2>9. File map</h2><span class="section-note">Every link opens the verified local source file.</span></div>
+    <div class="file-groups">
+      <article class="card"><div class="eyebrow">Backend · orchestration</div><ul class="files">
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/api.py">api.py:595–645, 748–774, 1038–1061</a> — stream, cancellation, turn route</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/service.py">service.py:708–785, 1716–1773, 2746–2926</a> — GameService and commit pipeline</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/turn_router.py">turn_router.py:77–174, 486–698</a> — typed operations, TurnPlan, TurnRouter</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/oracle.py">oracle.py:30+</a> — OracleEngine</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/cairn.py">cairn.py:706+</a> — CairnEngine</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/narrative.py">narrative.py:201+, 1003–1055</a> — NarrativeEngine and streamed deltas</li>
+      </ul></article>
+      <article class="card"><div class="eyebrow">Backend · continuity and state</div><ul class="files">
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/continuity_classifier.py">continuity_classifier.py:101–181</a> — updater scope</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/thread_updater.py">thread_updater.py:71–102+</a> — typed thread proposals</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/npc_updater.py">npc_updater.py:174–228+</a> — typed non-player character proposals</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/models.py">models.py:371–936</a> — rolls, domain models, GameState</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/state_store.py">state_store.py:21–130</a> — JSON, events, checkpoints, memory</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/memory.py">memory.py:335–414</a> — rebuild and narrator retrieval</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/save_library.py">save_library.py:44–59</a> — save layout contract</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/src/dungeon_master/config/app.py">config/app.py:17–19, 508–565</a> — current model preset definitions</li>
+      </ul></article>
+      <article class="card"><div class="eyebrow">Frontend and desktop</div><ul class="files">
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/main.ts">web/src/main.ts:1–41</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/App.svelte">App.svelte:22–180</a></li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/lib/store.svelte.ts">lib/store.svelte.ts:1095–1143, 1434–1555</a> — cancel, stream, state replacement</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/lib/api.ts">lib/api.ts:333–357</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/lib/streaming.ts">lib/streaming.ts</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/lib/types.ts">lib/types.ts</a></li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/components/Composer.svelte">Composer.svelte</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/components/ChatFeed.svelte">ChatFeed.svelte</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/components/MechanicalReceipt.svelte">MechanicalReceipt.svelte</a></li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/components/CharacterFolio.svelte">CharacterFolio.svelte</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/components/Inspector.svelte">Inspector.svelte</a></li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src-tauri/src/lib.rs">src-tauri/src/lib.rs:10–84</a> · <a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/web/src/lib/desktop.ts">lib/desktop.ts</a></li>
+      </ul></article>
+      <article class="card"><div class="eyebrow">Tests</div><ul class="files">
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_service.py">test_service.py:1525–1618</a> — stale-memory and streamed-checkpoint regressions</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_service.py">test_service.py:4207–4240</a> — cancellation before persistence</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_api.py">test_api.py:1316–1329</a> — cancel endpoint</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_cairn.py">test_cairn.py</a> — rules engine</li>
+        <li><a href="#" data-file="file:///Users/ArmanTarkhanian1/Desktop/dungeon-master/tests/test_memory.py">test_memory.py</a> — bounded memory</li>
+      </ul></article>
+    </div>
+  </section>
+
+  <section id="recovery">
+    <div class="section-head"><h2>10. Safe recovery phrases</h2><span class="section-note">Use precision instead of improvisation.</span></div>
+    <article class="card recovery">
+      <blockquote>“I would verify that implementation detail rather than improvise it.”</blockquote>
+      <blockquote>“That is a future scaling requirement, not current behavior.”</blockquote>
+      <blockquote>“The model proposes. Python validates and commits.”</blockquote>
+      <blockquote>“The persisted game state is canon. The browser holds a replaceable mirror.”</blockquote>
+      <blockquote>“The rules engine encapsulates that mechanic, so it does not affect the orchestration boundary.”</blockquote>
+    </article>
+  </section>
+
+  <section id="final-five">
+    <div class="section-head"><h2>11. Final five minutes</h2><span class="section-note">Stop building. Prepare to explain.</span></div>
+    <ul class="checklist">
+      <li>Stop changing the project.</li><li>Open this playbook.</li><li>Review the opening and turn flow.</li><li>Review the three decisions and failure story.</li><li>Close unrelated tabs.</li><li>Get water.</li><li>Speak slowly.</li><li>State assumptions before uncertain details.</li><li>After interruptions, return to the architecture thesis.</li>
+    </ul>
+  </section>
+
+  <footer>Current implementation snapshot. Model evaluation, database migration, and multiplayer support remain future work.</footer>
+</main>
+<script>
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[data-file]");
+    if (!link) return;
+    event.preventDefault();
+    window.location.href = link.dataset.file;
+  });
+</script>
+</body>
+</html>
