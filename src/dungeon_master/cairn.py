@@ -10,6 +10,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from dungeon_master.campaign import render_creative_direction
 from dungeon_master.cancel import CancellationToken
+from dungeon_master.mechanics import inventory as inventory_mechanics
 from dungeon_master.models import (
     AttackStance,
     CairnAbility,
@@ -72,7 +73,7 @@ D4_SIDES = 4
 D8_SIDES = 8
 D10_SIDES = 10
 D12_SIDES = 12
-MAX_ARMOR = 3
+MAX_ARMOR = inventory_mechanics.MAX_ARMOR
 FULL_INVENTORY_SLOTS = 10
 BACKPACK_SLOTS = 6
 COMFORTABLE_SLOTS = 5
@@ -81,9 +82,9 @@ STR_BRANCH_MAX = 2
 DEX_BRANCH_MAX = 4
 WATCHES_PER_DAY = 6
 FOOD_WARNING_WATCHES = 2
-FOOD_DEPRIVED_WATCHES = 3
+FOOD_DEPRIVED_WATCHES = inventory_mechanics.FOOD_DEPRIVED_WATCHES
 SLEEP_WARNING_WATCHES = 4
-SLEEP_DEPRIVED_WATCHES = 6
+SLEEP_DEPRIVED_WATCHES = inventory_mechanics.SLEEP_DEPRIVED_WATCHES
 ALLOWED_WEAPON_DICE: tuple[int, ...] = (D4_SIDES, D6_SIDES, D8_SIDES, D10_SIDES, D12_SIDES)
 
 LASTING_SCAR_LOCATIONS: tuple[str, ...] = (
@@ -1637,7 +1638,7 @@ class CairnEngine:
         self._require_ready(state)
         actor = self._resolve_actor(state, actor_id)
         cairn = actor.sheet.cairn
-        self._sync_survival_flags(cairn)
+        inventory_mechanics.sync_survival_flags(cairn)
         before = cairn.survival.model_copy(deep=True)
         deprived_before = cairn.deprived
         ration_item_id: str | None = None
@@ -1688,7 +1689,7 @@ class CairnEngine:
             cairn.survival.watches_since_sleep = 0
             cairn.survival.sleep_deprived = False
             notes.append("Slept and reset exhaustion pressure")
-        self._sync_survival_flags(cairn)
+        inventory_mechanics.sync_survival_flags(cairn)
         self._recompute_derived(actor.sheet)
         after = cairn.survival.model_copy(deep=True)
         actor_prefix = "" if actor.is_player else f"{actor.name}: "
@@ -1752,6 +1753,28 @@ class CairnEngine:
                     item.cairn.equipped = False
         target.cairn.equipped = equipped
         self._recompute_derived(actor.sheet)
+
+    def transfer_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        source_actor_id: str | None,
+        target_actor_id: str | None,
+    ) -> str:
+        self._require_ready(state)
+        source = self._resolve_actor(state, source_actor_id)
+        target = self._resolve_actor(state, target_actor_id)
+        if source.id == target.id:
+            message = "Cannot transfer an item to the same actor."
+            raise ValueError(message)
+
+        transferred_item = inventory_mechanics.transfer_item(
+            source.sheet,
+            target.sheet,
+            item_id=item_id,
+        )
+        return f"Transferred {transferred_item.name} from {source.name} to {target.name}."
 
     def use_item(
         self,
@@ -2047,7 +2070,7 @@ class CairnEngine:
             cairn.survival.food_deprived = False
             cairn.survival.sleep_deprived = False
             cairn.survival.other_deprived = False
-            self._sync_survival_flags(cairn)
+            inventory_mechanics.sync_survival_flags(cairn)
             return was_active
         if condition == CairnConditionKey.CRITICALLY_WOUNDED:
             was_active = cairn.critically_wounded
@@ -3063,40 +3086,7 @@ class CairnEngine:
         raise ValueError(message)
 
     def _recompute_derived(self, character: CharacterSheet) -> None:
-        cairn = character.cairn
-        first_weapon_id: str | None = None
-        any_weapon_equipped = False
-        armor_value = 0
-        slots_used = cairn.fatigue
-
-        for item in character.inventory:
-            slots_used += item.cairn.slots
-            if CairnItemTag.WEAPON in item.cairn.tags and first_weapon_id is None:
-                first_weapon_id = item.id
-            if CairnItemTag.WEAPON in item.cairn.tags and item.cairn.equipped:
-                any_weapon_equipped = True
-                cairn.primary_weapon_item_id = item.id
-            if item.cairn.equipped and (
-                CairnItemTag.ARMOR in item.cairn.tags or CairnItemTag.SHIELD in item.cairn.tags
-            ):
-                armor_value += item.cairn.armor_bonus
-
-        if not any_weapon_equipped and first_weapon_id is not None:
-            for item in character.inventory:
-                if CairnItemTag.WEAPON in item.cairn.tags:
-                    item.cairn.equipped = item.id == first_weapon_id
-                if item.id == first_weapon_id:
-                    cairn.primary_weapon_item_id = item.id
-
-        cairn.armor = min(MAX_ARMOR, armor_value)
-        cairn.slots_used = slots_used
-        cairn.overloaded = slots_used >= cairn.slots_total
-        self._sync_survival_flags(cairn)
-        if cairn.overloaded:
-            cairn.hp = 0
-        cairn.paralyzed = cairn.dex_score == 0
-        cairn.delirious = cairn.wil_score == 0
-        cairn.dead = cairn.dead or cairn.str_score == 0
+        inventory_mechanics.repair_derived_state(character)
 
     def _apply_scar(self, cairn: CairnCharacterState, hp_lost: int) -> tuple[str, list[Roll]]:
         rolls: list[Roll] = []
@@ -3120,7 +3110,7 @@ class CairnEngine:
             rolls.append(hp_roll)
             cairn.max_hp += hp_roll.result
             cairn.survival.other_deprived = True
-            self._sync_survival_flags(cairn)
+            inventory_mechanics.sync_survival_flags(cairn)
             return ("Walloped", rolls)
         if entry == 4:
             part_roll = self._roll(D6_SIDES, "scar_part")
@@ -3190,7 +3180,7 @@ class CairnEngine:
             rolls.append(hp_roll)
             cairn.max_hp = hp_roll.result
             cairn.survival.other_deprived = True
-            self._sync_survival_flags(cairn)
+            inventory_mechanics.sync_survival_flags(cairn)
             cairn.critically_wounded = True
             return ("Mortal Wound", rolls)
 
@@ -3199,15 +3189,6 @@ class CairnEngine:
         cairn.max_hp = max(cairn.max_hp, hp_roll.result)
         cairn.doomed = True
         return ("Doomed", rolls)
-
-    def _sync_survival_flags(self, cairn: CairnCharacterState) -> None:
-        cairn.survival.food_deprived = cairn.survival.watches_since_meal >= FOOD_DEPRIVED_WATCHES
-        cairn.survival.sleep_deprived = cairn.survival.watches_since_sleep >= SLEEP_DEPRIVED_WATCHES
-        cairn.deprived = (
-            cairn.survival.food_deprived
-            or cairn.survival.sleep_deprived
-            or cairn.survival.other_deprived
-        )
 
     def _watch_count_for_time_advance(
         self,
@@ -3232,7 +3213,7 @@ class CairnEngine:
         cairn.survival.day_phase = self._phase_for_watch_index(watch_index)
         cairn.survival.watches_since_meal += watches
         cairn.survival.watches_since_sleep += watches
-        self._sync_survival_flags(cairn)
+        inventory_mechanics.sync_survival_flags(cairn)
 
     def _phase_for_watch_index(self, watch_index: int) -> CairnDayPhase:
         phases = (

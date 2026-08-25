@@ -17,7 +17,6 @@ from dungeon_master.cancel import CancellationRegistry, CancellationToken, Reque
 from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
 from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
 from dungeon_master.config import LLMConfig, LLMRuntimeBundle, single_llm_runtime
-from dungeon_master.continuity_classifier import ContinuityUpdateScope
 from dungeon_master.inventory_updater import InventoryUpdateResult
 from dungeon_master.memory import LocationMemory, MemoryState
 from dungeon_master.models import (
@@ -584,26 +583,6 @@ class ParallelNpcUpdater(FakeNpcUpdater):
         self._started.set()
         assert self._other_started.wait(0.5)
         return generated
-
-
-class FakeContinuityClassifier:
-    def __init__(self, scope: ContinuityUpdateScope) -> None:
-        self._scope = scope
-        self.calls: list[tuple[str, str, str | None]] = []
-
-    def classify_update_scope(  # noqa: PLR0913
-        self,
-        state: GameState,
-        *,
-        player_input: str,
-        outcome: OracleOutcome,
-        execution_context: str | None = None,
-        narrative_text: str | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> ContinuityUpdateScope:
-        del state, execution_context, cancel_token
-        self.calls.append((player_input, outcome.summary, narrative_text))
-        return self._scope
 
 
 class FakeCapabilityOracleGuard:
@@ -1218,6 +1197,21 @@ class FakeCairnEngine:
             return f"Dropped {item.name}."
         message = f"Unknown inventory item: {item_id}"
         raise ValueError(message)
+
+    def transfer_item(
+        self,
+        state: GameState,
+        *,
+        item_id: str,
+        source_actor_id: str | None,
+        target_actor_id: str | None,
+    ) -> str:
+        return CairnEngine().transfer_item(
+            state,
+            item_id=item_id,
+            source_actor_id=source_actor_id,
+            target_actor_id=target_actor_id,
+        )
 
     def backfill_companion_sheet(
         self,
@@ -3367,13 +3361,12 @@ def test_service_thread_updater_creates_thread_and_persists_memory(tmp_path: Pat
     )
 
 
-def test_service_post_narration_reconciliation_runs_even_when_classifier_would_skip(
+def test_service_post_narration_reconciliation_runs_for_every_turn(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.NONE)
     service = GameService(
         store=store,
         oracle=OracleEngine(seed=1),
@@ -3383,12 +3376,10 @@ def test_service_post_narration_reconciliation_runs_even_when_classifier_would_s
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=classifier,
     )
 
     updated = service.submit_player_action("I keep moving and say nothing.")
 
-    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3409,13 +3400,12 @@ def test_service_post_narration_reconciliation_runs_even_when_classifier_would_s
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
-def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
+def test_service_reconciles_pure_narrate_turn_after_narration(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
     service = GameService(
         store=store,
         oracle=OracleEngine(seed=1),
@@ -3425,13 +3415,11 @@ def test_service_skips_pre_narration_continuity_for_pure_narrate_turn(
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
 
     updated = service.submit_player_turn("I study the icon and pray for intercession.")
 
-    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3468,7 +3456,6 @@ def test_service_save_turn_reconciles_inventory_and_continuity_after_narration(
         return ("Fedora canonized.",)
 
     inventory_updater = FakeInventoryUpdater(mutate=mutate_inventory)
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
     service = GameService(
         store=store,
         oracle=OracleEngine(seed=1),
@@ -3479,13 +3466,11 @@ def test_service_save_turn_reconciles_inventory_and_continuity_after_narration(
         thread_updater=thread_updater,
         npc_updater=npc_updater,
         inventory_updater=inventory_updater,
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
 
     updated = service.submit_player_turn("I balance across the abbey beam.")
 
-    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3512,13 +3497,12 @@ def test_service_save_turn_reconciles_inventory_and_continuity_after_narration(
     assert any(item.name == "Fedora" for item in updated.character.inventory)
 
 
-def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continuity(
+def test_service_recon_turn_does_not_advance_scene_and_reconciles_after_narration(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
 
     def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
         if text == "Are there enemies along the goat-path?":
@@ -3543,7 +3527,6 @@ def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continui
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=recon_classifier),
     )
     initial = service.load_state()
@@ -3558,7 +3541,6 @@ def test_service_recon_turn_does_not_advance_scene_or_run_pre_narration_continui
     ]
     assert updated.oracle_history[-1].kind == OracleKind.PLAYER_ACTION
     assert "current vantage without advancing" in updated.action_log[-1].content
-    assert classifier.calls == []
     assert thread_updater.calls == []
     assert npc_updater.calls == []
     assert thread_updater.post_calls == [
@@ -3610,7 +3592,6 @@ def test_service_post_narration_continuity_can_touch_threads_and_npcs(
         cairn_engine=FakeCairnEngine(),
         thread_updater=FakeThreadUpdater(mutate=mutate_thread),
         npc_updater=FakeNpcUpdater(mutate=mutate_npc),
-        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.BOTH),
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
 
@@ -3626,7 +3607,6 @@ def test_service_post_narration_continuity_runs_noop_updaters_when_narration_add
     store = StateStore(tmp_path / "game_state.json")
     thread_updater = FakeThreadUpdater()
     npc_updater = FakeNpcUpdater()
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.NONE)
     service = GameService(
         store=store,
         oracle=OracleEngine(seed=1),
@@ -3636,13 +3616,11 @@ def test_service_post_narration_continuity_runs_noop_updaters_when_narration_add
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
 
     updated = service.submit_player_turn("Do we know the patriarch's name?")
 
-    assert classifier.calls == []
     assert thread_updater.post_calls == [
         (
             "Do we know the patriarch's name?",
@@ -3661,7 +3639,7 @@ def test_service_post_narration_continuity_runs_noop_updaters_when_narration_add
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
-def test_service_post_narration_reconciles_npcs_even_when_thread_only_scope_was_expected(
+def test_service_post_narration_reconciles_npcs_and_threads(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
@@ -3686,7 +3664,6 @@ def test_service_post_narration_reconciles_npcs_even_when_thread_only_scope_was_
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.THREADS),
     )
 
     updated = service.submit_player_action("I accept the ferryman's warning.")
@@ -3714,7 +3691,7 @@ def test_service_post_narration_reconciles_npcs_even_when_thread_only_scope_was_
     assert updated.oracle_history[-1].referenced_npc_ids == []
 
 
-def test_service_post_narration_reconciles_threads_even_when_npc_only_scope_was_expected(
+def test_service_post_narration_reconciles_threads_and_npcs(
     tmp_path: Path,
 ) -> None:
     store = StateStore(tmp_path / "game_state.json")
@@ -3740,7 +3717,6 @@ def test_service_post_narration_reconciles_threads_even_when_npc_only_scope_was_
         cairn_engine=FakeCairnEngine(),
         thread_updater=thread_updater,
         npc_updater=npc_updater,
-        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.NPCS),
     )
 
     updated = service.submit_player_action("I press the bell-ringer for the truth.")
@@ -4045,7 +4021,6 @@ def test_service_syncs_recruited_party_member_after_post_narration_npc_update(
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakeCairnEngine(),
-        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.NPCS),
         npc_updater=FakeNpcUpdater(mutate=mutate),
     )
     state = service.load_state()
@@ -4273,7 +4248,6 @@ def test_continuity_parallelizes_thread_and_npc_generation_when_scope_is_both(
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakeCairnEngine(),
-        continuity_classifier=FakeContinuityClassifier(ContinuityUpdateScope.BOTH),
         thread_updater=ParallelThreadUpdater(
             started=thread_started,
             other_started=npc_started,
@@ -4464,10 +4438,9 @@ def test_streamed_player_turn_commits_clarification_without_mechanics(tmp_path: 
     assert by_id["streaming_narration"].status == StageStatus.PENDING
 
 
-def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
+def test_streamed_pure_narrate_turn_has_one_continuity_stage(
     tmp_path: Path,
 ) -> None:
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
@@ -4475,7 +4448,6 @@ def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakeCairnEngine(),
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=scripted_classifier),
     )
 
@@ -4484,23 +4456,18 @@ def test_streamed_pure_narrate_turn_marks_continuity_stages_skipped(
     )
     by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
 
-    assert classifier.calls == []
-    for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
-        timing = by_id[skipped_id]
-        assert timing.status == StageStatus.SKIPPED
-        assert timing.started_at is None
-        assert timing.completed_at is None
+    assert "classifying_continuity" not in by_id
+    assert "updating_threads" not in by_id
+    assert "updating_npcs" not in by_id
     assert by_id["streaming_narration"].status == StageStatus.DONE
     assert by_id["reconciling_continuity"].status == StageStatus.DONE
     assert by_id["reconciling_continuity"].started_at is not None
     assert by_id["reconciling_continuity"].completed_at is not None
 
 
-def test_streamed_recon_turn_marks_pre_narration_continuity_stages_skipped(
+def test_streamed_recon_turn_has_one_continuity_stage(
     tmp_path: Path,
 ) -> None:
-    classifier = FakeContinuityClassifier(ContinuityUpdateScope.BOTH)
-
     def recon_classifier(text: str, likelihood: Likelihood | None) -> TurnPlan | RoutedTurn:
         if text == "Are there enemies along the goat-path?":
             return TurnPlan(
@@ -4522,7 +4489,6 @@ def test_streamed_recon_turn_marks_pre_narration_continuity_stages_skipped(
         campaign_generator=FakeCampaignGenerator(),
         character_generator=FakeCharacterGenerator(),
         cairn_engine=FakeCairnEngine(),
-        continuity_classifier=classifier,
         turn_router=TurnRouter(classifier=recon_classifier),
     )
 
@@ -4531,12 +4497,9 @@ def test_streamed_recon_turn_marks_pre_narration_continuity_stages_skipped(
     )
     by_id = {timing.stage_id: timing for timing in final.action_log[-1].stage_timings}
 
-    assert classifier.calls == []
-    for skipped_id in ("classifying_continuity", "updating_threads", "updating_npcs"):
-        timing = by_id[skipped_id]
-        assert timing.status == StageStatus.SKIPPED
-        assert timing.started_at is None
-        assert timing.completed_at is None
+    assert "classifying_continuity" not in by_id
+    assert "updating_threads" not in by_id
+    assert "updating_npcs" not in by_id
     assert by_id["streaming_narration"].status == StageStatus.DONE
     assert by_id["reconciling_continuity"].status == StageStatus.DONE
     assert by_id["reconciling_continuity"].started_at is not None
@@ -4566,9 +4529,6 @@ def test_streamed_player_action_marks_skipped_stages(tmp_path: Path) -> None:
     for skipped_id in (
         "planning_turn",
         "resolving_mechanics",
-        "classifying_continuity",
-        "updating_threads",
-        "updating_npcs",
     ):
         assert by_id[skipped_id].status == StageStatus.SKIPPED
         assert by_id[skipped_id].started_at is None
@@ -4602,15 +4562,10 @@ def test_streamed_regenerate_persists_stage_timings(tmp_path: Path) -> None:
     timings = repaired.action_log[-1].stage_timings
     by_id = {timing.stage_id: timing for timing in timings}
 
-    # Regenerate path is a focused repair: planner/mechanics/pre-narration
-    # continuity are skipped because the original outcome is reused, while
-    # narration + post-narration continuity still run against the new prose.
+    # Regenerate reuses the original outcome, then reconciles the new prose.
     for skipped_id in (
         "planning_turn",
         "resolving_mechanics",
-        "classifying_continuity",
-        "updating_threads",
-        "updating_npcs",
     ):
         assert by_id[skipped_id].status == StageStatus.SKIPPED
     for done_id in ("preparing_narration", "streaming_narration", "reconciling_continuity"):

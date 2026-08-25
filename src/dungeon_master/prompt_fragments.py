@@ -99,20 +99,8 @@ def render_updater_user_prompt(  # noqa: PLR0913
     lines.append("")
 
     if actors is not None:
-        lines.extend(
-            [
-                "Current actors:",
-                actors,
-                "",
-                "Final narration response:",
-            ]
-        )
-    else:
-        lines.append("Final narration response (may be empty for pre-narration continuity):")
-
-    if final_narration:
-        lines.append(final_narration)
-    lines.append("")
+        lines.extend(["Current actors:", actors, ""])
+    lines.extend(["Final narration response:", final_narration or "", ""])
 
     if domain_state:
         lines.extend(

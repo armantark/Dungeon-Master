@@ -351,15 +351,6 @@ class LLMProfiles:
             reasoning_max_tokens=900,
         ),
     )
-    continuity_classifier: TaskProfile = field(
-        default_factory=lambda: TaskProfile(
-            temperature=0.0,
-            max_tokens=16,
-            reasoning_effort="low",
-            reasoning_max_tokens=32,
-            reasoning_exclude=True,
-        ),
-    )
     cairn_acquisition: TaskProfile = field(
         default_factory=lambda: TaskProfile(
             temperature=0.1,

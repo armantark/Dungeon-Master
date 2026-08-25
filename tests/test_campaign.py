@@ -2,9 +2,15 @@ import json
 from collections.abc import Iterator
 from typing import cast
 
+import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.campaign import CampaignGenerator, CharacterGenerator
+from dungeon_master.campaign import (
+    CampaignGenerationError,
+    CampaignGenerator,
+    CharacterDraftMode,
+    CharacterGenerator,
+)
 from dungeon_master.models import (
     CampaignGenre,
     CampaignMagicLevel,
@@ -193,6 +199,45 @@ def test_campaign_generator_system_prompt_defers_to_campaign_seed() -> None:
     assert "Era/technology: modern with modern technology." in user_prompt
 
 
+def test_campaign_generator_fails_closed_without_a_model() -> None:
+    generator = CampaignGenerator(
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    with pytest.raises(CampaignGenerationError, match="configured model"):
+        generator.generate(sample_state().character)
+
+
+def test_campaign_generator_fails_closed_after_invalid_model_output() -> None:
+    generator = CampaignGenerator(
+        config=NarrativeConfig(
+            model="openrouter/moonshotai/kimi-k2.6",
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            max_retries=0,
+        ),
+        completion_function=CharacterCompletion({"not": "a campaign"}),
+    )
+
+    with pytest.raises(CampaignGenerationError, match="ValidationError"):
+        generator.generate(sample_state().character)
+
+
+def test_streamed_campaign_generation_fails_closed_after_invalid_output() -> None:
+    generator = CampaignGenerator(
+        config=NarrativeConfig(
+            model="openrouter/moonshotai/kimi-k2.6",
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            max_retries=0,
+        ),
+        completion_function=CharacterCompletion({"not": "a campaign"}),
+    )
+
+    with pytest.raises(CampaignGenerationError, match="ValidationError"):
+        list(generator.iter_generate(sample_state().character))
+
+
 def test_character_quiz_uses_campaign_seed_creative_direction() -> None:
     completion = CharacterCompletion(
         {
@@ -254,3 +299,20 @@ def test_character_quiz_uses_campaign_seed_creative_direction() -> None:
     assert "Era/technology: modern with modern technology." in system_prompt
     assert "Genre: hearth and homestead. Magic: none. Stakes: personal local." in system_prompt
     assert "Oppressive medieval dark fantasy" not in system_prompt
+
+
+def test_character_generator_keeps_no_model_fallbacks() -> None:
+    generator = CharacterGenerator(
+        config=NarrativeConfig(model="", api_key=None, base_url=None),
+    )
+
+    templates = generator.generate_templates()
+    draft = generator.generate_draft(
+        mode=CharacterDraftMode.SCRATCH,
+        prompt="A courier looking for her missing brother.",
+        template=None,
+    )
+
+    assert len(templates) == 4
+    assert draft.name == "Custom Wanderer"
+    assert draft.epithet == "A courier looking for her missing brother."

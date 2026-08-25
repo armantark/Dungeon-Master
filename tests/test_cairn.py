@@ -1407,6 +1407,87 @@ def test_companion_can_acquire_and_drop_inventory() -> None:
     assert [item.name for item in companion.sheet.inventory] == ["Sava's spear", "Shared rope"]
 
 
+def test_transfer_item_resolves_actors_by_stable_id() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    companion.sheet.name = state.character.name
+    item = state.character.inventory[1]
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    summary = engine.transfer_item(
+        state,
+        item_id=item.id,
+        source_actor_id="player",
+        target_actor_id=companion.id,
+    )
+
+    assert summary == (
+        f"Transferred {item.name} from {state.character.name} to {companion.sheet.name}."
+    )
+    assert item not in state.character.inventory
+    assert companion.sheet.inventory[-1] is item
+
+
+def test_transfer_item_repairs_complete_derived_state_for_both_actors() -> None:
+    state = _companion_state()
+    companion = state.party_members[0]
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+    weapon = state.character.inventory[0]
+    weapon.cairn.tags.append(CairnItemTag.ARMOR)
+    weapon.cairn.armor_bonus = 2
+    state.character.cairn.primary_weapon_item_id = weapon.id
+    state.character.cairn.dex_score = 0
+    state.character.cairn.survival.watches_since_meal = 3
+    state.character.cairn.slots_used = 99
+    state.character.cairn.armor = 3
+    companion.sheet.cairn.primary_weapon_item_id = "missing-item"
+    companion.sheet.cairn.str_score = 0
+    companion.sheet.cairn.slots_total = 3
+    companion.sheet.cairn.hp = 3
+    companion.sheet.cairn.survival.watches_since_sleep = 6
+    companion.sheet.cairn.slots_used = 99
+    companion.sheet.cairn.armor = 3
+
+    engine.transfer_item(
+        state,
+        item_id=weapon.id,
+        source_actor_id=None,
+        target_actor_id=companion.id,
+    )
+
+    assert weapon.cairn.equipped is False
+    assert state.character.cairn.primary_weapon_item_id is None
+    assert state.character.cairn.armor == 0
+    assert state.character.cairn.slots_used == 1
+    assert state.character.cairn.overloaded is False
+    assert state.character.cairn.deprived is True
+    assert state.character.cairn.paralyzed is True
+    assert companion.sheet.cairn.primary_weapon_item_id == companion.sheet.inventory[0].id
+    assert companion.sheet.inventory[0].cairn.equipped is True
+    assert companion.sheet.cairn.armor == 0
+    assert companion.sheet.cairn.slots_used == 3
+    assert companion.sheet.cairn.overloaded is True
+    assert companion.sheet.cairn.hp == 0
+    assert companion.sheet.cairn.deprived is True
+    assert companion.sheet.cairn.dead is True
+
+
+def test_transfer_item_rejects_same_actor_without_mutating_inventory() -> None:
+    state = _ready_state()
+    item = state.character.inventory[0]
+    engine = CairnEngine(seed=1, config=NarrativeConfig(model="", api_key=None, base_url=None))
+
+    with pytest.raises(ValueError, match="Cannot transfer an item to the same actor"):
+        engine.transfer_item(
+            state,
+            item_id=item.id,
+            source_actor_id=None,
+            target_actor_id="player",
+        )
+
+    assert state.character.inventory[0] is item
+
+
 def test_companion_item_use_consumes_companion_item() -> None:
     state = _companion_state()
     companion = state.party_members[0]

@@ -2229,7 +2229,7 @@ def test_submit_turn_stream_emits_ndjson_events(tmp_path: Path) -> None:
     assert ("planning_turn", "done") in stage_statuses
     assert ("resolving_mechanics", "active") in stage_statuses
     assert ("resolving_mechanics", "done") in stage_statuses
-    assert ("classifying_continuity", "skipped") in stage_statuses
+    assert all(stage_id != "classifying_continuity" for stage_id, _ in stage_statuses)
     assert ("preparing_narration", "active") in stage_statuses
     assert ("preparing_narration", "done") in stage_statuses
     assert ("streaming_narration", "active") in stage_statuses
