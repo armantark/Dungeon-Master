@@ -36,18 +36,28 @@ import type {
   GameState,
   OracleKind,
   OracleOutcome,
+  StageTiming,
 } from "./types";
 
 export type TranscriptRowKind = "dm" | "player" | "system";
+export type TranscriptSpeaker = TranscriptRowKind | "ooc";
 
 export interface TranscriptRow {
   id: string;
   kind: TranscriptRowKind;
+  speaker: TranscriptSpeaker;
   text: string;
+  // Searchable text may include context rendered in a separate field,
+  // such as an OOC question above its answer.
+  searchText: string;
   // Outcome summary text, surfaced for DM rows so a search query can
   // match either the prose or the receipt without the caller having to
   // join the data themselves. Non-DM rows always have null here.
   outcomeSummary: string | null;
+  outcome: OracleOutcome | null;
+  thinking: string | null;
+  stageTimings: readonly StageTiming[];
+  question: string | null;
   timestamp: string;
   // Synthesized opening DM row (no canonical event behind it). Useful
   // for callers that want to gate "jump to chat" on whether a real
@@ -130,8 +140,17 @@ function fromEvent(
       return {
         id: event.id,
         kind: "dm",
+        speaker: "dm",
         text: event.content,
+        searchText: event.content,
         outcomeSummary: outcome?.summary ?? null,
+        outcome,
+        thinking:
+          typeof event.thinking === "string" && event.thinking.trim() !== ""
+            ? event.thinking
+            : null,
+        stageTimings: event.stage_timings ?? [],
+        question: null,
         timestamp: event.created_at,
         isOpening: false,
         isNote: false,
@@ -141,8 +160,14 @@ function fromEvent(
       return {
         id: event.id,
         kind: "player",
+        speaker: "player",
         text: event.content,
+        searchText: event.content,
         outcomeSummary: null,
+        outcome: null,
+        thinking: null,
+        stageTimings: [],
+        question: null,
         timestamp: event.created_at,
         isOpening: false,
         isNote: false,
@@ -151,8 +176,14 @@ function fromEvent(
       return {
         id: event.id,
         kind: "system",
+        speaker: "system",
         text: event.content,
+        searchText: event.content,
         outcomeSummary: null,
+        outcome: null,
+        thinking: null,
+        stageTimings: [],
+        question: null,
         timestamp: event.created_at,
         isOpening: false,
         isNote: false,
@@ -172,12 +203,19 @@ function fromNote(note: ClientNote): TranscriptRow {
   // avoids widening `TranscriptRowKind` for an ephemeral surface that
   // the inspector treats uniformly with other client notes; the OOC
   // visual treatment lives in the chat feed, not the inspector list.
-  if ((note.kind === "explanation" || note.kind === "oracle_preview") && note.question) {
+  if (note.kind === "explanation" || note.kind === "oracle_preview") {
+    const question = note.question ?? null;
     return {
       id: note.id,
       kind: "system",
-      text: `Q: ${note.question}\n\nA: ${note.text}`,
+      speaker: "ooc",
+      text: note.text,
+      searchText: question === null ? note.text : `Q: ${question}\n\nA: ${note.text}`,
       outcomeSummary: null,
+      outcome: null,
+      thinking: null,
+      stageTimings: [],
+      question,
       timestamp: note.created_at,
       isOpening: false,
       isNote: true,
@@ -186,8 +224,14 @@ function fromNote(note: ClientNote): TranscriptRow {
   return {
     id: note.id,
     kind: "system",
+    speaker: "system",
     text: note.text,
+    searchText: note.text,
     outcomeSummary: null,
+    outcome: null,
+    thinking: null,
+    stageTimings: [],
+    question: null,
     timestamp: note.created_at,
     isOpening: false,
     isNote: true,
@@ -206,8 +250,14 @@ function openingRow(state: GameState): TranscriptRow | null {
   return {
     id: openingRowId(state),
     kind: "dm",
+    speaker: "dm",
     text: `${state.current_scene}\n\n${state.setting_notes}`,
+    searchText: `${state.current_scene}\n\n${state.setting_notes}`,
     outcomeSummary: null,
+    outcome: null,
+    thinking: null,
+    stageTimings: [],
+    question: null,
     timestamp: state.created_at,
     isOpening: true,
     isNote: false,
@@ -368,9 +418,9 @@ export function searchTranscript(
   for (const row of rows) {
     if (!includeNotes && row.isNote) continue;
 
-    const textPos = matchPosition(row.text, tokens);
+    const textPos = matchPosition(row.searchText, tokens);
     if (textPos !== -1) {
-      matches.push(buildMatch(row, "text", row.text, tokens, textPos));
+      matches.push(buildMatch(row, "text", row.searchText, tokens, textPos));
       if (matches.length >= limit) break;
       continue;
     }

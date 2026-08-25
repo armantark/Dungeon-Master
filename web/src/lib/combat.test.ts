@@ -16,7 +16,11 @@ import {
   type CombatantStatus,
   type CombatEncounterState,
 } from "./combat";
-import type { PendingEncounterAdvantage } from "./types";
+import type {
+  EncounterState,
+  EnemyCombatant,
+  PendingEncounterAdvantage,
+} from "./types";
 
 // We intentionally test the helpers as pure functions; there's no
 // rendering test here because the Svelte component is structural and
@@ -285,17 +289,8 @@ describe("combatFromState", () => {
   // mapping and the "no encounter tracked" recognition.
 
   function backendEncounter(
-    overrides: Partial<{
-      active: boolean;
-      round_number: number;
-      first_round_dex_gate_pending: boolean;
-      initiator: "player" | "enemy" | null;
-      casualty_morale_checked: boolean;
-      half_force_morale_checked: boolean;
-      combatants: object[];
-      notes: string;
-    }> = {},
-  ): object {
+    overrides: Partial<EncounterState> = {},
+  ): EncounterState {
     return {
       active: false,
       round_number: 0,
@@ -306,13 +301,17 @@ describe("combatFromState", () => {
       initiator: null,
       casualty_morale_checked: false,
       half_force_morale_checked: false,
+      player_disengaged: false,
+      pursuit_active: false,
+      end_reason: null,
       combatants: [],
+      pending_advantages: [],
       notes: "",
       ...overrides,
     };
   }
 
-  function backendFoe(overrides: Partial<Record<string, unknown>> = {}): object {
+  function backendFoe(overrides: Partial<EnemyCombatant> = {}): EnemyCombatant {
     return {
       id: "foe_1",
       name: "Halfwit Marauder",
@@ -336,7 +335,6 @@ describe("combatFromState", () => {
 
   it("returns null when state has no encounter field", () => {
     expect(combatFromState({})).toBeNull();
-    expect(combatFromState({ id: "g" })).toBeNull();
   });
 
   it("returns null when encounter is explicitly null", () => {
@@ -455,6 +453,9 @@ describe("combatFromState", () => {
         first_round_dex_gate_pending: true,
         casualty_morale_checked: false,
         half_force_morale_checked: false,
+        player_disengaged: false,
+        pursuit_active: false,
+        end_reason: null,
         combatants: [backendFoe()],
         notes: "",
       },
@@ -524,7 +525,7 @@ describe("combatFromState", () => {
             weakness: "",
           },
         ],
-      } as object,
+      },
     });
     expect(live?.pending_advantages).toHaveLength(1);
     expect(live?.pending_advantages[0]?.payoff).toBe("enhanced_attack");

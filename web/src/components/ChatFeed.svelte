@@ -37,11 +37,11 @@ F-09 browsing behavior:
   import InlineCombatStrip from "./InlineCombatStrip.svelte";
   import StageChecklist from "./StageChecklist.svelte";
   import { combatFromState } from "../lib/combat";
+  import { deriveTranscriptRows, type TranscriptSpeaker } from "../lib/history";
   import { canRegenerateMessage } from "../lib/message-actions";
   import { game } from "../lib/store.svelte";
   import { metalScroll } from "../lib/metalScroll";
-  import type { GameState, GameEvent, OracleOutcome, StageTiming } from "../lib/types";
-  import type { ClientNote } from "../lib/store.svelte";
+  import type { GameState, OracleOutcome, StageTiming } from "../lib/types";
 
   type Props = { state: GameState };
   // Renamed to `gs` because Svelte's compiler treats a local identifier
@@ -53,7 +53,7 @@ F-09 browsing behavior:
     // F-10 added the `ooc` speaker for OOC explainer answers. See
     // ChatMessage.svelte for the visual treatment; the union here
     // mirrors the speaker prop accepted by that component.
-    kind: "dm" | "player" | "system" | "ooc";
+    kind: TranscriptSpeaker;
     id: string;
     text: string;
     timestamp: string;
@@ -75,98 +75,18 @@ F-09 browsing behavior:
     question?: string | null;
   };
 
-  function thinkingFor(event: GameEvent): string | null {
-    const ext = event.thinking;
-    return typeof ext === "string" && ext.trim() !== "" ? ext : null;
-  }
-
-  function findOutcome(events: readonly OracleOutcome[], id: string | null): OracleOutcome | null {
-    if (!id) return null;
-    return events.find((o) => o.id === id) ?? null;
-  }
-
-  function fromEvent(event: GameEvent, outcomes: readonly OracleOutcome[]): Msg | null {
-    switch (event.event_type) {
-      case "narrative":
-        return {
-          kind: "dm",
-          id: event.id,
-          text: event.content,
-          timestamp: event.created_at,
-          outcome: findOutcome(outcomes, event.oracle_outcome_id),
-          thinking: thinkingFor(event),
-          stageTimings: event.stage_timings ?? [],
-        };
-      case "player":
-        return {
-          kind: "player",
-          id: event.id,
-          text: event.content,
-          timestamp: event.created_at,
-        };
-      case "system":
-        return {
-          kind: "system",
-          id: event.id,
-          text: event.content,
-          timestamp: event.created_at,
-        };
-      case "oracle":
-        // Folded into the receipt of the matching narrative message.
-        return null;
-    }
-  }
-
-  function fromNote(note: ClientNote): Msg {
-    if (note.kind === "explanation" || note.kind === "oracle_preview") {
-      // F-10 OOC notes carry both the question and the answer so the
-      // chat surface can render a single Q+A card. We keep them as
-      // ClientNotes (not action_log entries) so they're ephemeral by
-      // construction — reload clears them and they never feed back
-      // into memory rebuilds.
-      return {
-        kind: "ooc",
-        id: note.id,
-        text: note.text,
-        timestamp: note.created_at,
-        question: note.question ?? null,
-      };
-    }
-    return {
-      kind: "system",
-      id: note.id,
-      text: note.text,
-      timestamp: note.created_at,
-    };
-  }
-
-  // The opening message: either we already have narration, or we need a
-  // first DM message synthesized from the campaign generation result.
-  function openingMessage(s: GameState): Msg | null {
-    const hasNarrative = s.action_log.some((e) => e.event_type === "narrative");
-    if (hasNarrative) return null;
-    return {
-      kind: "dm",
-      id: `opening_${s.id}`,
-      text: `${s.current_scene}\n\n${s.setting_notes}`,
-      timestamp: s.created_at,
-    };
-  }
-
-  const messages: Msg[] = $derived.by(() => {
-    const fromEvents: Msg[] = [];
-    for (const event of gs.action_log) {
-      const m = fromEvent(event, gs.oracle_history);
-      if (m) fromEvents.push(m);
-    }
-
-    const opening = openingMessage(gs);
-    const fromNotes = game.notes.map(fromNote);
-
-    const all = [...(opening ? [opening] : []), ...fromEvents, ...fromNotes];
-    all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    return all;
-  });
+  const messages: readonly Msg[] = $derived(
+    deriveTranscriptRows(gs, game.notes).map((row) => ({
+      kind: row.speaker,
+      id: row.id,
+      text: row.text,
+      timestamp: row.timestamp,
+      outcome: row.outcome,
+      thinking: row.thinking,
+      stageTimings: row.stageTimings,
+      question: row.question,
+    })),
+  );
 
   // Provisional DM bubble for an in-flight stream. We append it to the
   // tail (always last in time order) rather than mixing it into the

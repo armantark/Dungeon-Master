@@ -61,12 +61,10 @@ export interface StreamHandlers {
   onOracleOutcome?: (event: Extract<StreamEvent, { type: "oracle_outcome" }>) => void;
   onThinkingDelta?: (event: Extract<StreamEvent, { type: "thinking_delta" }>) => void;
   onContentDelta?: (event: Extract<StreamEvent, { type: "content_delta" }>) => void;
-  onFinalState?: (event: Extract<StreamEvent, { type: "final_state" }>) => void;
-  onFinalPayload?: (event: Extract<StreamEvent, { type: "final_payload" }>) => void;
-  onError?: (event: Extract<StreamEvent, { type: "error" }>) => void;
   // Catch-all hook so callers can log/inspect unknown events without
-  // forcing them through the typed channels. Returns nothing on purpose:
-  // the dispatcher already invokes the typed handler when one matches.
+  // forcing them through the typed channels. Terminal events are not
+  // dispatched here: `consumeStream` returns exactly one terminal for
+  // the caller to apply.
   onAny?: (event: StreamEvent) => void;
 }
 
@@ -199,11 +197,12 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
         const trimmed = line.trim();
         if (trimmed !== "") {
           const event = parseLine(trimmed);
-          dispatch(event, handlers);
           if (event.type === "final_state" || event.type === "final_payload") {
             finalEvent = event;
           } else if (event.type === "error") {
             errorEvent = event;
+          } else {
+            dispatch(event, handlers);
           }
         }
         newlineIndex = buffer.indexOf("\n");
@@ -216,11 +215,12 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
     const tail = buffer.trim();
     if (tail !== "") {
       const event = parseLine(tail);
-      dispatch(event, handlers);
       if (event.type === "final_state" || event.type === "final_payload") {
         finalEvent = event;
       } else if (event.type === "error") {
         errorEvent = event;
+      } else {
+        dispatch(event, handlers);
       }
     }
   } finally {
@@ -271,13 +271,8 @@ function dispatch(event: StreamEvent, handlers: StreamHandlers): void {
       handlers.onContentDelta?.(event);
       return;
     case "final_state":
-      handlers.onFinalState?.(event);
-      return;
     case "final_payload":
-      handlers.onFinalPayload?.(event);
-      return;
     case "error":
-      handlers.onError?.(event);
       return;
   }
 }

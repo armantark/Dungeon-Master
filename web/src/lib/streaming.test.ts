@@ -65,11 +65,11 @@ describe("consumeStream", () => {
     });
 
     vi.unstubAllGlobals();
-    expect(events).toHaveLength(4);
+    expect(events).toHaveLength(3);
     expect(events[0]?.type).toBe("meta");
     expect(events[1]?.type).toBe("content_delta");
-    expect(events[3]?.type).toBe("final_state");
     expect(result.kind).toBe("final");
+    if (result.kind === "final") expect(result.final.type).toBe("final_state");
   });
 
   it("rebuilds JSON objects split across read() chunks", async () => {
@@ -105,7 +105,7 @@ describe("consumeStream", () => {
     const result = await consumeStream("/api/turn/stream", handlers);
 
     vi.unstubAllGlobals();
-    expect(events.map((e) => e.type)).toEqual(["meta", "final_state"]);
+    expect(events.map((e) => e.type)).toEqual(["meta"]);
     expect(result.kind).toBe("final");
   });
 
@@ -242,7 +242,7 @@ describe("consumeStream", () => {
     if (result.kind === "aborted") expect(result.reason).toBe("client");
   });
 
-  it("invokes typed handlers in addition to onAny", async () => {
+  it("invokes non-terminal typed handlers in addition to onAny", async () => {
     const events = [
       { type: "meta", request_id: "r", route: "yes_no" },
       { type: "thinking_delta", text: "considering" },
@@ -261,11 +261,34 @@ describe("consumeStream", () => {
       onMeta: () => calls.push("meta"),
       onThinkingDelta: () => calls.push("thinking"),
       onContentDelta: () => calls.push("content"),
-      onFinalState: () => calls.push("final"),
     });
 
     vi.unstubAllGlobals();
-    expect(calls).toEqual(["meta", "thinking", "content", "final"]);
+    expect(calls).toEqual(["meta", "thinking", "content"]);
+  });
+
+  it("returns terminal events without dispatching them through callbacks", async () => {
+    const final = {
+      type: "final_state" as const,
+      state: { id: "g" },
+      thinking: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(streamFromChunks([`${JSON.stringify(final)}\n`])),
+    );
+    const onAny = vi.fn();
+    const legacyTerminalCallback = vi.fn();
+    const handlers = { onAny, onFinalState: legacyTerminalCallback } as StreamHandlers & {
+      onFinalState: typeof legacyTerminalCallback;
+    };
+
+    const result = await consumeStream("/api/turn/stream", handlers);
+
+    vi.unstubAllGlobals();
+    expect(onAny).not.toHaveBeenCalled();
+    expect(legacyTerminalCallback).not.toHaveBeenCalled();
+    expect(result).toEqual({ kind: "final", final });
   });
 
   it("dispatches stage events through onStage in pipeline order, including late stages after prose starts", async () => {

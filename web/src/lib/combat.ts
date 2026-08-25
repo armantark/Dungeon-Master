@@ -15,7 +15,8 @@
 // They never infer state, never mutate state, and never roll dice.
 
 import type {
-  EncounterAdvantagePayoff,
+  EncounterState,
+  EnemyCombatant,
   EncounterInitiator,
   EncounterThreatLevel,
   PendingEncounterAdvantage,
@@ -116,82 +117,17 @@ export interface CombatEncounterState {
 // foes still standing" (which is a transient win state).
 export type CombatStateSlot = CombatEncounterState | null;
 
-// --- Backend wire shape -------------------------------------------------
-//
-// We define the backend shapes inline (rather than touching types.ts)
-// because they're internal to this adapter — only `combatFromState`
-// needs them. If the encounter shape ever stabilizes enough that the
-// rest of the app reads it directly, promote these to types.ts.
-
-interface BackendEnemyCombatant {
-  id: string;
-  name: string;
-  description: string;
-  hp: number;
-  max_hp: number;
-  str_score: number;
-  dex_score: number;
-  wil_score: number;
-  armor: number;
-  weapon_name: string;
-  weapon_damage_die: number;
-  // F-19 fields. Optional on the wire to keep older saves loading —
-  // the backend defaults missing values to ordinary / "" when it
-  // migrates an old encounter forward.
-  threat_level?: EncounterThreatLevel;
-  weakness?: string;
-  tactics?: string;
-  leader: boolean;
-  critically_wounded: boolean;
-  defeated: boolean;
-  fled: boolean;
-  notes: string;
-}
-
-// F-18 wire shape for `EncounterState.pending_advantages`. Mirrors
-// `PendingEncounterAdvantage` exactly; we re-import the canonical
-// type instead of redeclaring fields so a backend rename surfaces
-// here as a TS error.
-interface BackendPendingAdvantage {
-  id: string;
-  actor_id: string | null;
-  actor_name: string | null;
-  target_combatant_id: string | null;
-  target_name: string;
-  setup: string;
-  payoff: EncounterAdvantagePayoff;
-  weakness: string;
-}
-
-interface BackendEncounterState {
-  active: boolean;
-  round_number: number;
-  first_round_dex_gate_pending: boolean;
-  // F-05: backend started publishing `initiator` on every encounter.
-  // Optional here so older state blobs that pre-date the field still
-  // adapt cleanly (we map missing → null, and the UI degrades to the
-  // pre-F-05 behavior of "no ambush cue").
-  initiator?: EncounterInitiator | null;
-  casualty_morale_checked: boolean;
-  half_force_morale_checked: boolean;
-  combatants: BackendEnemyCombatant[];
-  // F-18 player-set advantages, optional for legacy compatibility.
-  pending_advantages?: BackendPendingAdvantage[];
-  notes: string;
-}
-
 // Returns the tracker-friendly shape derived from `state.encounter`.
 // Returns null when there is no encounter (backend default) or when
 // the encounter has no combatants and isn't active — that's the
 // "exploration" steady state and the tracker should stay collapsed.
 //
-// We accept `state: object` rather than `GameState` so this works
-// before/after the eventual `encounter` field lands in types.ts; the
-// backend publishes it today, but the hand-mirror in types.ts hasn't
-// been refreshed and we don't want to force a full mirror update just
-// to wire the tracker.
-export function combatFromState(state: object): CombatStateSlot {
-  const candidate = (state as { encounter?: BackendEncounterState | null }).encounter;
+// The partial pick keeps legacy fixtures and pre-encounter saves safe
+// while making the wire type itself canonical and cast-free.
+export function combatFromState(
+  state: { encounter?: EncounterState | null },
+): CombatStateSlot {
+  const candidate = state.encounter;
   if (candidate === null || candidate === undefined) return null;
   if (typeof candidate !== "object") return null;
 
@@ -207,18 +143,9 @@ export function combatFromState(state: object): CombatStateSlot {
   // (a foe specifically broken by a successful morale roll); for now
   // we leave it false everywhere and surface the encounter-level flag
   // via `morale_triggered` instead.
-  const pending: PendingEncounterAdvantage[] = (candidate.pending_advantages ?? []).map(
-    (a) => ({
-      id: a.id,
-      actor_id: a.actor_id,
-      actor_name: a.actor_name,
-      target_combatant_id: a.target_combatant_id,
-      target_name: a.target_name,
-      setup: a.setup,
-      payoff: a.payoff,
-      weakness: a.weakness,
-    }),
-  );
+  const pending: PendingEncounterAdvantage[] = [
+    ...(candidate.pending_advantages ?? []),
+  ];
 
   return {
     active: candidate.active,
@@ -236,7 +163,7 @@ export function combatFromState(state: object): CombatStateSlot {
   };
 }
 
-function adaptCombatant(foe: BackendEnemyCombatant): CombatantState {
+function adaptCombatant(foe: EnemyCombatant): CombatantState {
   return {
     id: foe.id,
     name: foe.name,
@@ -297,7 +224,7 @@ export function unattachedAdvantages(
 // "incapacitated" for `critically_wounded` because the player can still
 // finish the foe off; Cairn's "critical damage" leaves the target
 // alive but downed.
-function deriveCombatantStatus(foe: BackendEnemyCombatant): CombatantStatus {
+function deriveCombatantStatus(foe: EnemyCombatant): CombatantStatus {
   if (foe.defeated) return "dead";
   if (foe.fled) return "fled";
   if (foe.critically_wounded) return "incapacitated";

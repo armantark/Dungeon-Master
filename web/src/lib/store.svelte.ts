@@ -17,8 +17,16 @@ import {
   saveStreamResume,
   updateStreamResumeStages,
 } from "./stream-resume";
+import { fetchSaveBinding, type SaveBinding } from "./store/save-binding";
+import {
+  applyStageEvent,
+  applyStateTerminal,
+  payloadTerminal,
+  stateTerminal,
+  type StageProgress,
+} from "./store/stream-runner";
 import type { StreamHandlers, StreamResult } from "./streaming";
-import type { StreamRoute, StreamStageStatus } from "./streaming-types";
+import type { StreamRoute } from "./streaming-types";
 import type {
   CampaignEndReason,
   CampaignSeed,
@@ -46,27 +54,7 @@ type RollPhase = "idle" | "rolling" | "settling";
 // provisional DM bubble before any tokens arrive ("composing a scene
 // check…"); `requestId` is surfaced in error toasts so the player can
 // reference a specific run if they file an issue.
-// One backend stage as the chat surface sees it. We mirror the
-// backend's `stage` NDJSON frame shape (stage_id, label, status) so
-// the StageChecklist component can render whatever the backend
-// declares without a second mapping table on this side.
-//
-// `order` is the index a stage_id was first observed at; we sort the
-// rendered checklist by it so the visual order matches the order the
-// backend bootstrapped them in (which is the canonical pipeline
-// order). Storing the index — rather than a Map<stage_id, status> —
-// is the cheapest way to keep stable order across status updates
-// without re-deriving from the bootstrap frame on every flip.
-export interface StageProgress {
-  stageId: string;
-  label: string;
-  status: StreamStageStatus;
-  order: number;
-  /** `performance.now()` when the stage first became `active`. */
-  startedAt: number | null;
-  /** `performance.now()` when the stage became `done` or `skipped`. */
-  completedAt: number | null;
-}
+export type { StageProgress } from "./store/stream-runner";
 
 interface StreamingState {
   active: boolean;
@@ -145,58 +133,6 @@ function emptyStreamingState(): StreamingState {
     resuming: false,
     stages: [],
   };
-}
-
-/**
- * Apply a single backend `stage` frame to an ordered StageProgress
- * list. We update in place when the stage_id is already known
- * (preserving its `order`) and append otherwise. Returning a new
- * array — rather than mutating the input — is the contract Svelte 5
- * runes need to pick up the change without us reaching into nested
- * proxy fields.
- *
- * Why we don't dedupe by checking equal status: Svelte's reactivity
- * is based on identity for the array itself, and a no-op status flip
- * is rare enough that the extra branch isn't worth complicating the
- * call site.
- */
-function applyStageEvent(
-  stages: readonly StageProgress[],
-  stage: { stage_id: string; label: string; status: StreamStageStatus },
-): StageProgress[] {
-  const now = performance.now();
-  const idx = stages.findIndex((s) => s.stageId === stage.stage_id);
-  if (idx === -1) {
-    return [
-      ...stages,
-      {
-        stageId: stage.stage_id,
-        label: stage.label,
-        status: stage.status,
-        order: stages.length,
-        startedAt: stage.status === "active" ? now : null,
-        completedAt:
-          stage.status === "done" || stage.status === "skipped" ? now : null,
-      },
-    ];
-  }
-  const next = stages.slice();
-  const existing = next[idx]!;
-  next[idx] = {
-    stageId: existing.stageId,
-    label: stage.label,
-    status: stage.status,
-    order: existing.order,
-    startedAt:
-      stage.status === "active" && existing.startedAt === null
-        ? now
-        : existing.startedAt,
-    completedAt:
-      stage.status === "done" || stage.status === "skipped"
-        ? now
-        : existing.completedAt,
-  };
-  return next;
 }
 
 // Inline "system message" that the chat surfaces alongside server events.
@@ -441,12 +377,10 @@ class GameStore {
    *   (b) sets `libraryStatus: "empty"` and lets the SaveLibrary splash
    *       render the "begin your first campaign" prompt.
    *
-   * We intentionally swallow `getState` errors during auto-load by
-   * surfacing them on `state.error` rather than `libraryError`: once an
-   * active save is selected, the library was bootstrapped successfully,
-   * and a `getState` failure is a normal play-time error (network, etc.)
-   * the App-level error rail already knows how to render. Bootstrap
-   * itself only fails the splash if the *library manifest* call fails.
+   * The selected id is not published until `getState` succeeds. If the
+   * state fetch fails, the library remains visible with its error and the
+   * previous id/state binding stays intact instead of briefly pairing the
+   * new id with stale campaign data.
    */
   async bootstrap(): Promise<void> {
     this.libraryStatus = "loading";
@@ -454,13 +388,18 @@ class GameStore {
     try {
       const response = await api.bootstrapLibrary();
       this.library = response.saves;
-      this.activeSaveId = response.active_save_id;
       if (response.active_save_id === null) {
         this.libraryStatus = "empty";
+        this.activeSaveId = null;
         this.state = null;
         return;
       }
-      await this.#run((signal) => api.getState(signal));
+      const binding = await this.#fetchSaveBinding(response.active_save_id);
+      if (binding === null) {
+        this.libraryStatus = "selecting";
+        return;
+      }
+      this.#publishSaveBinding(binding);
       this.#hydrateOocNotes();
       this.libraryStatus = "ready";
       // After the canonical state is bound we check for an in-flight
@@ -502,11 +441,18 @@ class GameStore {
       const beforeIds = new Set(this.library.map((entry) => entry.save_id));
       const response = await api.createSave(select);
       this.library = response.saves;
-      this.activeSaveId = response.active_save_id;
       const created = response.saves.find((entry) => !beforeIds.has(entry.save_id)) ?? null;
       if (select) {
+        if (response.active_save_id === null) {
+          throw new Error("The new save was created without becoming active.");
+        }
+        const binding = await this.#fetchSaveBinding(response.active_save_id);
+        if (binding === null) {
+          this.libraryStatus = "selecting";
+          return created?.save_id ?? null;
+        }
         this.#resetEphemera();
-        await this.#run((signal) => api.getState(signal));
+        this.#publishSaveBinding(binding);
         this.#hydrateOocNotes();
         this.libraryStatus = "ready";
       }
@@ -540,9 +486,16 @@ class GameStore {
     try {
       const response = await api.selectSave(saveId);
       this.library = response.saves;
-      this.activeSaveId = response.active_save_id;
+      if (response.active_save_id === null) {
+        throw new Error("The selected save did not become active.");
+      }
+      const binding = await this.#fetchSaveBinding(response.active_save_id);
+      if (binding === null) {
+        this.libraryStatus = "selecting";
+        return;
+      }
       this.#resetEphemera();
-      await this.#run((signal) => api.getState(signal));
+      this.#publishSaveBinding(binding);
       this.#hydrateOocNotes();
       this.libraryStatus = "ready";
     } catch (exc) {
@@ -567,9 +520,11 @@ class GameStore {
       .bootstrapLibrary()
       .then((response) => {
         this.library = response.saves;
-        if (response.active_save_id !== null) {
-          this.activeSaveId = response.active_save_id;
-        }
+        // This refresh updates shelf metadata only. `activeSaveId` is
+        // the id paired with the currently loaded state, so changing it
+        // from a manifest response would split the binding if another
+        // tab selected a different save. A real switch goes through
+        // `selectSave`, which fetches and publishes both values.
       })
       .catch(() => {
         // Stale data is acceptable — the splash still works against
@@ -1153,6 +1108,25 @@ class GameStore {
 
   // --- internals ---
 
+  async #fetchSaveBinding(saveId: string): Promise<SaveBinding | null> {
+    const binding = await this.#call((signal) =>
+      fetchSaveBinding(saveId, () => api.getState(signal)),
+    );
+    if (binding === null) {
+      this.libraryError = this.error;
+      return null;
+    }
+    return binding;
+  }
+
+  #publishSaveBinding(binding: SaveBinding): void {
+    // Both writes are synchronous after the state fetch has completed;
+    // Svelte batches them into one render, so consumers never observe
+    // the selected id paired with the previous save's GameState.
+    this.activeSaveId = binding.saveId;
+    this.state = binding.state;
+  }
+
   /**
    * F-12 clear every client-only buffer that was scoped to the
    * previous save. Called from `createSave` and `selectSave` on the
@@ -1366,23 +1340,22 @@ class GameStore {
             content: this.streaming.content + event.text,
           };
         },
-        onFinalState: (event) => {
-          this.state = event.state;
-          observedTerminal = true;
-        },
-        onError: (event) => {
-          this.error = event.message;
-          if (event.state !== null) this.state = event.state;
-          observedTerminal = true;
-        },
       };
 
       try {
-        await api.reattachStream(
+        const result = await api.reattachStream(
           descriptor.request_id,
           handlers,
           this.#abortController.signal,
         );
+        observedTerminal = applyStateTerminal(stateTerminal(result), {
+          replaceState: (state) => {
+            this.state = state;
+          },
+          reportError: (message) => {
+            this.error = message;
+          },
+        });
       } catch (exc) {
         if (this.#isAbortError(exc)) {
           // Bootstrap-driven resume isn't user-cancellable yet; an
@@ -1504,34 +1477,34 @@ class GameStore {
           content: this.streaming.content + event.text,
         };
       },
-      onFinalState: (event) => {
-        this.state = event.state;
-        observedTerminal = true;
-      },
-      onError: (event) => {
-        this.error = event.message;
-        if (event.state !== null) this.state = event.state;
-        observedTerminal = true;
-      },
     };
 
     try {
       const result = await opts.stream(handlers, this.#abortController.signal);
-      if (result.kind === "aborted" && result.reason === "client") {
+      const terminal = stateTerminal(result);
+      observedTerminal = applyStateTerminal(terminal, {
+        replaceState: (state) => {
+          this.state = state;
+        },
+        reportError: (message) => {
+          this.error = message;
+        },
+      });
+      if (terminal.kind === "aborted" && terminal.reason === "client") {
         if (this.#cancelRequested) {
           this.#note("info", "Stopped waiting for the current response.");
         }
-      } else if (result.kind === "aborted" && result.reason === "server") {
+      } else if (terminal.kind === "aborted" && terminal.reason === "server") {
         // Stream closed without a final event. Treat as a recoverable
         // error so the user knows the server bailed; we don't fall
         // back to the unary endpoint here because we may have already
         // mutated the action_log via deltas the backend chose to
         // commit in pieces.
         this.error = "Stream ended unexpectedly. The server may have timed out.";
-      } else if (result.kind === "error") {
-        // The error handler already set this.error.
+      } else if (terminal.kind === "error") {
+        // applyStateTerminal already adopted the backend error and any
+        // partial canonical state it returned.
       }
-      // result.kind === "final" is already handled by onFinalState.
     } catch (exc) {
       if (this.#isAbortError(exc)) {
         if (this.#cancelRequested) {
@@ -1653,33 +1626,24 @@ class GameStore {
           content: this.streaming.content + event.text,
         };
       },
-      onFinalPayload: (event) => {
-        observedAnyEvent = true;
-        if (event.kind !== opts.finalKind) {
-          // The backend handed us a final_payload of a different kind
-          // than this endpoint expects. Surface as an error rather
-          // than silently coercing — a misrouted payload usually
-          // means the route on the backend got rewired.
-          this.error = `Unexpected payload kind '${event.kind}' for this request.`;
-          return;
-        }
-        try {
-          extracted = opts.extract(event.payload);
-        } catch (exc) {
-          this.error = this.#formatError(exc);
-        }
-      },
-      onError: (event) => {
-        observedAnyEvent = true;
-        this.error = event.message;
-      },
     };
 
     try {
       const result = await opts.stream(handlers, this.#abortController.signal);
-      if (result.kind === "error") {
-        this.error = result.event.message;
-      } else if (result.kind === "aborted" && result.reason === "server" && !this.#cancelRequested) {
+      const terminal = payloadTerminal(result);
+      if (terminal.kind === "payload") {
+        if (terminal.event.kind !== opts.finalKind) {
+          this.error = `Unexpected payload kind '${terminal.event.kind}' for this request.`;
+        } else {
+          try {
+            extracted = opts.extract(terminal.event.payload);
+          } catch (exc) {
+            this.error = this.#formatError(exc);
+          }
+        }
+      } else if (terminal.kind === "error") {
+        this.error = terminal.event.message;
+      } else if (terminal.reason === "server" && !this.#cancelRequested) {
         this.error = "The request ended before a final result arrived.";
       }
     } catch (exc) {

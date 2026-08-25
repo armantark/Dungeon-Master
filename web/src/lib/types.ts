@@ -5,6 +5,23 @@
 // codegen step doesn't earn its weight for a personal project. If the API
 // surface starts to drift, we'll revisit.
 
+import type {
+  EncounterAdvantagePayoff,
+  EncounterEndReason,
+  EncounterInitiator,
+  EncounterState,
+} from "./contracts/encounter";
+
+export type {
+  EncounterAdvantagePayoff,
+  EncounterEndReason,
+  EncounterInitiator,
+  EncounterState,
+  EncounterThreatLevel,
+  EnemyCombatant,
+  PendingEncounterAdvantage,
+} from "./contracts/encounter";
+
 export type Likelihood =
   | "Impossible"
   | "Very unlikely"
@@ -115,62 +132,6 @@ export type CairnTimeAdvance = "none" | "brief" | "watch" | "day" | "overnight";
 // food / sleep pressure; other "actions" like resting briefly have
 // always belonged to the recovery surface, not the survival clock.
 export type CairnSurvivalAction = "eat" | "sleep";
-
-export type EncounterEndReason =
-  | "victory"
-  | "enemy_rout"
-  | "player_escaped";
-
-// F-19: Cairn 2e stat-band classification for generated foes.
-// Mirrors backend `EncounterThreatLevel`. The backend's
-// `EncounterScalingPolicy` clamps generated HP / armor / weapon dice
-// against the active `CampaignDangerProfile` for each tier:
-//   - `ordinary` ≈ 3 HP rabble (the default Cairn scale)
-//   - `hardier`  ≈ 6 HP veterans / hardened threats
-//   - `serious`  ≥ 10 HP set-piece threats; only legal when
-//                 telegraphed and (typically) gated by the danger
-//                 profile being at least `harsh` / `lethal`.
-// The frontend uses this to color the foe rail and decide whether to
-// surface a "Serious threat" warning chip — never to recompute the
-// stats themselves, which the backend has already clamped.
-export type EncounterThreatLevel = "ordinary" | "hardier" | "serious";
-
-// F-18: Mechanical payoff a player-created advantage will resolve into
-// when consumed. Mirrors backend `EncounterAdvantagePayoff`. This is
-// the same enum the planner / combat-mechanics review use so the wire
-// stays a single source of truth — receipts and the seed-up UI both
-// read these strings directly.
-export type EncounterAdvantagePayoff =
-  | "enhanced_attack"
-  | "direct_str_damage"
-  | "skip_dex_gate"
-  | "deny_enemy_action"
-  | "impair_enemy"
-  | "force_morale"
-  | "expose_weakness";
-
-// Mirrors backend `PendingEncounterAdvantage`. The advantage lives on
-// `EncounterState.pending_advantages` until a follow-up attack consumes
-// it (or the encounter ends). The frontend reads this list to render
-// "live setups against this foe" on the combat tracker so the player
-// can see what they've stacked before swinging.
-export interface PendingEncounterAdvantage {
-  id: string;
-  actor_id: string | null;
-  actor_name: string | null;
-  target_combatant_id: string | null;
-  target_name: string;
-  setup: string;
-  payoff: EncounterAdvantagePayoff;
-  weakness: string;
-}
-
-// Mirrors backend `EncounterInitiator`. Tells the UI who started the
-// fight so the combat tracker / receipt can label an enemy-opened fight
-// as an ambush instead of a normal player-initiated swing. F-05 only
-// publishes this when an encounter exists; resolutions outside combat
-// (e.g. trap damage, environmental harm) leave it null.
-export type EncounterInitiator = "player" | "enemy";
 
 export type RetreatOutcome = "caught" | "disengaged" | "escaped";
 
@@ -998,6 +959,11 @@ export interface GameState {
   // call site to coerce `unknown` — but no component should display
   // it.
   hidden_npcs: NPC[];
+  // Canonical backend encounter payload. Combat components adapt this
+  // wire shape into a presentation-only view model in `combat.ts`.
+  // Optional only for legacy saves and narrow test fixtures; current
+  // backend responses always publish it.
+  encounter?: EncounterState;
   oracle_tables: OracleTables;
   oracle_history: OracleOutcome[];
   action_log: GameEvent[];
