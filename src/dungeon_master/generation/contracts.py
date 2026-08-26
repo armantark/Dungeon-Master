@@ -157,8 +157,7 @@ class GeneratedCampaignWorld(StrictModel):
                 GameThread(title=thread.title, stakes=thread.stakes) for thread in self.threads
             ],
             hidden_npcs=[
-                NPC(name=npc.name, role=npc.role, disposition=npc.disposition)
-                for npc in self.npcs
+                NPC(name=npc.name, role=npc.role, disposition=npc.disposition) for npc in self.npcs
             ],
             oracle_tables=self.oracle_tables,
         )

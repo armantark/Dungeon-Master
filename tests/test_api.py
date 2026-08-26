@@ -1450,10 +1450,7 @@ def test_llm_settings_endpoint_defaults_to_kimi(
     assert payload["narration_model"] == DEFAULT_MODEL
     assert payload["needs_key"] is False
     assert any(credential["source"] == "env" for credential in payload["provider_credentials"])
-    assert any(
-        option["id"] == LLMPreset.GEMINI_SPLIT.value
-        for option in payload["presets"]
-    )
+    assert any(option["id"] == LLMPreset.GEMINI_SPLIT.value for option in payload["presets"])
 
 
 def test_llm_settings_endpoint_reports_first_run_when_no_credentials_exist(
@@ -1685,10 +1682,7 @@ def test_select_save_endpoint_rejects_switch_while_request_is_in_flight(
         response = client.post("/api/library/select", json={"save_id": second_id})
 
     assert response.status_code == 409
-    assert (
-        response.json()["detail"]
-        == "Cannot switch saves while a request is still in flight."
-    )
+    assert response.json()["detail"] == "Cannot switch saves while a request is still in flight."
 
 
 def test_reattach_request_stream_rejects_different_active_save(tmp_path: Path) -> None:
@@ -2393,10 +2387,7 @@ def test_submit_turn_stream_degrades_to_safe_final_state_on_planning_failure(
     assert parsed[0]["type"] == "meta"
     assert parsed[-1]["type"] == "final_state"
     assert len(parsed[-1]["state"]["oracle_history"]) == 1
-    assert (
-        parsed[-1]["state"]["oracle_history"][-1]["kind"]
-        == OracleKind.PLAYER_ACTION.value
-    )
+    assert parsed[-1]["state"]["oracle_history"][-1]["kind"] == OracleKind.PLAYER_ACTION.value
     assert parsed[-1]["state"]["action_log"][-1]["title"] == "Narrative response"
 
 
@@ -2618,9 +2609,7 @@ def test_character_quiz_stream_emits_final_payload(tmp_path: Path) -> None:
         )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
-    parsed = [
-        json.loads(line) for line in response.text.splitlines() if line.strip()
-    ]
+    parsed = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     types = [event["type"] for event in parsed]
     assert types[0] == "meta"
     assert parsed[0]["route"] == "character_quiz"
@@ -2639,9 +2628,7 @@ def test_character_draft_stream_emits_final_payload(tmp_path: Path) -> None:
         )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
-    parsed = [
-        json.loads(line) for line in response.text.splitlines() if line.strip()
-    ]
+    parsed = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     types = [event["type"] for event in parsed]
     assert types[0] == "meta"
     assert parsed[0]["route"] == "character_draft"

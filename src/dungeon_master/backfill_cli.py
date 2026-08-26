@@ -129,14 +129,8 @@ def _report_text(target: BackfillTarget, report: SaveBackfillReport) -> str:
             "- Campaign status: "
             f"{report.campaign_status_before.value} -> {report.campaign_status_after.value}"
         ),
-        (
-            "- Visible NPCs: "
-            f"{report.visible_npc_count_before} -> {report.visible_npc_count_after}"
-        ),
-        (
-            "- Hidden NPCs: "
-            f"{report.hidden_npc_count_before} -> {report.hidden_npc_count_after}"
-        ),
+        (f"- Visible NPCs: {report.visible_npc_count_before} -> {report.visible_npc_count_after}"),
+        (f"- Hidden NPCs: {report.hidden_npc_count_before} -> {report.hidden_npc_count_after}"),
     ]
     if report.visible_name_warnings:
         lines.append("- Visible-name audit warnings:")

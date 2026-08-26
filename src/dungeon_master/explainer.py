@@ -414,8 +414,7 @@ class ExplainerEngine:
             )
         if latest is not None:
             parts.append(
-                f"The latest mechanical outcome was `{latest.kind.value}`: "
-                f"{latest.summary}",
+                f"The latest mechanical outcome was `{latest.kind.value}`: {latest.summary}",
             )
         parts.append(
             (

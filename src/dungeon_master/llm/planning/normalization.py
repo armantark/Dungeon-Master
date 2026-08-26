@@ -162,12 +162,16 @@ class PlanNormalizer:
             if op.advantage_payoff is None:
                 message = "setup_advantage ops require an advantage_payoff."
                 raise ValueError(message)
-        if op.kind in (
-            PlannedTurnOpKind.EQUIP,
-            PlannedTurnOpKind.USE_ITEM,
-            PlannedTurnOpKind.DROP_ITEM,
-            PlannedTurnOpKind.TRANSFER_ITEM,
-        ) and op.item_name is None:
+        if (
+            op.kind
+            in (
+                PlannedTurnOpKind.EQUIP,
+                PlannedTurnOpKind.USE_ITEM,
+                PlannedTurnOpKind.DROP_ITEM,
+                PlannedTurnOpKind.TRANSFER_ITEM,
+            )
+            and op.item_name is None
+        ):
             message = f"{op.kind.value} ops require an item_name."
             raise ValueError(message)
         if op.kind == PlannedTurnOpKind.TRANSFER_ITEM and (
@@ -178,19 +182,23 @@ class PlanNormalizer:
         if op.kind == PlannedTurnOpKind.RECRUIT_NPC and op.npc_name is None:
             message = "recruit_npc ops require an npc_name."
             raise ValueError(message)
-        if op.kind in (
-            PlannedTurnOpKind.INSPECT_INVENTORY,
-            PlannedTurnOpKind.SEARCH_SCENE,
-            PlannedTurnOpKind.ACQUIRE_ITEM,
-            PlannedTurnOpKind.USE_ITEM,
-            PlannedTurnOpKind.TRANSFER_ITEM,
-            PlannedTurnOpKind.RECRUIT_NPC,
-            PlannedTurnOpKind.DROP_ITEM,
-            PlannedTurnOpKind.SETUP_ADVANTAGE,
-            PlannedTurnOpKind.BEGIN_ENCOUNTER,
-            PlannedTurnOpKind.CLARIFY,
-            PlannedTurnOpKind.NARRATE,
-        ) and route != TurnRoute.PLAYER_ACTION:
+        if (
+            op.kind
+            in (
+                PlannedTurnOpKind.INSPECT_INVENTORY,
+                PlannedTurnOpKind.SEARCH_SCENE,
+                PlannedTurnOpKind.ACQUIRE_ITEM,
+                PlannedTurnOpKind.USE_ITEM,
+                PlannedTurnOpKind.TRANSFER_ITEM,
+                PlannedTurnOpKind.RECRUIT_NPC,
+                PlannedTurnOpKind.DROP_ITEM,
+                PlannedTurnOpKind.SETUP_ADVANTAGE,
+                PlannedTurnOpKind.BEGIN_ENCOUNTER,
+                PlannedTurnOpKind.CLARIFY,
+                PlannedTurnOpKind.NARRATE,
+            )
+            and route != TurnRoute.PLAYER_ACTION
+        ):
             # Preparatory ops are allowed ahead of a primary mechanical op; the
             # route summary remains whatever the primary op is. We therefore only
             # need to normalize these, not remap the route.
@@ -230,5 +238,3 @@ class PlanNormalizer:
         if likelihood is None:
             return text, None
         return text[: match.start()].strip(), likelihood
-
-

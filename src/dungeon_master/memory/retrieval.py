@@ -118,9 +118,7 @@ class MemoryRetrieval(MemoryProjection):
         del state
         query = player_input.lower()
         direct_npc_ids = self._npc_ids_for_outcome(outcome)
-        direct_npcs = [
-            npc for npc in memory.npc_memory if npc.npc_id in direct_npc_ids
-        ]
+        direct_npcs = [npc for npc in memory.npc_memory if npc.npc_id in direct_npc_ids]
         matched_npcs = [
             npc
             for npc in memory.npc_memory
@@ -367,8 +365,7 @@ class MemoryRetrieval(MemoryProjection):
                 (
                     direct_thread_ids
                     and any(
-                        thread_id in candidate.related_thread_ids
-                        for thread_id in direct_thread_ids
+                        thread_id in candidate.related_thread_ids for thread_id in direct_thread_ids
                     )
                 )
                 or (
@@ -402,5 +399,3 @@ class MemoryRetrieval(MemoryProjection):
             return False
         lowered = label.lower()
         return lowered in query
-
-

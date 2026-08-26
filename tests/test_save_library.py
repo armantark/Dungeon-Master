@@ -87,4 +87,3 @@ def test_save_library_select_active_rejects_unknown_save(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="Unknown save"):
         library.select_active("save_missing")
-

@@ -52,10 +52,7 @@ def test_narrative_drift(
         evaluation_steps=[
             "Check that the actual output keeps the same second-person dark-fantasy style family.",
             "Check that the actual output follows the supplied successful player action.",
-            (
-                "Use the baseline narration only as a style reference, "
-                "not as canonical scene state."
-            ),
+            ("Use the baseline narration only as a style reference, not as canonical scene state."),
             (
                 "Pass alternate incidental prose details unless they contradict "
                 "the input or structured outcome."

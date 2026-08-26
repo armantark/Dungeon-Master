@@ -269,9 +269,7 @@ class NarrativeMemoryContext(StrictModel):
         sections: list[str] = []
         if self.scene_summary:
             sections.append(
-                '<SCENE_SUMMARY REFERENCE_ONLY="true">\n'
-                f"{self.scene_summary}\n"
-                "</SCENE_SUMMARY>",
+                f'<SCENE_SUMMARY REFERENCE_ONLY="true">\n{self.scene_summary}\n</SCENE_SUMMARY>',
             )
         if self.active_encounter_summary:
             sections.append(
@@ -316,6 +314,3 @@ class NarrativeMemoryContext(StrictModel):
                 + "\n</EARLIER_SCENE_CHRONICLE>",
             )
         return "\n\n".join(sections)
-
-
-

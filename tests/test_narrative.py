@@ -188,8 +188,7 @@ def test_completion_logs_llm_trace(
 
     assert any(
         'llm.call route="test.route" profile="test.profile" request_id=null '
-        'model="test-model" stream=false prompt_tokens=123 completion_tokens=45'
-        in message
+        'model="test-model" stream=false prompt_tokens=123 completion_tokens=45' in message
         for message in caplog.messages
     )
 

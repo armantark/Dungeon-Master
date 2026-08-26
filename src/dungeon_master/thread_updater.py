@@ -41,10 +41,12 @@ Hard rules:
 - Never treat momentary atmosphere, gestures, unanswered prayers, or ordinary
   descriptive flourish as durable thread advancement on their own.
 - Never delete threads.
-- {no_invention_rule(
-    'player input, oracle outcome, final narration response, executed backend '
-    'steps, current threads, and memory context'
-)}
+- {
+    no_invention_rule(
+        "player input, oracle outcome, final narration response, executed backend "
+        "steps, current threads, and memory context"
+    )
+}
 - For update/resolve, use an exact supplied thread_id from the current threads list.
 - Keep thread titles short, concrete, and future-playable.
 - Keep stakes focused on what remains at risk if the matter is ignored.

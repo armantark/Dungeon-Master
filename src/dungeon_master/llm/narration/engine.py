@@ -481,12 +481,11 @@ class NarrativeEngine:
         if state.campaign_status == CampaignStatus.ENDED:
             output_instruction = shared_output_instruction.format(
                 goal="of terminal closure",
-                ending=" Do not end with a next-action prompt, menu, or new-character suggestion."
+                ending=" Do not end with a next-action prompt, menu, or new-character suggestion.",
             )
         else:
             output_instruction = shared_output_instruction.format(
-                goal="of playable narration",
-                ending=" End with one concrete prompt for action."
+                goal="of playable narration", ending=" End with one concrete prompt for action."
             )
         lines.extend(
             [
@@ -503,13 +502,11 @@ class NarrativeEngine:
         lines: list[str] = []
         if state.directives.world_guidance.strip():
             lines.append(
-                "World guidance: "
-                + self._clip_prompt_text(state.directives.world_guidance, 350),
+                "World guidance: " + self._clip_prompt_text(state.directives.world_guidance, 350),
             )
         if state.directives.play_guidance.strip():
             lines.append(
-                "Play guidance: "
-                + self._clip_prompt_text(state.directives.play_guidance, 350),
+                "Play guidance: " + self._clip_prompt_text(state.directives.play_guidance, 350),
             )
         return "\n".join(lines) or "(none)"
 
@@ -565,9 +562,7 @@ class NarrativeEngine:
         if not state.encounter.active:
             return "No active combat threat is currently being appraised."
         active_foes = [
-            foe
-            for foe in state.encounter.combatants
-            if not foe.defeated and not foe.fled
+            foe for foe in state.encounter.combatants if not foe.defeated and not foe.fled
         ]
         if not active_foes:
             return "The immediate combat threat has broken or been neutralized."

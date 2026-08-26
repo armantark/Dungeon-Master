@@ -97,10 +97,7 @@ def seed_fixture_library(
     root_dir = root_state_path.parent
     if root_dir.exists():
         if not force:
-            message = (
-                f"Fixture root already exists at {root_dir}. "
-                "Pass --force to replace it."
-            )
+            message = f"Fixture root already exists at {root_dir}. Pass --force to replace it."
             raise ValueError(message)
         _clear_root_dir(root_dir)
 
@@ -164,8 +161,7 @@ def _continuity_fixture_state() -> GameState:
         player_label_kind=NPCPlayerLabelKind.DESCRIPTOR,
         role="Belfry watcher",
         disposition=(
-            "Speaks only after the bell answers first, and even then in clipped "
-            "half-confessions."
+            "Speaks only after the bell answers first, and even then in clipped half-confessions."
         ),
     )
     ferryman = NPC(
@@ -242,8 +238,7 @@ def _continuity_fixture_state() -> GameState:
             "receipt links, and inspector focus jumps without touching a live campaign."
         ),
         player_notes=(
-            "You came to the marsh chapel to learn why the bell tolls before the dead "
-            "are counted."
+            "You came to the marsh chapel to learn why the bell tolls before the dead are counted."
         ),
         campaign_status=CampaignStatus.ACTIVE,
         npc_roster_version=2,

@@ -205,14 +205,17 @@ def _iter_stream_response(
                 continue
             delta = _get_field(choice, "delta") or _get_field(choice, "message") or choice
             content, content_thinking = _extract_content_and_thinking(delta)
-            thinking = _extract_text(
-                _get_field(delta, "reasoning_content")
-                or _get_field(delta, "reasoning")
-                or _get_field(delta, "thinking")
-                or _provider_reasoning(delta)
-                or _provider_reasoning(choice)
-                or _provider_reasoning(chunk),
-            ) or content_thinking
+            thinking = (
+                _extract_text(
+                    _get_field(delta, "reasoning_content")
+                    or _get_field(delta, "reasoning")
+                    or _get_field(delta, "thinking")
+                    or _provider_reasoning(delta)
+                    or _provider_reasoning(choice)
+                    or _provider_reasoning(chunk),
+                )
+                or content_thinking
+            )
             if content or thinking:
                 yield CompletionDelta(content=content, thinking=thinking)
     except RequestCancelledError:

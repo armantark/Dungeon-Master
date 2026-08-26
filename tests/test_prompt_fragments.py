@@ -15,24 +15,30 @@ def test_json_only_fragments() -> None:
     assert "Return only valid JSON." in JSON_ONLY
     assert "persist" in JSON_ONLY_PERSIST
 
+
 def test_seed_authority_fragment() -> None:
     assert "campaign seed supplied by the user is authoritative" in SEED_AUTHORITY
+
 
 def test_no_invention_rule_parameterized() -> None:
     result = no_invention_rule("player input and oracle outcome")
     assert "Never invent new facts beyond the supplied player input and oracle outcome." in result
 
+
 def test_continuity_updater_preamble() -> None:
     assert "player-visible canon" in CONTINUITY_UPDATER_PREAMBLE
     assert "Never let narration-only extraction contradict" in CONTINUITY_UPDATER_PREAMBLE
 
+
 def test_no_keyword_triggers() -> None:
     assert "Do not use keyword triggers." in NO_KEYWORD_TRIGGERS
+
 
 def test_cairn_enums_and_semantics() -> None:
     assert "Allowed tags: petty, bulky, weapon" in CAIRN_ALLOWED_ENUMS
     assert "petty vs bulky" in CAIRN_ITEM_SEMANTICS
     assert "resources" in CAIRN_ITEM_SEMANTICS
+
 
 def test_render_updater_user_prompt_full() -> None:
     prompt = render_updater_user_prompt(
@@ -58,6 +64,7 @@ def test_render_updater_user_prompt_full() -> None:
     assert "Current actors:\nPlayer sheet" in prompt
     assert "Final narration response:\nYou see nothing." in prompt
     assert "Current threads: []" in prompt
+
 
 def test_render_updater_user_prompt_minimal() -> None:
     prompt = render_updater_user_prompt(

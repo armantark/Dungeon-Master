@@ -39,6 +39,7 @@ MAX_CALLBACKS: Final[int] = 8
 SALIENT_CALLBACK_THRESHOLD: Final[int] = 4
 CURRENT_MEMORY_SCHEMA_VERSION: Final[int] = 3
 
+
 class MemoryProjection(MemoryRendering):
     def bootstrap_from_state(self, state: GameState) -> MemoryState:
         return self.bootstrap_from_turns(state, self._turns_from_state(state))
@@ -248,9 +249,7 @@ class MemoryProjection(MemoryRendering):
             latest = card.recent_developments[-1] if card.recent_developments else ""
             card.summary = _npc_summary(npc, latest)
         memory.npc_memory = [
-            card
-            for card in memory.npc_memory
-            if any(card.npc_id == npc.id for npc in npcs)
+            card for card in memory.npc_memory if any(card.npc_id == npc.id for npc in npcs)
         ]
         memory.npc_memory.sort(
             key=lambda card: (
@@ -377,13 +376,10 @@ class MemoryProjection(MemoryRendering):
         scene_label = state.current_scene or scene.scene_label
         scene_status = state.scene_status
         active_turns = [
-            turn
-            for turn in memory.current_scene_turns
-            if turn.scene_key == current_scene_key
+            turn for turn in memory.current_scene_turns if turn.scene_key == current_scene_key
         ]
         active_developments = [
-            self._render_turn(turn)
-            for turn in active_turns[-MAX_RECENT_DEVELOPMENTS:]
+            self._render_turn(turn) for turn in active_turns[-MAX_RECENT_DEVELOPMENTS:]
         ]
         summary = self._scene_compaction(
             scene_label=scene_label,
@@ -561,9 +557,7 @@ class MemoryProjection(MemoryRendering):
         turns: list[CommittedTurnMemory] = []
         for index, outcome in enumerate(state.oracle_history):
             player_input = (
-                player_events[index].content
-                if index < len(player_events)
-                else outcome.summary
+                player_events[index].content if index < len(player_events) else outcome.summary
             )
             narrative = latest_narrative_by_outcome_id.get(outcome.id)
             turns.append(
@@ -575,7 +569,6 @@ class MemoryProjection(MemoryRendering):
                 ),
             )
         return turns
-
 
 
 def _thread_summary(thread: GameThread, development: str) -> str:

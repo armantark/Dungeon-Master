@@ -161,10 +161,10 @@ TURN_ROUTER_USER_PROMPT_TEMPLATE = (
     '  "ops": [\n'
     "    {\n"
     '      "kind": "narrate | yes_no | random_event | scene_check | save | '
-    'begin_encounter | attack | '
-    'coordinated_attack | enemy_opener | harm | recovery | equip | retreat | '
-    'setup_advantage | acquire_item | transfer_item | recruit_npc | '
-    'inspect_inventory | search_scene | '
+    "begin_encounter | attack | "
+    "coordinated_attack | enemy_opener | harm | recovery | equip | retreat | "
+    "setup_advantage | acquire_item | transfer_item | recruit_npc | "
+    "inspect_inventory | search_scene | "
     'use_item | drop_item | clarify",\n'
     '      "text": "normalized text for this step",\n'
     '      "likelihood": "one Likelihood value or null",\n'
@@ -267,6 +267,3 @@ Decision rule:
 - Judge meaning, not wording. Do not use keyword matching; compare the original
   player intent and supplied context to the proposed save.
 """
-
-
-

@@ -288,9 +288,7 @@ class CharacterEffectUpdater:
             return None
         before = len(cairn.abilities)
         cairn.abilities = [
-            existing
-            for existing in cairn.abilities
-            if _normalize(existing) != _normalize(ability)
+            existing for existing in cairn.abilities if _normalize(existing) != _normalize(ability)
         ]
         if len(cairn.abilities) == before:
             return None

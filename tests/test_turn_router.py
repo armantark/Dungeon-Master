@@ -1083,7 +1083,6 @@ def test_router_falls_back_to_narration_when_model_planning_fails(
         ),
     )
     assert any(
-        'turn.router route="player_action" source="model_error_fallback" ops="narrate"'
-        in message
+        'turn.router route="player_action" source="model_error_fallback" ops="narrate"' in message
         for message in caplog.messages
     )

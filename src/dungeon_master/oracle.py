@@ -27,6 +27,7 @@ BASE_PROBABILITIES: dict[Likelihood, int] = {
     Likelihood.NEARLY_CERTAIN: 95,
 }
 
+
 class OracleEngine:
     def __init__(self, seed: int | None = None) -> None:
         self._rng = random.Random(seed)

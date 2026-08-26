@@ -125,9 +125,7 @@ class SaveLibrary:
         # bootstrap path did through `load_or_create(...)`.
         store.save(create_state, create_checkpoint=True)
 
-        manifest.saves.append(
-            SaveRecord(save_id=save_id, created_at=utc_now().isoformat())
-        )
+        manifest.saves.append(SaveRecord(save_id=save_id, created_at=utc_now().isoformat()))
         if select:
             manifest.active_save_id = save_id
         self.save_manifest(manifest)

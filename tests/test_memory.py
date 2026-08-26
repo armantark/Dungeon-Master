@@ -51,12 +51,15 @@ def test_memory_manager_tracks_turn_and_related_entities() -> None:
         state.npcs[1].id,
     ]
     assert memory.thread_memory[0].last_touched_turn == 1
-    assert any(state.npcs[0].name in line for line in manager.retrieve_for_narrator(
-        state,
-        memory,
-        "I demand answers.",
-        outcome,
-    ).relevant_memory)
+    assert any(
+        state.npcs[0].name in line
+        for line in manager.retrieve_for_narrator(
+            state,
+            memory,
+            "I demand answers.",
+            outcome,
+        ).relevant_memory
+    )
 
 
 def test_memory_manager_bootstraps_existing_history() -> None:
@@ -163,8 +166,7 @@ def test_npc_updater_memory_context_prefers_direct_and_matching_npcs() -> None:
         state,
         CommittedTurnMemory(
             player_input=(
-                "I press Generated NPC One until he names his patron "
-                "and dismiss the wary watcher."
+                "I press Generated NPC One until he names his patron and dismiss the wary watcher."
             ),
             outcome=outcome,
             narrative_text="One witness breaks; the other withdraws from the night's business.",
@@ -558,8 +560,7 @@ def test_narrator_memory_uses_query_matching_for_visible_npcs() -> None:
     )
 
     assert any(
-        "The ash-veiled bellringer (descriptor)" in line
-        for line in narrator.relevant_memory
+        "The ash-veiled bellringer (descriptor)" in line for line in narrator.relevant_memory
     )
     assert all("The Hierophant" not in line for line in narrator.relevant_memory)
 

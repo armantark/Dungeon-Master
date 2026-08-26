@@ -82,8 +82,7 @@ class TurnRouter(ReviewGates, PlanNormalizer):
         )
         hint = combat_encounter_hint.strip() if combat_encounter_hint is not None else ""
         prompt = (
-            f"{prompt_core}\nCanonical encounter status from backend (authoritative):\n"
-            f"{hint}\n"
+            f"{prompt_core}\nCanonical encounter status from backend (authoritative):\n{hint}\n"
             if hint
             else prompt_core
         )

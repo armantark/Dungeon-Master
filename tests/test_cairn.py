@@ -399,8 +399,7 @@ def test_generated_backfill_normalizes_resource_recharge_policy_synonyms() -> No
     )
 
     assert (
-        generated.inventory[0].resources[0].recharge_policy
-        == CairnResourceRechargePolicy.ON_REST
+        generated.inventory[0].resources[0].recharge_policy == CairnResourceRechargePolicy.ON_REST
     )
 
 
@@ -744,8 +743,7 @@ def test_coordinated_attack_records_each_participant() -> None:
     ]
     assert all(participant.acted for participant in outcome.cairn.coordinated_participants)
     assert outcome.cairn.damage_after_armor == sum(
-        participant.damage_after_armor
-        for participant in outcome.cairn.coordinated_participants
+        participant.damage_after_armor for participant in outcome.cairn.coordinated_participants
     )
 
 
@@ -1274,7 +1272,7 @@ def test_acquire_items_adds_typed_loot_and_recomputes_burden() -> None:
         '{"name":"Purse of old silver","details":"Stamped coins still accepted in market towns.",'
         '"tags":["petty","utility"],"slots":0,"weapon_damage_die":null,'
         '"armor_bonus":0,"uses":null,"equipped":false}'
-        ']}',
+        "]}",
     )
     engine = CairnEngine(
         seed=1,
@@ -1309,7 +1307,7 @@ def test_acquire_items_normalizes_petty_slot_mistake_and_recomputes_burden() -> 
         '{"name":"Folded phone number","details":"A tiny scrap of paper.",'
         '"tags":["petty","utility"],"slots":1,"weapon_damage_die":null,'
         '"armor_bonus":0,"uses":null,"equipped":false}'
-        ']}',
+        "]}",
     )
     engine = CairnEngine(
         seed=1,
@@ -1336,7 +1334,7 @@ def test_acquire_items_can_ready_new_weapon_and_unequip_old_one() -> None:
         '{"name":"Ghoul spear","details":"Still wet from the fight.",'
         '"tags":["weapon"],"slots":1,"weapon_damage_die":8,'
         '"armor_bonus":0,"uses":null,"equipped":true}'
-        ']}',
+        "]}",
     )
     engine = CairnEngine(
         seed=1,

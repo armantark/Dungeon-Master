@@ -126,6 +126,5 @@ class MemoryRendering:
         lowered = summary.lower()
         for prefix in ("expected: ", "altered: ", "interrupted before: "):
             if lowered.startswith(prefix):
-                return f"Scene check resolved: {summary[len(prefix):]}"
+                return f"Scene check resolved: {summary[len(prefix) :]}"
         return f"Scene check resolved: {summary}"
-

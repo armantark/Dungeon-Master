@@ -63,10 +63,11 @@ Hard rules:
 - Use exact actor_id values from the supplied actor list. Use "player" for the
   protagonist.
 - {NO_KEYWORD_TRIGGERS}
-- {no_invention_rule(
-    'actors, player input, oracle outcome, executed backend steps, and final '
-    'narration'
-)}
+- {
+    no_invention_rule(
+        "actors, player input, oracle outcome, executed backend steps, and final narration"
+    )
+}
 - If no durable carried-inventory change occurred, return an empty ops list.
 """
 

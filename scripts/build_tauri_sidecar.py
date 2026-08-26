@@ -81,16 +81,13 @@ def resolve_target_triple() -> str:
     if rustc is None:
         return infer_target_triple()
     try:
-        return (
-            subprocess.run(  # noqa: S603
-                [rustc, "--print", "host-tuple"],
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=ROOT,
-            )
-            .stdout.strip()
-        )
+        return subprocess.run(  # noqa: S603
+            [rustc, "--print", "host-tuple"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        ).stdout.strip()
     except subprocess.CalledProcessError as err:
         try:
             return infer_target_triple()

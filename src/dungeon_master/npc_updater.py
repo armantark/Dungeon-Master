@@ -65,10 +65,12 @@ Hard rules:
   grouped descriptor NPC.
 - Retire an NPC only when the outcome + steps make them leave the active cast
   or die in a way that stops them appearing as an active NPC.
-- {no_invention_rule(
-    'player input, oracle outcome, final narration response, executed backend '
-    'steps, current NPC list, and memory context'
-)}
+- {
+    no_invention_rule(
+        "player input, oracle outcome, final narration response, executed backend "
+        "steps, current NPC list, and memory context"
+    )
+}
 - Memory context is support, not permission to invent.
 - For update/retire, use an exact supplied npc_id from the current NPC list.
 - Keep NPC names stable and concise; do not overwrite a name unless the new
@@ -408,10 +410,13 @@ class NPCUpdater:
         memory_context: str | None = None,
     ) -> str:
         visible_ids = {npc.id for npc in state.npcs}
-        existing_npcs = "\n".join(
-            _legacy_roster_line(npc, player_visible=npc.id in visible_ids)
-            for npc in state.all_npcs()
-        ) or "(none)"
+        existing_npcs = (
+            "\n".join(
+                _legacy_roster_line(npc, player_visible=npc.id in visible_ids)
+                for npc in state.all_npcs()
+            )
+            or "(none)"
+        )
         return (
             LEGACY_NPC_REPAIR_USER_PROMPT_TEMPLATE.replace("<<CURRENT_SCENE>>", state.current_scene)
             .replace("<<DIRECTIVES>>", self._directives_prompt_block(state))
@@ -548,8 +553,7 @@ class NPCUpdater:
         introduced: list[NPC] = []
         hidden: list[NPC] = []
         existing_by_name = {
-            _name_key(npc.name): npc.model_copy(deep=True)
-            for npc in state.all_npcs()
+            _name_key(npc.name): npc.model_copy(deep=True) for npc in state.all_npcs()
         }
         seen_names: set[str] = set()
         for candidate in generated.introduced:

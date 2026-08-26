@@ -984,9 +984,7 @@ class CharacterGenerator:
             )
 
         template_json = (
-            template.model_dump_json(indent=2)
-            if template is not None
-            else "No template provided."
+            template.model_dump_json(indent=2) if template is not None else "No template provided."
         )
         campaign_seed = seed or CampaignSeed()
         user_prompt = (
@@ -1047,9 +1045,7 @@ class CharacterGenerator:
             return fallback
 
         template_json = (
-            template.model_dump_json(indent=2)
-            if template is not None
-            else "No template provided."
+            template.model_dump_json(indent=2) if template is not None else "No template provided."
         )
         campaign_seed = seed or CampaignSeed()
         user_prompt = (
