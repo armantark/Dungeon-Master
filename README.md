@@ -184,9 +184,12 @@ If you stay on the default Kimi preset, `LITELLM_MODEL` remains the active backe
 ## Test
 
 ```shell
+uv run ruff format --check .
 uv run ruff check .
 uv run mypy src tests
 uv run pytest
+cd web && npm run format:check
+cd web && npm run lint
 cd web && npm run check
 cd web && npm test
 cd web && npm run build

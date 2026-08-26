@@ -66,6 +66,7 @@ jobs:
 
       - name: Run backend checks
         run: |
+          uv run ruff format --check .
           uv run ruff check .
           uv run mypy src tests
           uv run pytest
@@ -73,6 +74,8 @@ jobs:
       - name: Run frontend checks
         working-directory: web
         run: |
+          npm run format:check
+          npm run lint
           npm run check
           npm test -- --run
 
