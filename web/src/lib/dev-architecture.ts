@@ -79,7 +79,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "The player-facing entrance. It forwards ordinary free text to the store while slash commands use an explicit client dispatch path.",
     input: "Player free text", output: "POST body { text }",
     rationale: "The browser does not guess intent, targets, or dice outcomes. Natural-language mechanics can evolve without shipping a new UI parser.",
-    citations: [{ file: "web/src/components/Composer.svelte", line: 75 }],
+    citations: [{ file: "web/src/features/play/Composer.svelte", line: 75 }],
   },
   {
     id: "relay", name: "Relay Post", kind: "relay", role: "client",
@@ -167,7 +167,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     responsibility: "Reads NDJSON frames, renders provisional deltas, then replaces the client store with the final full GameState.",
     input: "NDJSON frames", output: "Rendered scene + replaced GameState",
     rationale: "Wholesale replacement prevents client-side merge rules from drifting from server authority.",
-    citations: [{ file: "web/src/lib/streaming.ts", line: 107 }, { file: "web/src/lib/store/stream-runner.ts", line: 61 }, { file: "web/src/lib/store.svelte.ts", line: 1483 }],
+    citations: [{ file: "web/src/state/stream/streaming.ts", line: 107 }, { file: "web/src/state/stream-runner.ts", line: 67 }, { file: "web/src/state/game-store.svelte.ts", line: 1306 }],
   },
   {
     id: "shell", name: "Tauri Shell & Vite Proxy", kind: "shell", role: "desktop",

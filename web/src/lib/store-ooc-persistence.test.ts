@@ -201,7 +201,7 @@ describe("OOC explainer persistence across reloads", () => {
     // We don't bootstrap here because we don't need the GameState —
     // we just want notes loaded so dismissNote has something to act
     // on.
-    const ocs = await import("./ooc-storage");
+    const ocs = await import("../state/save/ooc-notes");
     game.notes = ocs.loadOocNotes(SAVE_ID);
     expect(game.notes).toHaveLength(2);
 

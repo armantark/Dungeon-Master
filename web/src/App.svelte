@@ -23,17 +23,17 @@ Everything else remains peekable reference in the Inspector.
   import { onMount } from "svelte";
   import { game } from "./lib/store.svelte";
 
-  import CharacterSetup from "./components/CharacterSetup.svelte";
-  import StatusStrip from "./components/StatusStrip.svelte";
-  import CharacterFolio from "./components/CharacterFolio.svelte";
-  import ChatFeed from "./components/ChatFeed.svelte";
-  import Composer from "./components/Composer.svelte";
-  import CredentialSetupModal from "./components/CredentialSetupModal.svelte";
-  import EndBanner from "./components/EndBanner.svelte";
-  import Inspector from "./components/Inspector.svelte";
-  import SaveLibrary from "./components/SaveLibrary.svelte";
-  import SettingsModal from "./components/SettingsModal.svelte";
-  import SystemMenu from "./components/SystemMenu.svelte";
+  import CharacterSetup from "./features/setup/CharacterSetup.svelte";
+  import StatusStrip from "./features/play/StatusStrip.svelte";
+  import CharacterFolio from "./features/play/CharacterFolio.svelte";
+  import ChatFeed from "./features/play/ChatFeed.svelte";
+  import Composer from "./features/play/Composer.svelte";
+  import CredentialSetupModal from "./features/setup/CredentialSetupModal.svelte";
+  import EndBanner from "./features/play/EndBanner.svelte";
+  import Inspector from "./features/inspector/Inspector.svelte";
+  import SaveLibrary from "./features/saves/SaveLibrary.svelte";
+  import SettingsModal from "./features/settings/SettingsModal.svelte";
+  import SystemMenu from "./features/play/SystemMenu.svelte";
   import { isCampaignEnded } from "./lib/end-campaign";
   import { metalScroll } from "./lib/metalScroll";
 

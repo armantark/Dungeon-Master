@@ -10,8 +10,8 @@ import {
   StreamTransportError,
   type StreamHandlers,
   type StreamResult,
-} from "./streaming";
-import type { StreamEvent } from "./streaming-types";
+} from "../state/stream/streaming";
+import type { StreamEvent } from "../state/stream/streaming-types";
 import type {
   CampaignEndReason,
   CampaignSeed,

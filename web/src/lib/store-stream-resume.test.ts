@@ -22,7 +22,7 @@ import {
   loadStreamResume,
   saveStreamResume,
   type StreamResumeDescriptor,
-} from "./stream-resume";
+} from "../state/save/stream-resume";
 
 const SAVE_ID = "save_resume_check";
 
