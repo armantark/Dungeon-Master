@@ -19,6 +19,11 @@ from dungeon_master.application.continuity import (
 from dungeon_master.application.continuity import (
     ThreadUpdater as ThreadUpdaterPort,
 )
+from dungeon_master.application.stage_timing import (
+    TURN_STREAM_STAGE_LABELS,
+    TURN_STREAM_STAGE_ORDER,
+    StageTimingTracker,
+)
 from dungeon_master.cairn import AttackActor, CairnEngine, SurvivalUpdate
 from dungeon_master.campaign import (
     CampaignGenerator,
@@ -72,8 +77,6 @@ from dungeon_master.models import (
     OracleOutcome,
     PartyMember,
     SceneStatus,
-    StageStatus,
-    StageTiming,
     StrictModel,
     utc_now,
 )
@@ -99,14 +102,6 @@ from dungeon_master.turn_router import PlannedTurnOp, PlannedTurnOpKind, TurnPla
 
 CURRENT_NPC_ROSTER_VERSION = 2
 CURRENT_SAVE_SCHEMA_VERSION = 4
-TURN_STREAM_STAGE_LABELS: dict[str, str] = {
-    "planning_turn": "Planning turn",
-    "resolving_mechanics": "Resolving mechanics",
-    "preparing_narration": "Preparing narration",
-    "streaming_narration": "Streaming narration",
-    "reconciling_continuity": "Reconciling continuity",
-}
-TURN_STREAM_STAGE_ORDER: tuple[str, ...] = tuple(TURN_STREAM_STAGE_LABELS)
 PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}
 MIN_COORDINATED_ATTACK_PARTICIPANTS = 2
 RECENT_NPC_CONTEXT_LIMIT = 4
@@ -142,74 +137,6 @@ class ServiceActor:
 @dataclass(frozen=True)
 class ClarificationPrompt:
     question: str
-
-# Map between the wire-stream enum (`narrative.StreamStageStatus`) and
-# the persisted enum (`models.StageStatus`). The two are intentionally
-# separate types — wire vs. persistence — so the streaming protocol can
-# evolve without forcing a save migration. The mapping is total and
-# direct; we keep it as a module-level constant rather than a method so
-# the lookup can be re-used inside `StageTimingTracker.record`.
-_STAGE_STATUS_FROM_STREAM: dict[StreamStageStatus, StageStatus] = {
-    StreamStageStatus.PENDING: StageStatus.PENDING,
-    StreamStageStatus.ACTIVE: StageStatus.ACTIVE,
-    StreamStageStatus.DONE: StageStatus.DONE,
-    StreamStageStatus.SKIPPED: StageStatus.SKIPPED,
-}
-
-
-class StageTimingTracker:
-    """Records per-stage start / end timestamps for one streamed turn.
-
-    The tracker is the canonical owner of stage timings while a turn
-    streams. It updates on every status transition emitted via
-    ``_stage_delta``: ``ACTIVE`` writes ``started_at`` (idempotent —
-    we keep the first-seen timestamp so a repeated ACTIVE doesn't
-    reset the clock), and ``DONE`` / ``SKIPPED`` write ``completed_at``.
-    The tracker preserves bootstrap order so ``snapshot()`` returns the
-    stages in the same sequence the frontend renders the checklist.
-
-    The tracker deliberately does not read or yield ``CompletionDelta``
-    values. It is invoked alongside the existing ``_stage_delta`` so
-    the streaming generator's shape stays unchanged; callers thread one
-    tracker through the entire turn and attach its snapshot to the
-    persisted ``GameEvent`` once the narrator finishes.
-    """
-
-    def __init__(self) -> None:
-        # Insertion-ordered map keyed by stage_id. We snapshot by
-        # iterating insertion order rather than re-sorting, because the
-        # bootstrap pass that primes the tracker already emits stages
-        # in canonical pipeline order.
-        self._records: dict[str, StageTiming] = {}
-
-    def record(self, stage_id: str, label: str, status: StreamStageStatus) -> None:
-        persisted_status = _STAGE_STATUS_FROM_STREAM[status]
-        existing = self._records.get(stage_id)
-        now = utc_now()
-        # `started_at` is set on the first ACTIVE transition.
-        # `completed_at` is set on a DONE that follows a started stage —
-        # a SKIPPED stage never started, so leaving completed_at None
-        # keeps the simple "duration = completed_at - started_at" math
-        # well-defined: present + present ⇒ duration; either missing ⇒
-        # no duration. Encoding the skipped intent in `status` alone
-        # avoids the ambiguity of "completed without running".
-        started = existing.started_at if existing is not None else None
-        completed = existing.completed_at if existing is not None else None
-        if status == StreamStageStatus.ACTIVE and started is None:
-            started = now
-        if status == StreamStageStatus.DONE and completed is None:
-            completed = now
-        self._records[stage_id] = StageTiming(
-            stage_id=stage_id,
-            label=label,
-            status=persisted_status,
-            started_at=started,
-            completed_at=completed,
-        )
-
-    def snapshot(self) -> list[StageTiming]:
-        return list(self._records.values())
-
 
 @dataclass(frozen=True)
 class ExecutedTurn:
