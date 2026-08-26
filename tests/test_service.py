@@ -829,11 +829,7 @@ class FakeCairnEngine:
         actor_name = None
         if actor_id is not None:
             actor_name = next(
-                (
-                    member.sheet.name
-                    for member in state.party_members
-                    if member.id == actor_id
-                ),
+                (member.sheet.name for member in state.party_members if member.id == actor_id),
                 None,
             )
         return OracleOutcome(
@@ -1462,8 +1458,7 @@ def test_capability_oracle_guard_blocks_unsupported_ability_roll(tmp_path: Path)
             outcome=OracleOutcome(
                 kind=OracleKind.YES_NO,
                 summary=(
-                    "No: Does Ennius possess resurrection magic? "
-                    "(unsupported by canonical sheet)"
+                    "No: Does Ennius possess resurrection magic? (unsupported by canonical sheet)"
                 ),
                 question="Does Ennius possess resurrection magic?",
                 likelihood=Likelihood.IMPOSSIBLE,
@@ -1725,10 +1720,7 @@ def test_service_player_turn_applies_narrated_character_effects(tmp_path: Path) 
         oracle=OracleEngine(seed=1),
         narrative=SequencedNarrative(
             [
-                (
-                    "The ritual takes hold, and the blood-bond connects you "
-                    "mind-to-mind forever."
-                ),
+                ("The ritual takes hold, and the blood-bond connects you mind-to-mind forever."),
             ],
         ),
         campaign_generator=FakeCampaignGenerator(),
@@ -1767,10 +1759,7 @@ def test_service_player_turn_applies_narrated_party_member_effects(tmp_path: Pat
         oracle=OracleEngine(seed=1),
         narrative=SequencedNarrative(
             [
-                (
-                    "The ritual takes hold, and the blood-bond connects you "
-                    "mind-to-mind forever."
-                ),
+                ("The ritual takes hold, and the blood-bond connects you mind-to-mind forever."),
             ],
         ),
         campaign_generator=FakeCampaignGenerator(),
@@ -2481,9 +2470,7 @@ def test_recruitment_resolves_misnamed_visible_descriptor(
         GameEvent(
             event_type=EventType.NARRATIVE,
             title="Narrative response",
-            content=(
-                "The blood-hierarch offers a militant flock and waits for your command."
-            ),
+            content=("The blood-hierarch offers a militant flock and waits for your command."),
         ),
     )
     service._save_state_commit(state, create_checkpoint=True)  # noqa: SLF001
@@ -2637,8 +2624,7 @@ def test_recruitment_backfill_receives_recent_scene_context_without_label(
             event_type=EventType.NARRATIVE,
             title="Narrative response",
             content=(
-                "The old soldier lowers his notched falchion and offers to guard "
-                "your retreat."
+                "The old soldier lowers his notched falchion and offers to guard your retreat."
             ),
         ),
     )
@@ -2892,8 +2878,7 @@ def test_setup_advantage_turn_records_cairn_payoff(tmp_path: Path) -> None:
     assert state.oracle_history[0].kind == OracleKind.PLAYER_ACTION
     assert state.oracle_history[0].cairn is not None
     assert (
-        state.oracle_history[0].cairn.advantage_payoff
-        == EncounterAdvantagePayoff.ENHANCED_ATTACK
+        state.oracle_history[0].cairn.advantage_payoff == EncounterAdvantagePayoff.ENHANCED_ATTACK
     )
 
 
@@ -3440,8 +3425,7 @@ def test_service_thread_updater_creates_thread_and_persists_memory(tmp_path: Pat
     assert state.oracle_history[-1].referenced_thread_id == created.id
     assert state.oracle_history[-1].referenced_thread_ids == [created.id]
     assert any(
-        loop.text.startswith("The hierophant's unfinished demand")
-        for loop in memory.open_loops
+        loop.text.startswith("The hierophant's unfinished demand") for loop in memory.open_loops
     )
 
 
@@ -4220,10 +4204,7 @@ def test_streamed_turn_thread_updater_can_resolve_thread(tmp_path: Path) -> None
     assert state.threads[0].status == ThreadStatus.RESOLVED
     assert state.oracle_history[-1].referenced_thread_id == state.threads[0].id
     assert state.oracle_history[-1].referenced_thread_ids == [state.threads[0].id]
-    assert all(
-        not loop.text.startswith(state.threads[0].title)
-        for loop in memory.open_loops
-    )
+    assert all(not loop.text.startswith(state.threads[0].title) for loop in memory.open_loops)
     resolved_card = next(
         card for card in memory.thread_memory if card.thread_id == state.threads[0].id
     )

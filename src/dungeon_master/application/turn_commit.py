@@ -132,12 +132,11 @@ class TurnCommitter:
             execution_context=turn.execution_context or "",
         )
 
+
 def _disclose_npcs_from_text(state: GameState, text: str) -> tuple[str, ...]:
     lowered = text.lower()
     revealed = [
-        npc.id
-        for npc in state.npcs
-        if _maybe_promote_visible_npc_label_from_text(npc, lowered)
+        npc.id for npc in state.npcs if _maybe_promote_visible_npc_label_from_text(npc, lowered)
     ]
     still_hidden: list[NPC] = []
     for npc in state.hidden_npcs:
@@ -146,9 +145,8 @@ def _disclose_npcs_from_text(state: GameState, text: str) -> tuple[str, ...]:
             npc.player_label_kind = NPCPlayerLabelKind.PROPER_NAME
             state.npcs.append(npc)
             revealed.append(npc.id)
-        elif (
-            npc.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR
-            and _npc_label_appears_in_text(lowered, npc.display_label())
+        elif npc.player_label_kind == NPCPlayerLabelKind.DESCRIPTOR and _npc_label_appears_in_text(
+            lowered, npc.display_label()
         ):
             state.npcs.append(npc)
             revealed.append(npc.id)
