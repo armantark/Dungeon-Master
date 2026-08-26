@@ -10,6 +10,7 @@ from dungeon_master.cairn import (
     GeneratedEncounterCombatant,
     GeneratedEncounterSeed,
 )
+from dungeon_master.llm.completion import CompletionRequest
 from dungeon_master.models import (
     AttackStance,
     CairnAbility,
@@ -50,7 +51,7 @@ from dungeon_master.models import (
     PartyMember,
     RetreatOutcome,
 )
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
+from dungeon_master.narrative import NarrativeConfig
 from tests.factories import sample_state
 
 
