@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from fastapi import Path as ApiPath
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -22,26 +21,50 @@ from fastapi.responses import StreamingResponse
 from dungeon_master import __version__
 from dungeon_master.cancel import CancellationToken
 from dungeon_master.config import (
-    LLMCredentials,
     LLMCredentialsStore,
-    LLMProviderCredentialStatus,
-    LLMRuntimeBundle,
     LLMRuntimeSettings,
     RuntimeSettingsStore,
     build_llm_runtime,
-    describe_llm_presets,
-    resolve_provider_credentials,
 )
 from dungeon_master.models import GameState, OracleOutcome
 from dungeon_master.narrative import CompletionDelta
 from dungeon_master.save_library import SaveLibrary
 from dungeon_master.service import GameService
-from dungeon_master.settings import (
-    credentials_path_from_env,
-    runtime_settings_path_from_env,
-    state_path_from_env,
-)
 from dungeon_master.state_store import StateStore
+from dungeon_master.transport.http.runtime import (
+    CredentialsStoreDep,
+    LibraryDep,
+    RuntimeSettingsStoreDep,
+    ServiceDep,
+    SessionRegistryDep,
+    StreamRuntimeDep,
+    build_credentials_store,
+    build_runtime_settings_store,
+    build_save_library,
+    build_service,
+)
+from dungeon_master.transport.http.runtime import (
+    apply_runtime_settings as _apply_runtime_settings,
+)
+from dungeon_master.transport.http.runtime import (
+    bind_service_to_active_save as _bind_service_to_active_save,
+)
+from dungeon_master.transport.http.runtime import (
+    guard_request_idle as _guard_request_idle,
+)
+from dungeon_master.transport.http.runtime import (
+    initialize_llm_runtime as _initialize_llm_runtime,
+)
+from dungeon_master.transport.http.runtime import (
+    llm_settings_response as _llm_settings_response,
+)
+from dungeon_master.transport.http.runtime import (
+    runtime_bundle as _runtime_bundle,
+)
+from dungeon_master.transport.http.runtime import service_seed as _service_seed
+from dungeon_master.transport.http.runtime import (
+    stored_llm_credentials as _stored_llm_credentials,
+)
 from dungeon_master.transport.http.schemas import (
     CairnAcquireRequest,
     CairnAttackRequest,
@@ -66,8 +89,6 @@ from dungeon_master.transport.http.schemas import (
     ExplainRequest,
     ExplanationResponse,
     LLMCredentialsUpdateRequest,
-    LLMPresetOptionResponse,
-    LLMProviderCredentialResponse,
     LLMSettingsResponse,
     LLMSettingsUpdateRequest,
     NotesRequest,
@@ -80,7 +101,6 @@ from dungeon_master.transport.http.schemas import (
 )
 from dungeon_master.transport.stream_runtime import (
     PayloadKind,
-    SessionRegistry,
     StreamRuntime,
     StreamSession,
     StreamSessionNotFoundError,
@@ -92,237 +112,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Generator
 
 logger = logging.getLogger(__name__)
-API_KEY_MASK_VISIBLE = 4
-API_KEY_MASK_SHORT_THRESHOLD = API_KEY_MASK_VISIBLE * 2
-
-
-class ServiceUnavailableError(RuntimeError):
-    """Raised when a request lands before the lifespan has wired up the service."""
-
-
-def build_service(
-    state_path: Path | None = None,
-    *,
-    llm_runtime: LLMRuntimeBundle | None = None,
-) -> GameService:
-    """Construct a `GameService` bound to a single state file.
-
-    Kept as a free function so tests can inject a tmp_path without
-    monkey-patching environment variables.
-    """
-    path = state_path or state_path_from_env()
-    return GameService(store=StateStore(path), llm_runtime=llm_runtime)
-
-
-def build_save_library(legacy_state_path: Path | None = None) -> SaveLibrary:
-    path = legacy_state_path or state_path_from_env()
-    return SaveLibrary(path)
-
-
-def build_runtime_settings_store(settings_path: Path | None = None) -> RuntimeSettingsStore:
-    path = settings_path or runtime_settings_path_from_env()
-    return RuntimeSettingsStore(path)
-
-
-def build_credentials_store(settings_path: Path | None = None) -> LLMCredentialsStore:
-    path = settings_path or credentials_path_from_env()
-    return LLMCredentialsStore(path)
-
-
-def get_service(request: Request) -> GameService:
-    """FastAPI dependency that pulls the live `GameService` off app state.
-
-    We resolve via `Request.app.state` rather than a closure so each route
-    handler can live at module level (testable, mypy-friendly, and easy
-    to grep for).
-    """
-    service = getattr(request.app.state, "service", None)
-    if not isinstance(service, GameService):
-        library = getattr(request.app.state, "save_library", None)
-        if isinstance(library, SaveLibrary) and library.active_save_id() is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="No active save selected.",
-            )
-        raise ServiceUnavailableError
-    return service
-
-
-def get_save_library(request: Request) -> SaveLibrary:
-    library = getattr(request.app.state, "save_library", None)
-    if not isinstance(library, SaveLibrary):
-        raise ServiceUnavailableError
-    return library
-
-
-def get_runtime_settings_store(request: Request) -> RuntimeSettingsStore:
-    store = getattr(request.app.state, "runtime_settings_store", None)
-    if not isinstance(store, RuntimeSettingsStore):
-        raise ServiceUnavailableError
-    return store
-
-
-def get_credentials_store(request: Request) -> LLMCredentialsStore:
-    store = getattr(request.app.state, "credentials_store", None)
-    if not isinstance(store, LLMCredentialsStore):
-        raise ServiceUnavailableError
-    return store
-
-
-def get_stream_runtime(request: Request) -> StreamRuntime:
-    runtime = getattr(request.app.state, "stream_runtime", None)
-    if not isinstance(runtime, StreamRuntime):
-        raise ServiceUnavailableError
-    return runtime
-
-
-def get_session_registry(request: Request) -> SessionRegistry:
-    return get_stream_runtime(request).sessions
-
-
-ServiceDep = Annotated[GameService, Depends(get_service)]
-LibraryDep = Annotated[SaveLibrary, Depends(get_save_library)]
-RuntimeSettingsStoreDep = Annotated[RuntimeSettingsStore, Depends(get_runtime_settings_store)]
-CredentialsStoreDep = Annotated[LLMCredentialsStore, Depends(get_credentials_store)]
-SessionRegistryDep = Annotated[SessionRegistry, Depends(get_session_registry)]
-StreamRuntimeDep = Annotated[StreamRuntime, Depends(get_stream_runtime)]
-
-
-def _service_seed(app: FastAPI) -> GameService | None:
-    seeded = getattr(app.state, "service_template", None)
-    if isinstance(seeded, GameService):
-        return seeded
-    live = getattr(app.state, "service", None)
-    if isinstance(live, GameService):
-        return live
-    return None
-
-
-def _runtime_bundle(app: FastAPI) -> LLMRuntimeBundle:
-    bundle = getattr(app.state, "llm_runtime", None)
-    if not isinstance(bundle, LLMRuntimeBundle):
-        raise ServiceUnavailableError
-    return bundle
-
-
-def _stored_llm_credentials(app: FastAPI) -> LLMCredentials:
-    credentials = getattr(app.state, "llm_credentials", None)
-    if not isinstance(credentials, LLMCredentials):
-        raise ServiceUnavailableError
-    return credentials
-
-
-def _mask_api_key(api_key: str | None) -> str | None:
-    if api_key is None:
-        return None
-    if len(api_key) <= API_KEY_MASK_SHORT_THRESHOLD:
-        return "*" * len(api_key)
-    return f"{api_key[:API_KEY_MASK_VISIBLE]}...{api_key[-API_KEY_MASK_VISIBLE:]}"
-
-
-def _credential_response(
-    status: LLMProviderCredentialStatus,
-) -> LLMProviderCredentialResponse:
-    return LLMProviderCredentialResponse(
-        id=status.provider,
-        label=status.label,
-        configured=status.configured,
-        source=status.source,
-        masked_key=_mask_api_key(status.api_key),
-    )
-
-
-def _llm_settings_response(
-    bundle: LLMRuntimeBundle,
-    credentials: LLMCredentials,
-) -> LLMSettingsResponse:
-    provider_statuses = resolve_provider_credentials(credentials)
-    return LLMSettingsResponse(
-        preset=bundle.settings.llm_preset,
-        structured_model=bundle.structured.model,
-        narration_model=bundle.narration.model,
-        reasoning_model=bundle.reasoning.model,
-        presets=[
-            LLMPresetOptionResponse(
-                id=descriptor.id,
-                label=descriptor.label,
-                description=descriptor.description,
-                structured_model=descriptor.structured_model,
-                narration_model=descriptor.narration_model,
-                reasoning_model=descriptor.reasoning_model,
-                available=descriptor.is_available(provider_statuses),
-                missing_env_vars=descriptor.missing_env_vars(provider_statuses),
-            )
-            for descriptor in describe_llm_presets()
-        ],
-        needs_key=not any(status.configured for status in provider_statuses),
-        provider_credentials=[_credential_response(status) for status in provider_statuses],
-    )
-
-
-def _apply_runtime_settings(app: FastAPI, settings: LLMRuntimeSettings) -> LLMRuntimeBundle:
-    bundle = build_llm_runtime(settings, _stored_llm_credentials(app))
-    seen_services: set[int] = set()
-    for attr in ("service", "service_template"):
-        service = getattr(app.state, attr, None)
-        if not isinstance(service, GameService):
-            continue
-        identity = id(service)
-        if identity in seen_services:
-            continue
-        service.apply_llm_runtime(bundle)
-        seen_services.add(identity)
-    app.state.llm_runtime = bundle
-    return bundle
-
-
-def _initialize_llm_runtime(
-    app: FastAPI,
-    *,
-    settings_store: RuntimeSettingsStore,
-    credentials_store: LLMCredentialsStore,
-) -> LLMRuntimeBundle:
-    runtime_settings = settings_store.load()
-    llm_credentials = credentials_store.load()
-    llm_runtime = build_llm_runtime(runtime_settings, llm_credentials)
-    app.state.runtime_settings_store = settings_store
-    app.state.credentials_store = credentials_store
-    app.state.llm_credentials = llm_credentials
-    app.state.llm_runtime = llm_runtime
-    return llm_runtime
-
-
-def _bind_service_to_active_save(app: FastAPI, save_id: str) -> GameService:
-    library = getattr(app.state, "save_library", None)
-    if not isinstance(library, SaveLibrary):
-        raise ServiceUnavailableError
-    state_path = library.state_path_for(save_id)
-    seed = _service_seed(app)
-    if seed is not None:
-        seed.bind_store(StateStore(state_path))
-        app.state.service = seed
-        return seed
-
-    service = build_service(state_path, llm_runtime=_runtime_bundle(app))
-    app.state.service = service
-    return service
-
-
-def _guard_request_idle(
-    registry: SessionRegistry,
-    *,
-    detail: str,
-) -> None:
-    # F-12 keeps the backend single-active-save for v1. Switching the bound
-    # store while a streamed request is still registered would let one request
-    # start against save A and commit against save B. We therefore force the
-    # conservative invariant: no save creation/selection that changes the
-    # active slot while any streamed request is still alive in the registry.
-    if registry.has_active_requests():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=detail,
-        )
 
 
 router = APIRouter(prefix="/api")
