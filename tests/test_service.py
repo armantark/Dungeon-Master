@@ -2452,7 +2452,10 @@ def test_recruitment_resolves_misnamed_visible_descriptor(
         captured_prompt = request.messages[1]["content"]  # type: ignore[attr-defined]
         return type("Completion", (), {"content": '{"npc_id":"npc_hierarch"}'})()
 
-    monkeypatch.setattr("dungeon_master.service.complete_text", fake_complete_text)
+    monkeypatch.setattr(
+        "dungeon_master.application.turn_plan_execution.complete_text",
+        fake_complete_text,
+    )
     service = GameService(
         store=StateStore(tmp_path / "game_state.json"),
         oracle=OracleEngine(seed=1),
