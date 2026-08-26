@@ -34,41 +34,8 @@ import type {
   SaveSummary,
 } from "../lib/types";
 
-// Rolling animation phase. We deliberately gate the narrative reveal on
-// the dice landing because it sells the fiction that mechanics are real.
-// Provisional streaming buffer shape. We keep these flat on the store
-// (rather than in a nested `streaming: { ... }` object) because Svelte
-// 5 runes pick up direct field reads cheaply, and the chat feed needs
-// to subscribe to `provisionalContent` independently of `provisionalThinking`
-// without forcing a deep proxy. `route` lets the chat label a
-// provisional DM bubble before any tokens arrive ("composing a scene
-// check…"); `requestId` is surfaced in error toasts so the player can
-// reference a specific run if they file an issue.
 export type { StageProgress } from "./stream-runner";
 
-/**
- * Compose the natural-language prompt sent to the turn planner for a
- * `/retreat` slash command. The planner is already trained to route
- * "I retreat" / "I disengage" / "I fall back" as RETREAT, so we use
- * that same vocabulary verbatim. An optional reason from the player is
- * appended so the resulting narration can lean on the player's framing
- * (where they're heading, what they're sacrificing) instead of inventing
- * its own.
- */
-/**
- * Compose the natural-language prompt sent to the turn planner for the
- * acquisition slash commands. The planner is trained on first-person
- * acquisition phrases ("I take", "I loot", "I buy", etc.), so we use
- * the verb the player typed verbatim — looting a corpse and buying at
- * a market should feel different in the resulting narration, and the
- * narrator picks up that flavor from the verb without us having to
- * smuggle it through structured fields.
- *
- * We don't append a trailing period if the body already ends with
- * sentence-terminal punctuation (`.`, `!`, `?`) so player-authored
- * sentences land verbatim. Otherwise we add one to keep the planner's
- * input grammatically tidy.
- */
 // Inline "system message" that the chat surfaces alongside server events.
 // We keep these client-only because they're transient feedback (help
 // text, slash-error hints) and don't belong in the persisted action log.
