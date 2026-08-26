@@ -136,3 +136,6 @@ Criteria:
 ## Event log
 
 - 2026-08-25: Contract frozen before fanout.
+- 2026-08-25: Driver installed the Python and TypeScript standards gates and split HTTP schemas, runtime wiring, and turn-stage timing into focused modules.
+- 2026-08-25: Mechanics closed with four domain modules and a 63-line compatibility facade; model and memory infrastructure closed with separate memory, completion, narration, and planning owners.
+- 2026-08-25: Second fanout wave started for application use cases and HTTP route groups.
