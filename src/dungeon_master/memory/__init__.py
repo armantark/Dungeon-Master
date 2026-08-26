@@ -18,8 +18,10 @@ from dungeon_master.memory.contracts import (
     TurnMemory,
 )
 from dungeon_master.memory.manager import MemoryManager, active_encounter_line_for_state
+from dungeon_master.memory.projection import CURRENT_MEMORY_SCHEMA_VERSION
 
 __all__ = [
+    "CURRENT_MEMORY_SCHEMA_VERSION",
     "CallbackCandidate",
     "CommittedTurnMemory",
     "ConversationMessage",
