@@ -37,8 +37,8 @@ on the trigger and `role="menu"` on the panel for screen readers.
     if (!open) return;
     const target = event.target;
     if (!(target instanceof Node)) return;
-    if (panelRef !== null && panelRef.contains(target)) return;
-    if (triggerRef !== null && triggerRef.contains(target)) return;
+    if (panelRef?.contains(target) === true) return;
+    if (triggerRef?.contains(target) === true) return;
     open = false;
   }
 
@@ -90,9 +90,7 @@ on the trigger and `role="menu"` on the panel for screen readers.
   // redundancy with no behavioural distinction, because the splash
   // itself already handles both browse and pick. We keep one row and
   // let the label/hint shift with the shelf state.
-  const libraryLabel = $derived(
-    game.library.length > 1 ? "Switch save" : "Save library",
-  );
+  const libraryLabel = $derived(game.library.length > 1 ? "Switch save" : "Save library");
   const libraryHint = $derived(
     game.library.length > 1
       ? "Bind a different campaign — the active save stays archived."
@@ -122,12 +120,7 @@ on the trigger and `role="menu"` on the panel for screen readers.
         <span class="item__label">{libraryLabel}</span>
         <span class="item__hint">{libraryHint}</span>
       </button>
-      <button
-        class="link item"
-        type="button"
-        role="menuitem"
-        onclick={() => void newCampaign()}
-      >
+      <button class="link item" type="button" role="menuitem" onclick={() => void newCampaign()}>
         <span class="item__label">Begin a new campaign</span>
         <span class="item__hint">Adds a fresh tome — the current archive is preserved.</span>
       </button>

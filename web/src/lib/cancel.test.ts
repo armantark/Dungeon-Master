@@ -19,7 +19,7 @@ describe("api.cancelRequest", () => {
   });
 
   it("POSTs to /api/requests/{id}/cancel and returns the cancelled flag", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ cancelled: true }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -32,7 +32,7 @@ describe("api.cancelRequest", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("/api/requests/req_abc123/cancel");
-    expect((init as RequestInit).method).toBe("POST");
+    expect(init!.method).toBe("POST");
     expect(result).toEqual({ cancelled: true });
   });
 
@@ -42,7 +42,7 @@ describe("api.cancelRequest", () => {
     // call site against the day someone stuffs a slash or a space into
     // the id (e.g. for testing) — failing closed at the URL layer is
     // cheaper than a 404 from FastAPI's path matcher.
-    const fetchMock = vi.fn().mockResolvedValue(
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ cancelled: false }), {
         status: 200,
         headers: { "Content-Type": "application/json" },

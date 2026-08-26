@@ -30,7 +30,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   } from "../../lib/stage-timings";
   import type { GameThread, NPC, OracleOutcome, StageTiming } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     eventId: string;
     speaker: "dm" | "player" | "system" | "ooc";
     text: string;
@@ -50,7 +50,7 @@ MechanicalReceipt so the player can verify the dice on demand.
     question?: string | null;
     threads?: readonly GameThread[];
     npcs?: readonly NPC[];
-  };
+  }
   const {
     eventId,
     speaker,
@@ -88,10 +88,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   // render even though the underlying state changes.
   const relativeLabel = $derived.by<string | null>(() => {
     if (!timestamp) return null;
-    const seconds = Math.max(
-      0,
-      (liveTime.now - new Date(timestamp).getTime()) / 1000,
-    );
+    const seconds = Math.max(0, (liveTime.now - new Date(timestamp).getTime()) / 1000);
     if (seconds < 60) return `${Math.round(seconds)}s ago`;
     if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
@@ -103,9 +100,7 @@ MechanicalReceipt so the player can verify the dice on demand.
   // stay literal so a stray underscore in a character name doesn't
   // accidentally flip into italics. The renderer is sync + sanitized;
   // see lib/markdown.ts for the rationale.
-  const isMarkdownSpeaker = $derived(
-    speaker === "dm" || speaker === "ooc" || speaker === "system",
-  );
+  const isMarkdownSpeaker = $derived(speaker === "dm" || speaker === "ooc" || speaker === "system");
   const renderedHtml = $derived(isMarkdownSpeaker ? renderMarkdown(text) : "");
 </script>
 
@@ -195,9 +190,14 @@ MechanicalReceipt so the player can verify the dice on demand.
         the streaming caret outside the parsed HTML so it doesn't
         get swallowed by an unclosed inline mark mid-stream.
       -->
-      <div class="prose">{@html renderedHtml}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}</div>
+      <div class="prose">
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown sanitizes model-authored content before it reaches this template. -->
+        {@html renderedHtml}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}
+      </div>
     {:else}
-      <p>{text}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}</p>
+      <p>
+        {text}{#if streaming}<span class="caret" aria-hidden="true">▌</span>{/if}
+      </p>
     {/if}
   </div>
 
@@ -205,7 +205,7 @@ MechanicalReceipt so the player can verify the dice on demand.
     <MechanicalReceipt {outcome} {threads} {npcs} defaultOpen={streaming} />
   {/if}
 
-  <MessageActions eventId={eventId} visible={!streaming && speaker === "dm" && canRegenerate} />
+  <MessageActions {eventId} visible={!streaming && speaker === "dm" && canRegenerate} />
 </article>
 
 <style>
@@ -263,10 +263,15 @@ MechanicalReceipt so the player can verify the dice on demand.
     animation: caret-blink 0.95s steps(2, jump-none) infinite;
   }
   @keyframes caret-blink {
-    50% { opacity: 0.15; }
+    50% {
+      opacity: 0.15;
+    }
   }
   @media (prefers-reduced-motion: reduce) {
-    .caret { animation: none; opacity: 0.6; }
+    .caret {
+      animation: none;
+      opacity: 0.6;
+    }
   }
   .msg.streaming {
     /* Subtle outer glow so the streaming bubble stands out from the
@@ -370,12 +375,20 @@ MechanicalReceipt so the player can verify the dice on demand.
     letter-spacing: 0.02em;
     line-height: 1.25;
   }
-  .body .prose :global(h1) { font-size: 1.35em; }
-  .body .prose :global(h2) { font-size: 1.22em; }
-  .body .prose :global(h3) { font-size: 1.1em; }
+  .body .prose :global(h1) {
+    font-size: 1.35em;
+  }
+  .body .prose :global(h2) {
+    font-size: 1.22em;
+  }
+  .body .prose :global(h3) {
+    font-size: 1.1em;
+  }
   .body .prose :global(h4),
   .body .prose :global(h5),
-  .body .prose :global(h6) { font-size: 1em; }
+  .body .prose :global(h6) {
+    font-size: 1em;
+  }
   .body .prose :global(hr) {
     margin: 0.7em 0;
     border: 0;

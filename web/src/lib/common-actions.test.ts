@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  applyCommonAction,
-  deriveCommonActions,
-  type CommonAction,
-} from "./common-actions";
+import { applyCommonAction, deriveCommonActions, type CommonAction } from "./common-actions";
 import type { CombatEncounterState } from "./combat";
 import type { GameState } from "./types";
 
@@ -15,9 +11,7 @@ import type { GameState } from "./types";
 // actions appear in what order?", not "is this GameState valid?".
 const STUB_STATE = { id: "test" } as unknown as GameState;
 
-function makeEncounter(
-  overrides: Partial<CombatEncounterState> = {},
-): CombatEncounterState {
+function makeEncounter(overrides: Partial<CombatEncounterState> = {}): CombatEncounterState {
   return {
     active: true,
     round: 1,
@@ -42,12 +36,7 @@ describe("deriveCommonActions visibility", () => {
     // Order is contractual — the player learns left-to-right and
     // the kanban entry pins this ordering. Don't sort before
     // comparing.
-    expect(ids).toEqual([
-      "ask-oracle",
-      "random-event",
-      "scene-check",
-      "check-gear",
-    ]);
+    expect(ids).toEqual(["ask-oracle", "random-event", "scene-check", "check-gear"]);
   });
 
   it("treats an inactive encounter the same as no encounter", () => {
@@ -57,12 +46,7 @@ describe("deriveCommonActions visibility", () => {
     // dropped — which would be a small but real cue-confusion bug.
     const cleared = makeEncounter({ active: false });
     const ids = deriveCommonActions(STUB_STATE, cleared).map((a) => a.id);
-    expect(ids).toEqual([
-      "ask-oracle",
-      "random-event",
-      "scene-check",
-      "check-gear",
-    ]);
+    expect(ids).toEqual(["ask-oracle", "random-event", "scene-check", "check-gear"]);
   });
 
   it("appends combat actions when an encounter is active", () => {
@@ -100,9 +84,7 @@ describe("deriveCommonActions visibility", () => {
     // slash parser; bypassing it would risk drift between tray
     // wording and parser expectations.
     const fight = makeEncounter({ active: true });
-    const byId = new Map(
-      deriveCommonActions(STUB_STATE, fight).map((a) => [a.id, a] as const),
-    );
+    const byId = new Map(deriveCommonActions(STUB_STATE, fight).map((a) => [a.id, a] as const));
     expect(byId.get("ask-oracle")!.intent.text).toBe("/ask ");
     expect(byId.get("random-event")!.intent.text).toBe("/event");
     expect(byId.get("scene-check")!.intent.text).toBe("/scene ");
@@ -116,9 +98,7 @@ describe("deriveCommonActions visibility", () => {
     // layer over existing routes; it must not invent vocabulary
     // the parser doesn't recognize.
     const fight = makeEncounter({ active: true });
-    const byId = new Map(
-      deriveCommonActions(STUB_STATE, fight).map((a) => [a.id, a] as const),
-    );
+    const byId = new Map(deriveCommonActions(STUB_STATE, fight).map((a) => [a.id, a] as const));
     expect(byId.get("attack")!.intent.text).not.toMatch(/^\//);
     expect(byId.get("recover")!.intent.text).not.toMatch(/^\//);
     expect(byId.get("check-gear")!.intent.text).not.toMatch(/^\//);

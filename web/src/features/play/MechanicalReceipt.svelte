@@ -31,27 +31,18 @@ and add a Cairn-specific dl block with the resolution snapshot.
     itemPowerKindLabel,
     survivalChanged,
   } from "../../lib/cairn";
-  import {
-    npcDisplayLabel,
-    npcKnownByDescriptor,
-    referencedNpcsForOutcome,
-  } from "../../lib/npcs";
+  import { npcDisplayLabel, npcKnownByDescriptor, referencedNpcsForOutcome } from "../../lib/npcs";
   import { game } from "../../lib/store.svelte";
   import { referencedThreadsForOutcome } from "../../lib/threads";
   import type { GameThread, NPC, OracleOutcome } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     outcome: OracleOutcome;
     threads?: readonly GameThread[];
     npcs?: readonly NPC[];
     defaultOpen?: boolean;
-  };
-  const {
-    outcome,
-    threads = [],
-    npcs = [],
-    defaultOpen = false,
-  }: Props = $props();
+  }
+  const { outcome, threads = [], npcs = [], defaultOpen = false }: Props = $props();
 
   let open: boolean = $state(untrack(() => defaultOpen));
 
@@ -104,12 +95,12 @@ and add a Cairn-specific dl block with the resolution snapshot.
   // populated (null) are skipped — the receipt renders only what's real.
   const cairn = $derived(outcome.cairn);
   const isCairnKind = $derived(
-    outcome.kind === "save"
-      || outcome.kind === "attack"
-      || outcome.kind === "harm"
-      || outcome.kind === "recovery"
-      || outcome.kind === "retreat"
-      || (outcome.kind === "player_action" && outcome.cairn?.item_name != null),
+    outcome.kind === "save" ||
+      outcome.kind === "attack" ||
+      outcome.kind === "harm" ||
+      outcome.kind === "recovery" ||
+      outcome.kind === "retreat" ||
+      (outcome.kind === "player_action" && outcome.cairn?.item_name != null),
   );
 
   // F-05 surfacing.
@@ -134,9 +125,7 @@ and add a Cairn-specific dl block with the resolution snapshot.
   // `time_advance` of `none` with no eat leaves the section silent so
   // pure-roll outcomes (a save with no fiction time) don't add noise.
   const showSurvival = $derived(cairn !== null && survivalChanged(cairn));
-  const turnTimeLabel = $derived(
-    cairn === null ? null : formatTurnTimeAdvance(cairn.time_advance),
-  );
+  const turnTimeLabel = $derived(cairn === null ? null : formatTurnTimeAdvance(cairn.time_advance));
   // We collapse the day / phase / watch trio into one human row when
   // any of them moved. The wire stores them independently, but the
   // player reads them as a single "where am I in the day" beat.
@@ -238,7 +227,9 @@ and add a Cairn-specific dl block with the resolution snapshot.
           <dt>Event</dt>
           <dd>
             <span class="pixel">{outcome.event_focus}</span> ·
-            {outcome.event_action} {outcome.event_tone} {outcome.event_subject}
+            {outcome.event_action}
+            {outcome.event_tone}
+            {outcome.event_subject}
           </dd>
         {/if}
         {#if outcome.scene_status}
@@ -506,17 +497,13 @@ and add a Cairn-specific dl block with the resolution snapshot.
             <dt>Day-phase</dt>
             <dd class="pixel">{dayPhaseLine}</dd>
           {/if}
-          {#if cairn.watches_since_meal_before !== null
-              && cairn.watches_since_meal_after !== null
-              && cairn.watches_since_meal_before !== cairn.watches_since_meal_after}
+          {#if cairn.watches_since_meal_before !== null && cairn.watches_since_meal_after !== null && cairn.watches_since_meal_before !== cairn.watches_since_meal_after}
             <dt>Food pressure</dt>
             <dd class="pixel">
               {cairn.watches_since_meal_before} → {cairn.watches_since_meal_after}
             </dd>
           {/if}
-          {#if cairn.watches_since_sleep_before !== null
-              && cairn.watches_since_sleep_after !== null
-              && cairn.watches_since_sleep_before !== cairn.watches_since_sleep_after}
+          {#if cairn.watches_since_sleep_before !== null && cairn.watches_since_sleep_after !== null && cairn.watches_since_sleep_before !== cairn.watches_since_sleep_after}
             <dt>Sleep pressure</dt>
             <dd class="pixel">
               {cairn.watches_since_sleep_before} → {cairn.watches_since_sleep_after}
@@ -641,7 +628,10 @@ and add a Cairn-specific dl block with the resolution snapshot.
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
     border-radius: 2px;
     cursor: pointer;
-    transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+    transition:
+      border-color 140ms ease,
+      color 140ms ease,
+      background 140ms ease;
   }
   .reference-pill:hover {
     border-color: var(--gold-bright);

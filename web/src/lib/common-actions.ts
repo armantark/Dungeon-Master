@@ -137,7 +137,7 @@ export function deriveCommonActions(
   // under the player's cursor.
   const actions: CommonAction[] = [ASK_ORACLE, RANDOM_EVENT, SCENE_CHECK, CHECK_GEAR];
 
-  const inActiveCombat = combat !== null && combat.active;
+  const inActiveCombat = combat?.active === true;
   if (inActiveCombat) {
     actions.push(ATTACK, RECOVER, RETREAT);
   }
@@ -168,10 +168,7 @@ export interface TrayApplyResult {
  * target; for slash prefills (`/ask `) it's right after the
  * trailing space, ready for the question body.
  */
-export function applyCommonAction(
-  current: string,
-  action: CommonAction,
-): TrayApplyResult {
+export function applyCommonAction(current: string, action: CommonAction): TrayApplyResult {
   const prefill = action.intent.text;
   const trimmed = current.trim();
   if (trimmed === "") {

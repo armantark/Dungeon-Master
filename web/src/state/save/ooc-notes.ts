@@ -49,10 +49,7 @@ function isValidNote(value: unknown): value is ClientNote {
   if (typeof candidate.text !== "string") return false;
   if (typeof candidate.created_at !== "string") return false;
   if (candidate.kind !== "explanation") return false;
-  if (
-    candidate.question !== undefined
-    && typeof candidate.question !== "string"
-  ) {
+  if (candidate.question !== undefined && typeof candidate.question !== "string") {
     return false;
   }
   return true;
@@ -91,10 +88,7 @@ export function loadOocNotes(saveId: string | null): ClientNote[] {
   return parsed.filter(isValidNote);
 }
 
-export function saveOocNotes(
-  saveId: string | null,
-  notes: readonly ClientNote[],
-): void {
+export function saveOocNotes(saveId: string | null, notes: readonly ClientNote[]): void {
   if (saveId === null) return;
   const storage = safeStorage();
   if (storage === null) return;

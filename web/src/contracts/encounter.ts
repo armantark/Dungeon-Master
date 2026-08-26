@@ -5,10 +5,7 @@
 // Combat UI code may derive richer presentation models from these
 // interfaces, but must not redeclare the backend payload shape.
 
-export type EncounterEndReason =
-  | "victory"
-  | "enemy_rout"
-  | "player_escaped";
+export type EncounterEndReason = "victory" | "enemy_rout" | "player_escaped";
 
 export type EncounterThreatLevel = "ordinary" | "hardier" | "serious";
 

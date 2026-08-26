@@ -23,7 +23,11 @@
     <dt>Era</dt>
     <dd>{TIME_PERIOD_LABEL[seed.time_period]}</dd>
     <dt>Tone</dt>
-    <dd>{TONE_GRIM_NOBLE_LABEL[seed.tone_grim_noble]} · {TONE_DARK_BRIGHT_LABEL[seed.tone_dark_bright]}</dd>
+    <dd>
+      {TONE_GRIM_NOBLE_LABEL[seed.tone_grim_noble]} · {TONE_DARK_BRIGHT_LABEL[
+        seed.tone_dark_bright
+      ]}
+    </dd>
     <dt>Difficulty</dt>
     <dd class="pixel">{DANGER_PROFILE_LABEL[seed.danger_profile]}</dd>
     <dt>Genres</dt>

@@ -122,10 +122,7 @@ export function saveStreamResume(
  * landed yet) or storage is unavailable. Called on every backend
  * `stage` event so a mid-stream reload restores the checklist.
  */
-export function updateStreamResumeStages(
-  saveId: string | null,
-  stages: PersistedStage[],
-): void {
+export function updateStreamResumeStages(saveId: string | null, stages: PersistedStage[]): void {
   if (saveId === null) return;
   const storage = safeStorage();
   if (storage === null) return;

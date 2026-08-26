@@ -75,7 +75,7 @@ function plate(parent: THREE.Object3D, zone: Zone): void {
     new THREE.EdgesGeometry(slab.geometry),
     new THREE.LineBasicMaterial({ color: PLATE_INK }),
   );
-  outline.raycast = () => {};
+  outline.raycast = () => undefined;
   slab.add(outline);
 
   const points: number[] = [];
@@ -106,7 +106,7 @@ function plate(parent: THREE.Object3D, zone: Zone): void {
     ),
     new THREE.LineBasicMaterial({ color: HATCH_INK }),
   );
-  hatch.raycast = () => {};
+  hatch.raycast = () => undefined;
   parent.add(hatch);
 }
 
@@ -172,13 +172,10 @@ export function createCity(): City {
     tick.push(sx, 0, sz, sx * 0.55, 0, sz, sx, 0, sz, sx, 0, sz * 0.55);
   }
   const selection = new THREE.LineSegments(
-    new THREE.BufferGeometry().setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(tick, 3),
-    ),
+    new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(tick, 3)),
     new THREE.LineBasicMaterial({ color: "#101109" }),
   );
-  selection.raycast = () => {};
+  selection.raycast = () => undefined;
   selection.visible = false;
   root.add(selection);
 

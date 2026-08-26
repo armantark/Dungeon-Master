@@ -25,7 +25,7 @@ against the working rules in the kanban.
   import { sortThreadsForDisplay } from "../../lib/threads";
   import type { GameThread } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     threads: readonly GameThread[];
     /**
      * Set of thread ids the latest turn touched. Optional so legacy
@@ -35,7 +35,7 @@ against the working rules in the kanban.
     recentlyTouchedIds?: ReadonlySet<string>;
     focusedId?: string | null;
     focusSeq?: number;
-  };
+  }
   const {
     threads,
     recentlyTouchedIds = new Set<string>(),
@@ -52,9 +52,7 @@ against the working rules in the kanban.
 
   async function revealFocusedThread(threadId: string): Promise<void> {
     await tick();
-    const target = listEl?.querySelector<HTMLElement>(
-      `[data-thread-id="${CSS.escape(threadId)}"]`,
-    );
+    const target = listEl?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(threadId)}"]`);
     if (target === undefined || target === null) return;
     target.scrollIntoView({ behavior: "smooth", block: "nearest" });
     flashingId = threadId;
@@ -92,10 +90,7 @@ against the working rules in the kanban.
         <div class="row">
           <span class="status mono" data-status={thread.status}>{thread.status}</span>
           {#if justTouched}
-            <span
-              class="status mono advanced-pip"
-              title="This thread advanced on the latest turn."
-            >
+            <span class="status mono advanced-pip" title="This thread advanced on the latest turn.">
               {thread.status === "resolved" ? "just resolved" : "advanced"}
             </span>
           {/if}

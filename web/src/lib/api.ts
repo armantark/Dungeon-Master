@@ -32,9 +32,7 @@ import type {
 
 const DEFAULT_API_BASE = "/api";
 const ENV_API_BASE =
-  typeof import.meta.env.VITE_API_BASE_URL === "string"
-    ? import.meta.env.VITE_API_BASE_URL
-    : "";
+  typeof import.meta.env.VITE_API_BASE_URL === "string" ? import.meta.env.VITE_API_BASE_URL : "";
 let runtimeApiBase = normalizeApiBase(ENV_API_BASE || DEFAULT_API_BASE);
 
 function normalizeApiBase(base: string): string {
@@ -66,10 +64,7 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  init?: RequestInit & { json?: unknown },
-): Promise<T> {
+async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const headers = new Headers(init?.headers);
   let body: BodyInit | undefined;
 
@@ -117,16 +112,10 @@ export const api = {
   // "create + immediately switch to it". Tests pass `select: false` when
   // they want to assert the create path doesn't accidentally rebind the
   // active service.
-  createSave: (
-    select: boolean = true,
-    signal?: AbortSignal,
-  ): Promise<SaveLibraryBootstrapResponse> =>
+  createSave: (select = true, signal?: AbortSignal): Promise<SaveLibraryBootstrapResponse> =>
     request("/library/saves", { method: "POST", signal, json: { select } }),
 
-  selectSave: (
-    save_id: string,
-    signal?: AbortSignal,
-  ): Promise<SaveLibraryBootstrapResponse> =>
+  selectSave: (save_id: string, signal?: AbortSignal): Promise<SaveLibraryBootstrapResponse> =>
     request("/library/select", { method: "POST", signal, json: { save_id } }),
 
   // App-global LLM preset surface. The backend owns the source of
@@ -138,10 +127,7 @@ export const api = {
   getLlmSettings: (signal?: AbortSignal): Promise<LLMSettingsResponse> =>
     request("/settings/llm", { signal }),
 
-  updateLlmSettings: (
-    preset: LLMPreset,
-    signal?: AbortSignal,
-  ): Promise<LLMSettingsResponse> =>
+  updateLlmSettings: (preset: LLMPreset, signal?: AbortSignal): Promise<LLMSettingsResponse> =>
     request("/settings/llm", {
       method: "POST",
       signal,
@@ -176,10 +162,7 @@ export const api = {
       json: { mode, prompt, template },
     }),
 
-  generateCharacterQuiz: (
-    concept: string,
-    signal?: AbortSignal,
-  ): Promise<CharacterQuizResponse> =>
+  generateCharacterQuiz: (concept: string, signal?: AbortSignal): Promise<CharacterQuizResponse> =>
     request("/character/quiz", {
       method: "POST",
       signal,
@@ -268,21 +251,14 @@ export const api = {
   // it was given. We surface 409s through the normal `state.error`
   // sink so the editor can roll the picker back without a special
   // error type.
-  updateCampaignSeed: (
-    campaign_seed: CampaignSeed,
-    signal?: AbortSignal,
-  ): Promise<GameState> =>
+  updateCampaignSeed: (campaign_seed: CampaignSeed, signal?: AbortSignal): Promise<GameState> =>
     request("/state/campaign-seed", {
       method: "POST",
       signal,
       json: { campaign_seed },
     }),
 
-  askYesNo: (
-    question: string,
-    likelihood: Likelihood,
-    signal?: AbortSignal,
-  ): Promise<GameState> =>
+  askYesNo: (question: string, likelihood: Likelihood, signal?: AbortSignal): Promise<GameState> =>
     request("/oracle/yes-no", {
       method: "POST",
       signal,
@@ -347,10 +323,7 @@ export const api = {
   // `{cancelled: false}` rather than 404, so we don't have to
   // distinguish "already done" from "actually cancelled" at the call
   // site.
-  cancelRequest: (
-    requestId: string,
-    signal?: AbortSignal,
-  ): Promise<{ cancelled: boolean }> =>
+  cancelRequest: (requestId: string, signal?: AbortSignal): Promise<{ cancelled: boolean }> =>
     request(`/requests/${encodeURIComponent(requestId)}/cancel`, {
       method: "POST",
       signal,
@@ -392,11 +365,7 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(
-      apiUrl(`/messages/${eventId}/regenerate/stream`),
-      handlers,
-      { signal },
-    ),
+    consumeStream(apiUrl(`/messages/${eventId}/regenerate/stream`), handlers, { signal }),
 
   streamStartCampaign: (
     handlers: StreamHandlers,
@@ -459,11 +428,10 @@ export const api = {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamResult<StreamEvent>> =>
-    consumeStream(
-      apiUrl(`/requests/${encodeURIComponent(requestId)}/stream`),
-      handlers,
-      { signal, method: "GET" },
-    ),
+    consumeStream(apiUrl(`/requests/${encodeURIComponent(requestId)}/stream`), handlers, {
+      signal,
+      method: "GET",
+    }),
 
   streamQuizzedCharacterDraft: (
     concept: string,

@@ -150,7 +150,7 @@ describe("GameStore LLM settings", () => {
     await game.openSettings();
 
     const refreshed = settingsResponse({ preset: "gemini_split" });
-    let resolveSecond: (value: LLMSettingsResponse) => void = () => {};
+    let resolveSecond!: (value: LLMSettingsResponse) => void;
     const pending = new Promise<LLMSettingsResponse>((resolve) => {
       resolveSecond = resolve;
     });

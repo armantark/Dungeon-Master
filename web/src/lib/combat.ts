@@ -27,11 +27,7 @@ import type {
 // a morale check" — both end participation but they read very
 // differently in narration and only one of them counts toward "first
 // casualty" morale triggers later in the same fight.
-export type CombatantStatus =
-  | "active"
-  | "incapacitated"
-  | "dead"
-  | "fled";
+export type CombatantStatus = "active" | "incapacitated" | "dead" | "fled";
 
 export interface CombatantState {
   id: string;
@@ -119,9 +115,7 @@ export type CombatStateSlot = CombatEncounterState | null;
 // Returns the tracker-friendly shape derived from `state.encounter`.
 // Returns null when the encounter has no combatants and isn't active —
 // that's the "exploration" steady state and the tracker should stay collapsed.
-export function combatFromState(
-  state: { encounter: EncounterState },
-): CombatStateSlot {
+export function combatFromState(state: { encounter: EncounterState }): CombatStateSlot {
   const candidate = state.encounter;
 
   const combatants = candidate.combatants.map(adaptCombatant);
@@ -142,8 +136,7 @@ export function combatFromState(
     active: candidate.active,
     round: candidate.round_number,
     player_ready: !candidate.first_round_dex_gate_pending,
-    morale_triggered:
-      candidate.casualty_morale_checked || candidate.half_force_morale_checked,
+    morale_triggered: candidate.casualty_morale_checked || candidate.half_force_morale_checked,
     initiator: candidate.initiator,
     combatants,
     pending_advantages: pending,
@@ -187,22 +180,16 @@ export function advantagesForCombatant(
   combatantId: string,
 ): PendingEncounterAdvantage[] {
   if (encounter === null) return [];
-  return encounter.pending_advantages.filter(
-    (a) => a.target_combatant_id === combatantId,
-  );
+  return encounter.pending_advantages.filter((a) => a.target_combatant_id === combatantId);
 }
 
 // Setups whose `target_combatant_id` is null (e.g. the foe wasn't yet
 // pinned to a specific combatant id when the setup landed). The
 // tracker surfaces these in a dedicated "Pending setups" strip so
 // they don't get lost.
-export function unattachedAdvantages(
-  encounter: CombatStateSlot,
-): PendingEncounterAdvantage[] {
+export function unattachedAdvantages(encounter: CombatStateSlot): PendingEncounterAdvantage[] {
   if (encounter === null) return [];
-  return encounter.pending_advantages.filter(
-    (a) => a.target_combatant_id === null,
-  );
+  return encounter.pending_advantages.filter((a) => a.target_combatant_id === null);
 }
 
 // Status precedence: dead > fled > incapacitated > active. We choose
@@ -263,7 +250,9 @@ export function combatantWoundLabel(c: CombatantState): "Fresh" | "Bloodied" | "
 // "heavily armored" / "plated", not stare at a number. Cairn caps
 // Armor at 3; anything higher we still surface as "Plated" because
 // the cap is on the backend.
-export function combatantArmorLabel(c: CombatantState): "Unarmored" | "Armored" | "Heavily armored" | "Plated" {
+export function combatantArmorLabel(
+  c: CombatantState,
+): "Unarmored" | "Armored" | "Heavily armored" | "Plated" {
   const armor = c.armor;
   if (armor <= 0) return "Unarmored";
   if (armor === 1) return "Armored";

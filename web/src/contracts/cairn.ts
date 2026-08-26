@@ -1,10 +1,6 @@
 // Character, inventory, survival, and deterministic Cairn wire contracts.
 
-import type {
-  EncounterAdvantagePayoff,
-  EncounterEndReason,
-  EncounterInitiator,
-} from "./encounter";
+import type { EncounterAdvantagePayoff, EncounterEndReason, EncounterInitiator } from "./encounter";
 
 // `unset` means the backend has not yet derived Cairn mechanics for this
 // record. The frontend uses it as a gate: never render the mechanics
@@ -77,12 +73,7 @@ export const CAIRN_ITEM_TAGS: readonly CairnItemTag[] = [
   "utility",
 ] as const;
 
-export type CairnItemPowerKind =
-  | "none"
-  | "spellbook"
-  | "scroll"
-  | "relic"
-  | "holy_relic";
+export type CairnItemPowerKind = "none" | "spellbook" | "scroll" | "relic" | "holy_relic";
 
 export type CairnItemEffectKind =
   | "none"
@@ -99,42 +90,17 @@ export type CairnItemEffectKind =
   | "resurrect";
 
 export type CairnConditionKey =
-  | "deprived"
-  | "critically_wounded"
-  | "doomed"
-  | "paralyzed"
-  | "delirious";
+  "deprived" | "critically_wounded" | "doomed" | "paralyzed" | "delirious";
 
 export type CairnResourceKind =
-  | "ammo"
-  | "charge"
-  | "fuel"
-  | "component"
-  | "mind"
-  | "durability"
-  | "supply"
-  | "custom";
+  "ammo" | "charge" | "fuel" | "component" | "mind" | "durability" | "supply" | "custom";
 
 export type CairnResourceRechargePolicy =
-  | "none"
-  | "per_turn"
-  | "per_watch"
-  | "per_day"
-  | "on_rest"
-  | "in_sunlight"
-  | "manual_condition";
+  "none" | "per_turn" | "per_watch" | "per_day" | "on_rest" | "in_sunlight" | "manual_condition";
 
-export type CairnResourceDrawPolicy =
-  | "self"
-  | "actor_inventory"
-  | "linked_item"
-  | "actor_pool";
+export type CairnResourceDrawPolicy = "self" | "actor_inventory" | "linked_item" | "actor_pool";
 
-export type CairnResourceDeltaReason =
-  | "attack"
-  | "item_use"
-  | "recharge"
-  | "survival";
+export type CairnResourceDeltaReason = "attack" | "item_use" | "recharge" | "survival";
 
 export interface CairnItemPower {
   kind: CairnItemPowerKind;
@@ -491,4 +457,3 @@ export interface CharacterQuizAnswer {
 export interface CharacterQuizResponse {
   quiz: CharacterQuiz;
 }
-

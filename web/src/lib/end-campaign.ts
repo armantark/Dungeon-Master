@@ -38,8 +38,7 @@ const REASON_FALLBACK_SUMMARY: Record<CampaignEndReason, string> = {
     "The character's wounds proved final. The campaign closes here, with this archive preserved.",
   retirement:
     "The character set the road aside. The campaign closes here, with this archive preserved.",
-  victory:
-    "The campaign reached its endgame. The archive preserves the path that led here.",
+  victory: "The campaign reached its endgame. The archive preserves the path that led here.",
 };
 
 export function endKicker(reason: CampaignEndReason): string {

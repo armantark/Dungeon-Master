@@ -33,14 +33,10 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
 -->
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import {
-    npcDisplayLabel,
-    npcKnownByDescriptor,
-    sortNpcsForDisplay,
-  } from "../../lib/npcs";
+  import { npcDisplayLabel, npcKnownByDescriptor, sortNpcsForDisplay } from "../../lib/npcs";
   import type { NPC } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     npcs: readonly NPC[];
     /**
      * Set of NPC ids the latest turn touched. Optional so legacy
@@ -50,7 +46,7 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
     recentlyTouchedIds?: ReadonlySet<string>;
     focusedId?: string | null;
     focusSeq?: number;
-  };
+  }
   const {
     npcs,
     recentlyTouchedIds = new Set<string>(),
@@ -67,9 +63,7 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
 
   async function revealFocusedNpc(npcId: string): Promise<void> {
     await tick();
-    const target = listEl?.querySelector<HTMLElement>(
-      `[data-npc-id="${CSS.escape(npcId)}"]`,
-    );
+    const target = listEl?.querySelector<HTMLElement>(`[data-npc-id="${CSS.escape(npcId)}"]`);
     if (target === undefined || target === null) return;
     target.scrollIntoView({ behavior: "smooth", block: "nearest" });
     flashingId = npcId;
@@ -128,10 +122,7 @@ Read-only on purpose — F-04 made NPCs canon-driven, not user-edited.
             <span class="status mono" data-status="retired">retired</span>
           {/if}
           {#if justTouched}
-            <span
-              class="status mono advanced-pip"
-              title="This NPC changed on the latest turn."
-            >
+            <span class="status mono advanced-pip" title="This NPC changed on the latest turn.">
               {isRetired ? "newly retired" : "advanced"}
             </span>
           {/if}

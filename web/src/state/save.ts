@@ -16,10 +16,7 @@ export function mergePersistedNotes(
 ): ClientNote[] {
   if (persisted.length === 0) return [...current];
   const seen = new Set(current.map((note) => note.id));
-  const merged = [
-    ...persisted.filter((note) => !seen.has(note.id)),
-    ...current,
-  ];
+  const merged = [...persisted.filter((note) => !seen.has(note.id)), ...current];
   merged.sort((a, b) => a.created_at.localeCompare(b.created_at));
   return merged;
 }

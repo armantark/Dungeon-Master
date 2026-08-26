@@ -44,11 +44,7 @@ import {
   type LlmSettingsStatus,
   type RuntimeBootstrapStatus,
 } from "./runtime";
-import {
-  emptyStreamingState,
-  type RollPhase,
-  type StreamingState,
-} from "./stream";
+import { emptyStreamingState, type RollPhase, type StreamingState } from "./stream";
 import type {
   CampaignEndReason,
   CampaignSeed,
@@ -149,11 +145,7 @@ export type { LibraryStatus } from "./save";
 //                 Distinct from "ready + post failure" because we still
 //                 want to render the cached settings while showing a
 //                 transient save error inline.
-export type {
-  CredentialSetupStatus,
-  LlmSettingsStatus,
-  RuntimeBootstrapStatus,
-} from "./runtime";
+export type { CredentialSetupStatus, LlmSettingsStatus, RuntimeBootstrapStatus } from "./runtime";
 
 // F-09 cross-component scroll request. The Inspector commands the
 // ChatFeed to scroll a particular event into view (oracle deep-link,
@@ -383,7 +375,7 @@ class GameStore {
    * backend already supports it and exposing the parameter keeps the
    * call sites uniform).
    */
-  async createSave(select: boolean = true): Promise<string | null> {
+  async createSave(select = true): Promise<string | null> {
     this.libraryError = null;
     try {
       const beforeIds = new Set(this.library.map((entry) => entry.save_id));
@@ -630,9 +622,7 @@ class GameStore {
    * directives.
    */
   async updateDirectives(worldGuidance: string, playGuidance: string): Promise<void> {
-    await this.#run((signal) =>
-      api.updateDirectives(worldGuidance, playGuidance, signal),
-    );
+    await this.#run((signal) => api.updateDirectives(worldGuidance, playGuidance, signal));
   }
 
   /**
@@ -660,10 +650,9 @@ class GameStore {
   async askYesNo(question: string, likelihood: Likelihood): Promise<void> {
     const cleaned = question.trim();
     if (!cleaned) return;
-    const outcome = await this.#call(
-      (signal) => api.previewYesNo(cleaned, likelihood, signal),
-      { cancelLabel: "Stop preview" },
-    );
+    const outcome = await this.#call((signal) => api.previewYesNo(cleaned, likelihood, signal), {
+      cancelLabel: "Stop preview",
+    });
     if (outcome === null) return;
     this.#oraclePreviewNote(cleaned, outcome);
   }
@@ -822,10 +811,9 @@ class GameStore {
   async endCampaign(reason: CampaignEndReason, summary: string): Promise<void> {
     const trimmed = summary.trim();
     const payloadSummary = trimmed === "" ? null : trimmed;
-    await this.#run(
-      (signal) => api.endCampaign(reason, payloadSummary, signal),
-      { cancelLabel: "Stop close" },
-    );
+    await this.#run((signal) => api.endCampaign(reason, payloadSummary, signal), {
+      cancelLabel: "Stop close",
+    });
   }
 
   async startCampaign(): Promise<void> {
@@ -839,8 +827,7 @@ class GameStore {
 
   async regenerateMessage(eventId: string): Promise<void> {
     await this.#runStreaming({
-      stream: (handlers, signal) =>
-        api.streamRegenerateMessage(eventId, handlers, signal),
+      stream: (handlers, signal) => api.streamRegenerateMessage(eventId, handlers, signal),
       fallback: (signal) => api.regenerateMessage(eventId, signal),
       cancelLabel: "Stop repair",
       rollAware: true,
@@ -983,9 +970,7 @@ class GameStore {
   }
 
   dismissNote(id: string): void {
-    const wasExplanation = this.notes.some(
-      (n) => n.id === id && n.kind === "explanation",
-    );
+    const wasExplanation = this.notes.some((n) => n.id === id && n.kind === "explanation");
     this.notes = this.notes.filter((n) => n.id !== id);
     // OOC notes survive reloads (see save/ooc-notes.ts), so a dismissal
     // has to write through to localStorage as well — otherwise the
@@ -1182,16 +1167,14 @@ class GameStore {
       // before the reattach round-trip completes. The backend may
       // replay stage events that supersede these, which is fine —
       // applyStageEvent merges by stage_id.
-      const restoredStages: StageProgress[] = (descriptor.stages ?? []).map(
-        (s) => ({
-          stageId: s.stageId,
-          label: s.label,
-          status: s.status as StageProgress["status"],
-          order: s.order,
-          startedAt: s.startedAt,
-          completedAt: s.completedAt,
-        }),
-      );
+      const restoredStages: StageProgress[] = (descriptor.stages ?? []).map((s) => ({
+        stageId: s.stageId,
+        label: s.label,
+        status: s.status as StageProgress["status"],
+        order: s.order,
+        startedAt: s.startedAt,
+        completedAt: s.completedAt,
+      }));
 
       this.streaming = {
         ...emptyStreamingState(),
@@ -1259,7 +1242,10 @@ class GameStore {
         if (this.#isAbortError(exc)) {
           // Bootstrap-driven resume isn't user-cancellable yet; an
           // abort here means a remount tore us down, which is fine.
-        } else if (exc instanceof StreamTransportError && (exc.status === 404 || exc.status === 409)) {
+        } else if (
+          exc instanceof StreamTransportError &&
+          (exc.status === 404 || exc.status === 409)
+        ) {
           // Session is gone (GC'd, wrong save) — drop the descriptor
           // silently. The player keeps their persisted state.
           observedTerminal = true;
@@ -1421,8 +1407,7 @@ class GameStore {
           try {
             const next = await opts.fallback(this.#abortController.signal);
             this.state = next;
-            const newOutcome =
-              next.oracle_history[next.oracle_history.length - 1] ?? null;
+            const newOutcome = next.oracle_history[next.oracle_history.length - 1] ?? null;
             this.pendingOracle = newOutcome;
             const newOracleArrived = next.oracle_history.length > previousLength;
             if (newOracleArrived && opts.rollAware) {

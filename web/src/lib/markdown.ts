@@ -75,7 +75,7 @@ export function renderMarkdown(input: string): string {
   // `marked.parse` can return a Promise when async extensions are
   // registered. We don't register any, so the sync `{ async: false }`
   // overload returns a string and lets us stay in a sync render path.
-  const html = marked.parse(input, { async: false }) as string;
+  const html = marked.parse(input, { async: false });
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,

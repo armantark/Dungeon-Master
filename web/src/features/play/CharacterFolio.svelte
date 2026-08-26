@@ -23,25 +23,22 @@ readout is purely read-only here; no buttons mutate state from this rail.
     itemPowerTitle,
     itemTagLabels,
   } from "../../lib/cairn";
-  import type {
-    CharacterSheet,
-    GameState,
-    InventoryItem,
-    PartyMember,
-  } from "../../lib/types";
+  import type { CharacterSheet, GameState, InventoryItem, PartyMember } from "../../lib/types";
   import CairnReadout from "../combat/CairnReadout.svelte";
   import { metalScroll } from "../../lib/metalScroll";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   const { state: gs }: Props = $props();
 
-  type FolioActor = {
+  interface FolioActor {
     id: string;
     role: "player" | PartyMember["kind"];
     tabLabel: string;
     sheet: CharacterSheet;
     member: PartyMember | null;
-  };
+  }
 
   let selectedActorId = $state("player");
 
@@ -116,7 +113,8 @@ readout is purely read-only here; no buttons mutate state from this rail.
   const normalizedText = (value: string | undefined): string =>
     (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   const partyNote = $derived.by<string>(() => {
-    const note = selectedActor.member?.loyalty || selectedActor.member?.notes || "";
+    const loyalty = selectedActor.member?.loyalty ?? "";
+    const note = loyalty === "" ? (selectedActor.member?.notes ?? "") : loyalty;
     const normalizedNote = normalizedText(note);
     if (normalizedNote === "") return "";
 
@@ -167,162 +165,162 @@ readout is purely read-only here; no buttons mutate state from this rail.
     original vertical stack.
   -->
   <div class="folio__layout">
-  <div class="folio__col folio__col--identity">
-    {#if actors.length > 1}
-      <nav class="party-tabs" aria-label="Party folio" use:metalScroll>
-        {#each actors as actor, index (actor.id)}
-          <button
-            class:party-tabs__button--active={actor.id === selectedActor.id}
-            class:party-tabs__button--half={index === 2}
-            type="button"
-            aria-pressed={actor.id === selectedActor.id}
-            onclick={() => {
-              selectedActorId = actor.id;
-            }}
-          >
-            <span class="party-tabs__role pixel">{roleLabel(actor.role)}</span>
-            <span class="party-tabs__name">{actor.tabLabel}</span>
-          </button>
-        {/each}
-      </nav>
-    {/if}
-
-    <div class="plate">
-      <span class="kicker">{roleLabel(selectedActor.role)} · {character.archetype}</span>
-      <h2>{character.name}</h2>
-      <p class="epithet">{character.epithet || character.backstory || gs.player_notes}</p>
-      {#if partyNote !== ""}
-        <p class="party-note">
-          {partyNote}
-        </p>
+    <div class="folio__col folio__col--identity">
+      {#if actors.length > 1}
+        <nav class="party-tabs" aria-label="Party folio" use:metalScroll>
+          {#each actors as actor, index (actor.id)}
+            <button
+              class:party-tabs__button--active={actor.id === selectedActor.id}
+              class:party-tabs__button--half={index === 2}
+              type="button"
+              aria-pressed={actor.id === selectedActor.id}
+              onclick={() => {
+                selectedActorId = actor.id;
+              }}
+            >
+              <span class="party-tabs__role pixel">{roleLabel(actor.role)}</span>
+              <span class="party-tabs__name">{actor.tabLabel}</span>
+            </button>
+          {/each}
+        </nav>
       {/if}
+
+      <div class="plate">
+        <span class="kicker">{roleLabel(selectedActor.role)} · {character.archetype}</span>
+        <h2>{character.name}</h2>
+        <p class="epithet">{character.epithet || character.backstory || gs.player_notes}</p>
+        {#if partyNote !== ""}
+          <p class="party-note">
+            {partyNote}
+          </p>
+        {/if}
+      </div>
+
+      <section class="condition">
+        <div class="condition__cell">
+          <span class="kicker">Condition</span>
+          <p>{character.condition}</p>
+        </div>
+        <div class="condition__cell">
+          <span class="kicker">Drive</span>
+          <p>{character.drive}</p>
+        </div>
+      </section>
     </div>
 
-    <section class="condition">
-      <div class="condition__cell">
-        <span class="kicker">Condition</span>
-        <p>{character.condition}</p>
-      </div>
-      <div class="condition__cell">
-        <span class="kicker">Drive</span>
-        <p>{character.drive}</p>
-      </div>
-    </section>
-  </div>
+    <div class="folio__col folio__col--ledger">
+      {#if showCairn}
+        <section class="mechanics">
+          <CairnReadout cairn={character.cairn} />
+        </section>
+      {/if}
 
-  <div class="folio__col folio__col--ledger">
-    {#if showCairn}
-      <section class="mechanics">
-        <CairnReadout cairn={character.cairn} />
-      </section>
-    {/if}
-
-    <section class="inventory">
-      <span class="kicker">Inventory</span>
-      <ul use:metalScroll>
-      {#each inventory as item (item.id)}
-        {@const tagLabels = itemTagLabels(item.cairn)}
-        {@const showTags = showCairn && tagLabels.length > 0}
-        {@const powerTitle = itemPowerTitle(item.cairn.power)}
-        {@const powerSummary = itemPowerSummary(item.cairn.power)}
-        {@const resources = item.cairn.resources}
-        {@const attackCosts = item.cairn.attack_costs}
-        {@const useCosts = item.cairn.use_costs}
-        <li class:item--equipped={item.cairn.equipped}>
-          <div class="item__head">
-            <strong>{item.name}</strong>
-            {#if showCairn && item.cairn.equipped}
-              <span class="item__badge pixel" aria-label="Equipped">Equipped</span>
-            {/if}
-            {#if showCairn && isPrimaryWeapon(item)}
-              <span class="item__badge item__badge--primary pixel" aria-label="Primary weapon">
-                Primary
-              </span>
-            {/if}
-          </div>
-          {#if item.details}
-            <span class="item__details">{item.details}</span>
-          {/if}
-          {#if showCairn && powerTitle !== null}
-            <div class="item__power" aria-label="Item power">
-              <span class="item__power-title pixel">{powerTitle}</span>
-              {#if powerSummary !== null}
-                <span class="item__power-summary">{powerSummary}</span>
-              {/if}
-            </div>
-          {/if}
-          {#if showTags}
-            <ul class="item__tags" aria-label="Item tags">
-              {#each tagLabels as label, idx (idx)}
-                <li class="pixel">{label}</li>
-              {/each}
-            </ul>
-          {/if}
-          {#if showCairn}
-            {@const die = item.cairn.weapon_damage_die}
-            {@const armor = item.cairn.armor_bonus}
-            {@const uses = item.cairn.uses}
-            {@const slots = item.cairn.slots}
-            {@const power = item.cairn.power}
-            {#if die !== null || armor > 0 || uses !== null || slots !== 1 || power?.adds_fatigue || power?.requires_wil_save_in_danger || power?.consumed_on_use}
-              <ul class="item__stats pixel" aria-label="Item mechanics">
-                {#if die !== null}
-                  <li>Dmg d{die}</li>
+      <section class="inventory">
+        <span class="kicker">Inventory</span>
+        <ul use:metalScroll>
+          {#each inventory as item (item.id)}
+            {@const tagLabels = itemTagLabels(item.cairn)}
+            {@const showTags = showCairn && tagLabels.length > 0}
+            {@const powerTitle = itemPowerTitle(item.cairn.power)}
+            {@const powerSummary = itemPowerSummary(item.cairn.power)}
+            {@const resources = item.cairn.resources}
+            {@const attackCosts = item.cairn.attack_costs}
+            {@const useCosts = item.cairn.use_costs}
+            <li class:item--equipped={item.cairn.equipped}>
+              <div class="item__head">
+                <strong>{item.name}</strong>
+                {#if showCairn && item.cairn.equipped}
+                  <span class="item__badge pixel" aria-label="Equipped">Equipped</span>
                 {/if}
-                {#if armor > 0}
-                  <li>+{armor} armor</li>
-                {/if}
-                {#if uses !== null}
-                  <li>Uses {uses}</li>
-                {/if}
-                {#if slots !== 1}
-                  <li>{slots} slots</li>
-                {/if}
-                {#if power?.adds_fatigue}
-                  <li>+Fatigue</li>
-                {/if}
-                {#if power?.requires_wil_save_in_danger}
-                  <li>WIL in danger</li>
-                {/if}
-                {#if power?.consumed_on_use}
-                  <li>Consumed</li>
-                {/if}
-              </ul>
-            {/if}
-            {#if resources.length > 0 || attackCosts.length > 0 || useCosts.length > 0}
-              <div class="item__resources" aria-label="Item resources">
-                {#if resources.length > 0}
-                  <div class="item__resource-row">
-                    <span class="kicker">Resources</span>
-                    <span class="item__resource-values pixel">
-                      {resources.map(formatResourcePool).join(" · ")}
-                    </span>
-                  </div>
-                {/if}
-                {#if attackCosts.length > 0}
-                  <div class="item__resource-row">
-                    <span class="kicker">Attack cost</span>
-                    <span class="item__resource-values pixel">
-                      {attackCosts.map(formatResourceCost).join(" · ")}
-                    </span>
-                  </div>
-                {/if}
-                {#if useCosts.length > 0}
-                  <div class="item__resource-row">
-                    <span class="kicker">Use cost</span>
-                    <span class="item__resource-values pixel">
-                      {useCosts.map(formatResourceCost).join(" · ")}
-                    </span>
-                  </div>
+                {#if showCairn && isPrimaryWeapon(item)}
+                  <span class="item__badge item__badge--primary pixel" aria-label="Primary weapon">
+                    Primary
+                  </span>
                 {/if}
               </div>
-            {/if}
-          {/if}
-        </li>
-      {/each}
-      </ul>
-    </section>
-  </div>
+              {#if item.details}
+                <span class="item__details">{item.details}</span>
+              {/if}
+              {#if showCairn && powerTitle !== null}
+                <div class="item__power" aria-label="Item power">
+                  <span class="item__power-title pixel">{powerTitle}</span>
+                  {#if powerSummary !== null}
+                    <span class="item__power-summary">{powerSummary}</span>
+                  {/if}
+                </div>
+              {/if}
+              {#if showTags}
+                <ul class="item__tags" aria-label="Item tags">
+                  {#each tagLabels as label, idx (idx)}
+                    <li class="pixel">{label}</li>
+                  {/each}
+                </ul>
+              {/if}
+              {#if showCairn}
+                {@const die = item.cairn.weapon_damage_die}
+                {@const armor = item.cairn.armor_bonus}
+                {@const uses = item.cairn.uses}
+                {@const slots = item.cairn.slots}
+                {@const power = item.cairn.power}
+                {#if die !== null || armor > 0 || uses !== null || slots !== 1 || power?.adds_fatigue || power?.requires_wil_save_in_danger || power?.consumed_on_use}
+                  <ul class="item__stats pixel" aria-label="Item mechanics">
+                    {#if die !== null}
+                      <li>Dmg d{die}</li>
+                    {/if}
+                    {#if armor > 0}
+                      <li>+{armor} armor</li>
+                    {/if}
+                    {#if uses !== null}
+                      <li>Uses {uses}</li>
+                    {/if}
+                    {#if slots !== 1}
+                      <li>{slots} slots</li>
+                    {/if}
+                    {#if power?.adds_fatigue}
+                      <li>+Fatigue</li>
+                    {/if}
+                    {#if power?.requires_wil_save_in_danger}
+                      <li>WIL in danger</li>
+                    {/if}
+                    {#if power?.consumed_on_use}
+                      <li>Consumed</li>
+                    {/if}
+                  </ul>
+                {/if}
+                {#if resources.length > 0 || attackCosts.length > 0 || useCosts.length > 0}
+                  <div class="item__resources" aria-label="Item resources">
+                    {#if resources.length > 0}
+                      <div class="item__resource-row">
+                        <span class="kicker">Resources</span>
+                        <span class="item__resource-values pixel">
+                          {resources.map(formatResourcePool).join(" · ")}
+                        </span>
+                      </div>
+                    {/if}
+                    {#if attackCosts.length > 0}
+                      <div class="item__resource-row">
+                        <span class="kicker">Attack cost</span>
+                        <span class="item__resource-values pixel">
+                          {attackCosts.map(formatResourceCost).join(" · ")}
+                        </span>
+                      </div>
+                    {/if}
+                    {#if useCosts.length > 0}
+                      <div class="item__resource-row">
+                        <span class="kicker">Use cost</span>
+                        <span class="item__resource-values pixel">
+                          {useCosts.map(formatResourceCost).join(" · ")}
+                        </span>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </section>
+    </div>
   </div>
 </aside>
 
@@ -387,12 +385,11 @@ readout is purely read-only here; no buttons mutate state from this rail.
     overflow-y: auto;
     max-height: 7.2rem;
     scrollbar-gutter: stable;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--ink-bruise) 34%, transparent),
-        rgba(0, 0, 0, 0.12)
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--ink-bruise) 34%, transparent),
+      rgba(0, 0, 0, 0.12)
+    );
   }
   .party-tabs button {
     flex: 1 1 7.5rem;
@@ -404,12 +401,11 @@ readout is purely read-only here; no buttons mutate state from this rail.
     padding: 0.35rem 0.45rem;
     text-align: left;
     border-color: color-mix(in oklab, var(--gold-tarnished) 38%, transparent);
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--ink-deep) 92%, var(--rust-blood)),
-        rgba(0, 0, 0, 0.38)
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--ink-deep) 92%, var(--rust-blood)),
+      rgba(0, 0, 0, 0.38)
+    );
     color: var(--paper-bone);
   }
   .party-tabs button.party-tabs__button--half {
@@ -571,12 +567,11 @@ readout is purely read-only here; no buttons mutate state from this rail.
     margin-top: 0.22rem;
     padding: 0.35rem 0.45rem;
     border: 1px solid color-mix(in oklab, var(--green-verdigris) 36%, transparent);
-    background:
-      linear-gradient(
-        120deg,
-        color-mix(in oklab, var(--green-verdigris) 18%, transparent),
-        rgba(0, 0, 0, 0.26)
-      );
+    background: linear-gradient(
+      120deg,
+      color-mix(in oklab, var(--green-verdigris) 18%, transparent),
+      rgba(0, 0, 0, 0.26)
+    );
     display: flex;
     flex-direction: column;
     gap: 0.16rem;

@@ -55,7 +55,7 @@ function outcome(overrides: Partial<OracleOutcome>): OracleOutcome {
 function npc(
   id: string,
   status: NPCStatus = "active",
-  playerLabel: string = `npc-${id}`,
+  playerLabel = `npc-${id}`,
   labelKind: NPCPlayerLabelKind = "proper_name",
 ): NPC {
   return {
@@ -177,11 +177,9 @@ describe("recentlyTouchedNpcIds", () => {
 
 describe("npcDisplayLabel", () => {
   it("prefers the safe player-facing label over the canonical backend name", () => {
-    expect(
-      npcDisplayLabel(
-        npc("a", "active", "the ash-veiled bellringer", "descriptor"),
-      ),
-    ).toBe("the ash-veiled bellringer");
+    expect(npcDisplayLabel(npc("a", "active", "the ash-veiled bellringer", "descriptor"))).toBe(
+      "the ash-veiled bellringer",
+    );
   });
 
   it("falls back to the canonical name when the player-facing label is blank", () => {
@@ -192,9 +190,7 @@ describe("npcDisplayLabel", () => {
 describe("npcKnownByDescriptor", () => {
   it("is true only for descriptor-visible NPCs", () => {
     expect(
-      npcKnownByDescriptor(
-        npc("a", "active", "the split-reliquary woman", "descriptor"),
-      ),
+      npcKnownByDescriptor(npc("a", "active", "the split-reliquary woman", "descriptor")),
     ).toBe(true);
     expect(npcKnownByDescriptor(npc("b"))).toBe(false);
   });
@@ -202,10 +198,7 @@ describe("npcKnownByDescriptor", () => {
 
 describe("referencedNpcsForOutcome", () => {
   it("returns visible NPCs in outcome order and drops stale ids", () => {
-    const visible = [
-      npc("a", "active", "the ash-veiled bellringer", "descriptor"),
-      npc("b"),
-    ];
+    const visible = [npc("a", "active", "the ash-veiled bellringer", "descriptor"), npc("b")];
 
     const resolved = referencedNpcsForOutcome(
       visible,
@@ -237,11 +230,7 @@ describe("sortNpcsForDisplay", () => {
     // this very turn) still sinks below active NPCs. The pulse + the
     // "newly retired" pip handle the recency cue; layout-wise, active
     // NPCs own the top of the panel because they still drive play.
-    const npcs = [
-      npc("a", "active"),
-      npc("b", "retired"),
-      npc("c", "active"),
-    ];
+    const npcs = [npc("a", "active"), npc("b", "retired"), npc("c", "active")];
 
     const sorted = sortNpcsForDisplay(npcs, new Set(["b"]));
 
@@ -253,13 +242,7 @@ describe("sortNpcsForDisplay", () => {
     // introduced later when neither was touched in the latest turn —
     // otherwise the panel would reshuffle on every turn even if
     // nothing relevant changed.
-    const npcs = [
-      npc("a"),
-      npc("b"),
-      npc("c"),
-      npc("d", "retired"),
-      npc("e", "retired"),
-    ];
+    const npcs = [npc("a"), npc("b"), npc("c"), npc("d", "retired"), npc("e", "retired")];
 
     const sorted = sortNpcsForDisplay(npcs, new Set());
 

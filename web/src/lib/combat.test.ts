@@ -16,11 +16,7 @@ import {
   type CombatantStatus,
   type CombatEncounterState,
 } from "./combat";
-import type {
-  EncounterState,
-  EnemyCombatant,
-  PendingEncounterAdvantage,
-} from "./types";
+import type { EncounterState, EnemyCombatant, PendingEncounterAdvantage } from "./types";
 
 // We intentionally test the helpers as pure functions; there's no
 // rendering test here because the Svelte component is structural and
@@ -50,9 +46,7 @@ function makeFoe(overrides: Partial<CombatantState> = {}): CombatantState {
   };
 }
 
-function makeEncounter(
-  overrides: Partial<CombatEncounterState> = {},
-): CombatEncounterState {
+function makeEncounter(overrides: Partial<CombatEncounterState> = {}): CombatEncounterState {
   return {
     active: true,
     round: 1,
@@ -133,7 +127,7 @@ describe("combatantArmorLabel", () => {
   // Cairn caps Armor at 3, but we still want the label to degrade
   // gracefully if a backend ever publishes a higher value (e.g. a
   // boss with an authored exception).
-  const cases: ReadonlyArray<[number, string]> = [
+  const cases: readonly [number, string][] = [
     [0, "Unarmored"],
     [1, "Armored"],
     [2, "Heavily armored"],
@@ -149,7 +143,7 @@ describe("combatantArmorLabel", () => {
 });
 
 describe("combatantStatusLabel", () => {
-  const cases: ReadonlyArray<[CombatantStatus, string | null]> = [
+  const cases: readonly [CombatantStatus, string | null][] = [
     ["dead", "Dead"],
     ["fled", "Fled"],
     ["incapacitated", "Down"],
@@ -169,9 +163,7 @@ describe("encounterHeadline", () => {
 
   it("returns the cleared summary when active is false and a summary is present", () => {
     expect(
-      encounterHeadline(
-        makeEncounter({ active: false, summary: "The marauders broke and fled." }),
-      ),
+      encounterHeadline(makeEncounter({ active: false, summary: "The marauders broke and fled." })),
     ).toBe("The marauders broke and fled.");
   });
 
@@ -180,9 +172,9 @@ describe("encounterHeadline", () => {
   });
 
   it("flags the first-round DEX gate when the player isn't ready", () => {
-    expect(
-      encounterHeadline(makeEncounter({ round: 1, player_ready: false })),
-    ).toBe("Round 1 · DEX save to act");
+    expect(encounterHeadline(makeEncounter({ round: 1, player_ready: false }))).toBe(
+      "Round 1 · DEX save to act",
+    );
   });
 
   it("drops the DEX gate label after the first round or once the player is ready", () => {
@@ -199,9 +191,7 @@ describe("encounterHeadline", () => {
     // after the opener resolves (the player's next move is round 2),
     // so the ambush prefix shows the moment the combat tracker mounts.
     expect(
-      encounterHeadline(
-        makeEncounter({ round: 2, player_ready: true, initiator: "enemy" }),
-      ),
+      encounterHeadline(makeEncounter({ round: 2, player_ready: true, initiator: "enemy" })),
     ).toBe("Ambush · Round 2");
   });
 
@@ -209,9 +199,7 @@ describe("encounterHeadline", () => {
     // Sanity check: the prefix is initiator-gated, so a normal
     // player attack must still read "Round N" without the prefix.
     expect(
-      encounterHeadline(
-        makeEncounter({ round: 2, player_ready: true, initiator: "player" }),
-      ),
+      encounterHeadline(makeEncounter({ round: 2, player_ready: true, initiator: "player" })),
     ).toBe("Round 2");
   });
 
@@ -221,9 +209,7 @@ describe("encounterHeadline", () => {
     // independently, so the player still sees the ambush cue at a
     // glance even on round 1.
     expect(
-      encounterHeadline(
-        makeEncounter({ round: 1, player_ready: false, initiator: "enemy" }),
-      ),
+      encounterHeadline(makeEncounter({ round: 1, player_ready: false, initiator: "enemy" })),
     ).toBe("Round 1 · DEX save to act");
   });
 
@@ -288,9 +274,7 @@ describe("combatFromState", () => {
   // adapter is the contract surface — these tests pin both the
   // mapping and the "no encounter tracked" recognition.
 
-  function backendEncounter(
-    overrides: Partial<EncounterState> = {},
-  ): EncounterState {
+  function backendEncounter(overrides: Partial<EncounterState> = {}): EncounterState {
     return {
       active: false,
       round_number: 0,
@@ -354,7 +338,9 @@ describe("combatFromState", () => {
     // first_round_dex_gate_pending=true means player is NOT yet ready.
     expect(adapted?.player_ready).toBe(false);
     expect(adapted?.combatants).toHaveLength(1);
-    const foe = adapted?.combatants[0]!;
+    const foe = adapted?.combatants[0];
+    expect(foe).toBeDefined();
+    if (foe === undefined) throw new Error("Expected an adapted combatant");
     expect(foe.status).toBe("active");
     expect(foe.tags).toEqual(["ragged conscript"]);
     expect(foe.weapon_damage_die).toBe(6);
@@ -392,13 +378,11 @@ describe("combatFromState", () => {
       ],
     });
     const adapted = combatFromState({ encounter });
-    const byId = Object.fromEntries(
-      (adapted?.combatants ?? []).map((c) => [c.id, c.status]),
-    );
-    expect(byId["a"]).toBe("dead");
-    expect(byId["b"]).toBe("fled");
-    expect(byId["c"]).toBe("incapacitated");
-    expect(byId["d"]).toBe("active");
+    const byId = Object.fromEntries((adapted?.combatants ?? []).map((c) => [c.id, c.status]));
+    expect(byId.a).toBe("dead");
+    expect(byId.b).toBe("fled");
+    expect(byId.c).toBe("incapacitated");
+    expect(byId.d).toBe("active");
   });
 
   it("surfaces backend notes as the cleared-encounter summary", () => {
@@ -444,7 +428,9 @@ describe("combatFromState", () => {
         combatants: [backendFoe()],
       }),
     });
-    const foe = adapted?.combatants[0]!;
+    const foe = adapted?.combatants[0];
+    expect(foe).toBeDefined();
+    if (foe === undefined) throw new Error("Expected an adapted combatant");
     expect(foe.threat_level).toBe("ordinary");
     expect(foe.weakness).toBe("");
     expect(foe.tactics).toBe("");
@@ -464,7 +450,9 @@ describe("combatFromState", () => {
         ],
       }),
     });
-    const foe = adapted?.combatants[0]!;
+    const foe = adapted?.combatants[0];
+    expect(foe).toBeDefined();
+    if (foe === undefined) throw new Error("Expected an adapted combatant");
     expect(foe.threat_level).toBe("serious");
     expect(foe.weakness).toContain("silver");
     expect(foe.tactics).toContain("cover");
@@ -497,9 +485,7 @@ describe("combatFromState", () => {
 // --- Advantage helpers --------------------------------------------------
 
 describe("advantagesForCombatant / unattachedAdvantages", () => {
-  function makeAdv(
-    overrides: Partial<PendingEncounterAdvantage> = {},
-  ): PendingEncounterAdvantage {
+  function makeAdv(overrides: Partial<PendingEncounterAdvantage> = {}): PendingEncounterAdvantage {
     return {
       id: "adv_1",
       actor_id: null,
@@ -513,9 +499,7 @@ describe("advantagesForCombatant / unattachedAdvantages", () => {
     };
   }
 
-  function withAdvantages(
-    advs: PendingEncounterAdvantage[],
-  ): CombatEncounterState {
+  function withAdvantages(advs: PendingEncounterAdvantage[]): CombatEncounterState {
     return {
       active: true,
       round: 1,

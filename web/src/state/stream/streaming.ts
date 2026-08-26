@@ -31,11 +31,14 @@ export class StreamTransportError extends Error {
   public readonly status: number | null;
   public readonly detail: unknown;
 
-  constructor(message: string, opts?: {
-    code?: string | null;
-    status?: number | null;
-    detail?: unknown;
-  }) {
+  constructor(
+    message: string,
+    opts?: {
+      code?: string | null;
+      status?: number | null;
+      detail?: unknown;
+    },
+  ) {
     super(message);
     this.name = "StreamTransportError";
     this.code = opts?.code ?? null;
@@ -134,10 +137,9 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
     if (isAbortError(exc)) {
       return { kind: "aborted", reason: "client" };
     }
-    throw new StreamTransportError(
-      exc instanceof Error ? exc.message : "Network error",
-      { detail: exc },
-    );
+    throw new StreamTransportError(exc instanceof Error ? exc.message : "Network error", {
+      detail: exc,
+    });
   }
 
   if (!response.ok) {
@@ -178,10 +180,9 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
         if (isAbortError(exc)) {
           return { kind: "aborted", reason: "client" };
         }
-        throw new StreamTransportError(
-          exc instanceof Error ? exc.message : "Stream read failed",
-          { detail: exc },
-        );
+        throw new StreamTransportError(exc instanceof Error ? exc.message : "Stream read failed", {
+          detail: exc,
+        });
       }
 
       if (read.done) break;
@@ -240,7 +241,10 @@ export async function consumeStream<TFinal extends StreamEvent = StreamEvent>(
     return { kind: "error", event: errorEvent };
   }
   if (finalEvent !== null) {
-    return { kind: "final", final: finalEvent as Extract<TFinal, { type: "final_state" | "final_payload" }> };
+    return {
+      kind: "final",
+      final: finalEvent as Extract<TFinal, { type: "final_state" | "final_payload" }>,
+    };
   }
   // Backend closed the stream without a final event. Treat as a server-
   // side abort so the caller can show a "stream ended unexpectedly"

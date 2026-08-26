@@ -247,8 +247,7 @@ function attach(state: MetalScrollState): () => void {
     const maxThumbY = clientHeight - thumbH;
     const maxScroll = scrollHeight - clientHeight;
     const clampedThumbY = Math.max(0, Math.min(maxThumbY, targetThumbY));
-    viewport.scrollTop =
-      maxThumbY > 0 ? (clampedThumbY / maxThumbY) * maxScroll : 0;
+    viewport.scrollTop = maxThumbY > 0 ? (clampedThumbY / maxThumbY) * maxScroll : 0;
   };
 
   const onWindowResize = (): void => updateThumb(state);
@@ -266,7 +265,7 @@ function attach(state: MetalScrollState): () => void {
   state.resizeObserver.observe(viewport);
   // Observe children for content size changes that affect scrollHeight.
   for (const child of Array.from(viewport.children)) {
-    state.resizeObserver.observe(child as Element);
+    state.resizeObserver.observe(child);
   }
   state.mutationObserver.observe(viewport, {
     childList: true,

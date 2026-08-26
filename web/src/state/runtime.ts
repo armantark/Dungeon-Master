@@ -1,9 +1,5 @@
 import { ApiError } from "../lib/api";
-import type {
-  LLMPreset,
-  LLMProvider,
-  LLMSettingsResponse,
-} from "../lib/types";
+import type { LLMPreset, LLMProvider, LLMSettingsResponse } from "../lib/types";
 
 export type LlmSettingsStatus = "idle" | "loading" | "ready" | "saving" | "error";
 export type RuntimeBootstrapStatus = "checking" | "needs_key" | "ready" | "error";

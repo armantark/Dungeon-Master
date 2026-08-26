@@ -167,9 +167,7 @@ describe("deriveTranscriptRows", () => {
     // inspector list show two hits ("Yes" plus the prose) for one
     // moment.
     const gs = state({
-      oracle_history: [
-        outcome({ id: "o1", kind: "yes_no", answer: "Yes", summary: "Yes (78%)" }),
-      ],
+      oracle_history: [outcome({ id: "o1", kind: "yes_no", answer: "Yes", summary: "Yes (78%)" })],
       action_log: [
         event({
           id: "ev_oracle",
@@ -215,9 +213,7 @@ describe("deriveTranscriptRows", () => {
         }),
       ],
     });
-    const notes: ClientNote[] = [
-      note("note1", "Slash help: /ask", "2024-01-01T00:00:20Z"),
-    ];
+    const notes: ClientNote[] = [note("note1", "Slash help: /ask", "2024-01-01T00:00:20Z")];
 
     const rows = deriveTranscriptRows(gs, notes);
 
@@ -237,13 +233,15 @@ describe("deriveTranscriptRows", () => {
         }),
       ],
     });
-    const notes: ClientNote[] = [{
-      id: "note_ooc",
-      kind: "explanation",
-      text: "A save rolls d20 at or under the ability.",
-      question: "How do saves work?",
-      created_at: "2024-01-01T00:01:00Z",
-    }];
+    const notes: ClientNote[] = [
+      {
+        id: "note_ooc",
+        kind: "explanation",
+        text: "A save rolls d20 at or under the ability.",
+        question: "How do saves work?",
+        created_at: "2024-01-01T00:01:00Z",
+      },
+    ];
 
     const rows = deriveTranscriptRows(gs, notes);
     const ooc = rows.find((row) => row.id === "note_ooc")!;
@@ -259,9 +257,7 @@ describe("findNarrativeEventForOracle", () => {
   it("returns the narrative event id linked to the outcome", () => {
     const gs = state({
       oracle_history: [outcome({ id: "o1" })],
-      action_log: [
-        event({ id: "n1", event_type: "narrative", oracle_outcome_id: "o1" }),
-      ],
+      action_log: [event({ id: "n1", event_type: "narrative", oracle_outcome_id: "o1" })],
     });
 
     expect(findNarrativeEventForOracle(gs, "o1")).toBe("n1");
@@ -401,9 +397,7 @@ describe("searchTranscript", () => {
         }),
       ],
     });
-    const notes: ClientNote[] = [
-      note("note1", "Slash help: /ask", "2024-01-01T00:00:02Z"),
-    ];
+    const notes: ClientNote[] = [note("note1", "Slash help: /ask", "2024-01-01T00:00:02Z")];
     const rows = deriveTranscriptRows(gs, notes);
 
     expect(searchTranscript(rows, "slash").length).toBe(0);

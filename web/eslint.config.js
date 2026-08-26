@@ -35,5 +35,22 @@ export default ts.config(
       },
     },
   },
+  {
+    ...ts.configs.disableTypeChecked,
+    files: ["*.config.js"],
+    languageOptions: {
+      ...ts.configs.disableTypeChecked.languageOptions,
+      globals: globals.node,
+      parserOptions: {
+        projectService: false,
+      },
+    },
+  },
+  {
+    files: ["src/components/architecture/ArchitectureExplainer.svelte"],
+    rules: {
+      "svelte/no-navigation-without-resolve": "off",
+    },
+  },
   prettier,
 );

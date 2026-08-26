@@ -14,7 +14,7 @@ floating one.
   import StageChecklist from "./StageChecklist.svelte";
   import { game } from "../../lib/store.svelte";
 
-  type Props = {
+  interface Props {
     title: string;
     subtitle?: string;
     cancelLabel?: string | null;
@@ -25,14 +25,8 @@ floating one.
     // pass true so the player sees the model working in real time
     // instead of staring at a static lamp.
     showStream?: boolean;
-  };
-  const {
-    title,
-    subtitle,
-    cancelLabel,
-    onCancel,
-    showStream = false,
-  }: Props = $props();
+  }
+  const { title, subtitle, cancelLabel, onCancel, showStream = false }: Props = $props();
 
   // Truncate the streamed content preview because setup flows produce
   // long structured outputs (a full character sheet's narrative text)
@@ -47,8 +41,9 @@ floating one.
     return `…${c.slice(-PREVIEW_CHARS)}`;
   });
   const hasStreamSignal = $derived(
-    showStream && game.streaming.active
-      && (game.streaming.thinking !== "" || game.streaming.content !== ""),
+    showStream &&
+      game.streaming.active &&
+      (game.streaming.thinking !== "" || game.streaming.content !== ""),
   );
 </script>
 
@@ -84,11 +79,7 @@ floating one.
   {/if}
 
   {#if showStream && game.streaming.active}
-    <CollapsedThinking
-      text={game.streaming.thinking}
-      streaming={true}
-      hideWhenEmpty={false}
-    />
+    <CollapsedThinking text={game.streaming.thinking} streaming={true} hideWhenEmpty={false} />
   {/if}
 
   {#if hasStreamSignal && preview !== ""}
@@ -136,10 +127,15 @@ floating one.
     animation: caret-blink 0.95s steps(2, jump-none) infinite;
   }
   @keyframes caret-blink {
-    50% { opacity: 0.15; }
+    50% {
+      opacity: 0.15;
+    }
   }
   @media (prefers-reduced-motion: reduce) {
-    .caret { animation: none; opacity: 0.6; }
+    .caret {
+      animation: none;
+      opacity: 0.6;
+    }
   }
   .text strong {
     font-family: var(--font-display);

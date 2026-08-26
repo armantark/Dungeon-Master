@@ -21,7 +21,6 @@ its own modal:
     drawn would silently desync the canon.
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
   import { game } from "../../lib/store.svelte";
   import {
     ADVANTAGE_PAYOFF_LABEL,
@@ -50,10 +49,10 @@ its own modal:
     CampaignToneGrimNoble,
   } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     seed: CampaignSeed;
     locked: boolean;
-  };
+  }
   const { seed, locked }: Props = $props();
 
   // Local draft so the player can scrub the sliders without each tick
@@ -67,20 +66,10 @@ its own modal:
   // proxies and throws `DataCloneError`, which kills the editor (and
   // therefore the whole CharacterSetup screen, since this component
   // mounts above it). `$state.snapshot` deep-copies a proxy into a
-  // plain JS value safely. The initial read is wrapped in `untrack`
-  // so the runes initializer doesn't double up on the $effect's
-  // canonical sync subscription below.
-  let draft: CampaignSeed = $state(untrack(() => $state.snapshot(seed)));
+  // plain JS value safely. A writable derived value follows canonical
+  // prop updates until the player edits the local draft.
+  let draft: CampaignSeed = $derived($state.snapshot(seed));
   let expanded: boolean = $state(false);
-
-  $effect(() => {
-    // Re-sync whenever the canonical seed changes. Avoid clobbering
-    // the player's in-progress edits if the only diff is something
-    // they already typed — but since we apply on explicit commit,
-    // the canonical seed only changes after we POST, so a hard
-    // overwrite is the right call.
-    draft = $state.snapshot(seed);
-  });
 
   const dirty = $derived(!seedsEqual(draft, seed));
   const isSaving = $derived(game.isLoading);
@@ -98,12 +87,8 @@ its own modal:
     DANGER_PROFILE_LABEL,
   ) as CampaignDangerProfile[];
   const GENRE_KEYS: CampaignGenre[] = Object.keys(GENRE_LABEL) as CampaignGenre[];
-  const MAGIC_KEYS: CampaignMagicLevel[] = Object.keys(
-    MAGIC_LEVEL_LABEL,
-  ) as CampaignMagicLevel[];
-  const TECH_KEYS: CampaignTechLevel[] = Object.keys(
-    TECH_LEVEL_LABEL,
-  ) as CampaignTechLevel[];
+  const MAGIC_KEYS: CampaignMagicLevel[] = Object.keys(MAGIC_LEVEL_LABEL) as CampaignMagicLevel[];
+  const TECH_KEYS: CampaignTechLevel[] = Object.keys(TECH_LEVEL_LABEL) as CampaignTechLevel[];
   const STAKES_KEYS: CampaignStakesScale[] = Object.keys(
     STAKES_SCALE_LABEL,
   ) as CampaignStakesScale[];
@@ -249,8 +234,7 @@ its own modal:
             onchange={(e) =>
               (draft = {
                 ...draft,
-                time_period: (e.currentTarget as HTMLSelectElement)
-                  .value as CampaignTimePeriod,
+                time_period: e.currentTarget.value as CampaignTimePeriod,
               })}
             disabled={isSaving}
           >
@@ -307,18 +291,14 @@ its own modal:
             {#each GENRE_KEYS as key (key)}
               {@const selected = draft.genres.includes(key)}
               {@const disabled =
-                isSaving
-                || (!selected && draft.genres.length >= GENRE_CAP)
-                || (selected && draft.genres.length === 1)}
-              <label
-                class="chip"
-                class:chip--active={selected}
-                class:chip--disabled={disabled}
-              >
+                isSaving ||
+                (!selected && draft.genres.length >= GENRE_CAP) ||
+                (selected && draft.genres.length === 1)}
+              <label class="chip" class:chip--active={selected} class:chip--disabled={disabled}>
                 <input
                   type="checkbox"
                   checked={selected}
-                  disabled={disabled}
+                  {disabled}
                   onchange={() => toggleGenre(key)}
                 />
                 <span>{GENRE_LABEL[key]}</span>
@@ -334,8 +314,7 @@ its own modal:
             onchange={(e) =>
               (draft = {
                 ...draft,
-                magic_level: (e.currentTarget as HTMLSelectElement)
-                  .value as CampaignMagicLevel,
+                magic_level: e.currentTarget.value as CampaignMagicLevel,
               })}
             disabled={isSaving}
           >
@@ -352,8 +331,7 @@ its own modal:
             onchange={(e) =>
               (draft = {
                 ...draft,
-                tech_level: (e.currentTarget as HTMLSelectElement)
-                  .value as CampaignTechLevel,
+                tech_level: e.currentTarget.value as CampaignTechLevel,
               })}
             disabled={isSaving}
           >
@@ -370,8 +348,7 @@ its own modal:
             onchange={(e) =>
               (draft = {
                 ...draft,
-                stakes_scale: (e.currentTarget as HTMLSelectElement)
-                  .value as CampaignStakesScale,
+                stakes_scale: e.currentTarget.value as CampaignStakesScale,
               })}
             disabled={isSaving}
           >
@@ -386,7 +363,7 @@ its own modal:
           <input
             type="text"
             value={draft.preset}
-            oninput={(e) => renamePreset((e.currentTarget as HTMLInputElement).value)}
+            oninput={(e) => renamePreset(e.currentTarget.value)}
             disabled={isSaving}
             placeholder="Free-text label for the save library"
           />
@@ -400,15 +377,13 @@ its own modal:
             oninput={(e) =>
               (draft = {
                 ...draft,
-                inspirations: (e.currentTarget as HTMLTextAreaElement).value,
+                inspirations: e.currentTarget.value,
               })}
             disabled={isSaving}
-            placeholder="e.g. Berserk + Dark Souls + Fear & Hunger"
-          ></textarea>
+            placeholder="e.g. Berserk + Dark Souls + Fear & Hunger"></textarea>
           <p class="hint muted small">
-            The model uses these as flavor cues only. Named characters,
-            locations, factions, and lore from inspirations are never
-            copied verbatim.
+            The model uses these as flavor cues only. Named characters, locations, factions, and
+            lore from inspirations are never copied verbatim.
           </p>
         </fieldset>
 
@@ -420,18 +395,19 @@ its own modal:
             oninput={(e) =>
               (draft = {
                 ...draft,
-                restrictions: (e.currentTarget as HTMLTextAreaElement).value,
+                restrictions: e.currentTarget.value,
               })}
             disabled={isSaving}
-            placeholder="e.g. No modern slang. No grimdark cliché names."
-          ></textarea>
+            placeholder="e.g. No modern slang. No grimdark cliché names."></textarea>
         </fieldset>
       </div>
 
       <footer class="actions">
         <p class="muted small">
           {#if dirty}
-            Draft: <strong>{draftPresetLabel}</strong> · {DANGER_PROFILE_LABEL[draft.danger_profile]}
+            Draft: <strong>{draftPresetLabel}</strong> · {DANGER_PROFILE_LABEL[
+              draft.danger_profile
+            ]}
           {:else}
             Settings match the saved seed.
           {/if}
@@ -461,15 +437,16 @@ its own modal:
   <details class="advantage-legend">
     <summary class="kicker">Combat: fictional advantages</summary>
     <p class="muted small">
-      Setup actions (blinding, hamstringing, exposing a weakness, etc.)
-      are resolved by Cairn 2e mechanics rather than freeform damage.
-      Each setup commits to one of these payoffs when consumed by the
-      next attack:
+      Setup actions (blinding, hamstringing, exposing a weakness, etc.) are resolved by Cairn 2e
+      mechanics rather than freeform damage. Each setup commits to one of these payoffs when
+      consumed by the next attack:
     </p>
     <ul class="payoff-list">
       {#each Object.keys(ADVANTAGE_PAYOFF_LABEL) as key (key)}
         <li>
-          <span class="pixel">{ADVANTAGE_PAYOFF_LABEL[key as keyof typeof ADVANTAGE_PAYOFF_LABEL]}</span>
+          <span class="pixel"
+            >{ADVANTAGE_PAYOFF_LABEL[key as keyof typeof ADVANTAGE_PAYOFF_LABEL]}</span
+          >
         </li>
       {/each}
     </ul>

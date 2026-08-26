@@ -37,9 +37,7 @@
     ARCHITECTURE_PATHS.find((path) => path.id === activePathId) ?? defaultPath,
   );
   const selectedNode = $derived(nodeById(selectedNodeId) ?? defaultNode);
-  const stepIndex = $derived(
-    new Map(activePath.steps.map((step, index) => [step.node, index])),
-  );
+  const stepIndex = $derived(new Map(activePath.steps.map((step, index) => [step.node, index])));
   const selectedStepIndex = $derived(stepIndex.get(selectedNodeId) ?? -1);
   const selectedStep = $derived(
     selectedStepIndex >= 0 ? activePath.steps[selectedStepIndex] : undefined,
@@ -175,7 +173,9 @@
         {activePath}
         {selectedNodeId}
         {traceIndex}
-        onSelect={(id) => (selectedNodeId = id)}
+        onSelect={(id: string) => {
+          selectedNodeId = id;
+        }}
       />
 
       {#if traceIndex >= 1 && currentStep}
@@ -243,7 +243,10 @@
   h1 {
     margin: 0;
     color: var(--atlas-ink);
-    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 12px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.13em;
     text-transform: uppercase;
   }
@@ -265,14 +268,22 @@
   }
   .telemetry__figures dt {
     color: var(--atlas-ink-soft);
-    font: 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      10.5px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.09em;
     text-transform: uppercase;
   }
   .telemetry__figures dd {
     margin: 0;
     color: var(--atlas-ink);
-    font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      600 12px/1.4 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
   }
 
   .telemetry__paths {
@@ -324,7 +335,10 @@
   .trace__where {
     margin: 0 0 0.35rem;
     color: var(--atlas-ink);
-    font: 600 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 10.5px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -349,7 +363,10 @@
     padding: 0 0.55rem 0.2rem;
     border-bottom: 1px solid var(--atlas-rule);
     color: var(--atlas-ink);
-    font: 600 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 10.5px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.09em;
     text-transform: uppercase;
   }
@@ -384,7 +401,10 @@
     border-radius: 0;
     box-shadow: none;
     text-shadow: none;
-    font: 12.5px/1.4 ui-sans-serif, system-ui, sans-serif;
+    font:
+      12.5px/1.4 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0;
     text-align: left;
     text-transform: none;
@@ -404,7 +424,12 @@
     min-width: 1.55rem;
     padding: 0 0.2rem;
     border: 1px solid var(--atlas-rule);
-    font: 600 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      600 10.5px/1.5 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
     letter-spacing: 0.05em;
     text-align: center;
   }
@@ -419,7 +444,12 @@
     flex: 0 0 auto;
     min-width: 1.1rem;
     color: var(--atlas-ink-soft);
-    font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      600 10px/1.5 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
     text-align: right;
   }
   .row.active {
@@ -455,13 +485,21 @@
     background: var(--atlas-panel);
     border-top: 1px solid var(--atlas-rule);
     color: var(--atlas-ink);
-    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 12px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
   }
   .hop code {
     min-width: 0;
     padding: 0 0.2rem;
     background: var(--atlas-highlight);
-    font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      11.5px/1.5 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -470,7 +508,12 @@
     padding: 0 0.22rem;
     color: var(--atlas-panel);
     background: var(--atlas-ink);
-    font: 600 10.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      600 10.5px/1.6 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
   }
   .hop__summary {
     color: var(--atlas-ink-body);
@@ -483,7 +526,10 @@
     background: var(--atlas-panel);
     border-top: 1px solid var(--atlas-rule);
     color: var(--atlas-ink-soft);
-    font: 10.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      10.5px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.05em;
   }
 
@@ -507,7 +553,10 @@
     border-radius: 0;
     box-shadow: none;
     text-shadow: none;
-    font: 600 11.5px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 11.5px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.07em;
     text-transform: uppercase;
     cursor: pointer;
@@ -601,7 +650,10 @@
       background: var(--atlas-panel);
       border-top: 1px solid var(--atlas-rule);
       color: var(--atlas-ink);
-      font: 600 11px/1.5 ui-sans-serif, system-ui, sans-serif;
+      font:
+        600 11px/1.5 ui-sans-serif,
+        system-ui,
+        sans-serif;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       cursor: pointer;

@@ -24,10 +24,7 @@ export function createExplanationNote(question: string, answer: string): ClientN
   };
 }
 
-export function createOraclePreviewNote(
-  question: string,
-  outcome: OracleOutcome,
-): ClientNote {
+export function createOraclePreviewNote(question: string, outcome: OracleOutcome): ClientNote {
   const answer = outcome.answer ?? outcome.summary;
   const roll = outcome.rolls[0];
   const lines = [

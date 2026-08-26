@@ -7,12 +7,7 @@ import {
   sortThreadsForDisplay,
 } from "./threads";
 import { defaultCampaignSeed } from "./campaign-seed";
-import type {
-  GameState,
-  GameThread,
-  OracleOutcome,
-  OracleTables,
-} from "./types";
+import type { GameState, GameThread, OracleOutcome, OracleTables } from "./types";
 
 function emptyOracleTables(): OracleTables {
   return {
@@ -176,11 +171,7 @@ describe("referencedThreadsForOutcome", () => {
 
 describe("sortThreadsForDisplay", () => {
   it("floats active recently-touched threads to the top", () => {
-    const threads = [
-      thread("a"),
-      thread("b"),
-      thread("c"),
-    ];
+    const threads = [thread("a"), thread("b"), thread("c")];
 
     const sorted = sortThreadsForDisplay(threads, new Set(["c"]));
 
@@ -192,11 +183,7 @@ describe("sortThreadsForDisplay", () => {
     // resolution itself) still sinks below active threads. The pulse
     // animation handles the recency cue; layout-wise, active threads
     // own the top of the panel because they still drive play.
-    const threads = [
-      thread("a", "active"),
-      thread("b", "resolved"),
-      thread("c", "active"),
-    ];
+    const threads = [thread("a", "active"), thread("b", "resolved"), thread("c", "active")];
 
     const sorted = sortThreadsForDisplay(threads, new Set(["b"]));
 

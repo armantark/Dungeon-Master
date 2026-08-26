@@ -1,10 +1,10 @@
 <script lang="ts">
   import { game } from "../../lib/store.svelte";
 
-  type Props = {
+  interface Props {
     value: number;
     archived: boolean;
-  };
+  }
 
   const { value, archived }: Props = $props();
   let pending: number | null = $state(null);
@@ -28,10 +28,17 @@
 <div class="chaos-control">
   <span class="kicker">Chaos Factor</span>
   <div class="chaos-row">
-    <button class="ghost" onclick={() => adjust(-1)} aria-label="Decrease chaos" disabled={archived}>−</button>
+    <button class="ghost" onclick={() => adjust(-1)} aria-label="Decrease chaos" disabled={archived}
+      >−</button
+    >
     <span class="pixel chaos-value">{displayValue}</span>
-    <button class="ghost" onclick={() => adjust(1)} aria-label="Increase chaos" disabled={archived}>+</button>
-    <button onclick={commit} disabled={archived || pending === null || pending === value || game.isLoading}>Commit</button>
+    <button class="ghost" onclick={() => adjust(1)} aria-label="Increase chaos" disabled={archived}
+      >+</button
+    >
+    <button
+      onclick={commit}
+      disabled={archived || pending === null || pending === value || game.isLoading}>Commit</button
+    >
   </div>
   {#if archived}
     <p class="archived-hint muted">Archived — chaos is preserved as canon.</p>

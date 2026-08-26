@@ -9,11 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  formatRoundtripMs,
-  stageTimingsToProgress,
-  totalRoundtripMs,
-} from "./stage-timings";
+import { formatRoundtripMs, stageTimingsToProgress, totalRoundtripMs } from "./stage-timings";
 import type { StageTiming } from "./types";
 
 const ISO_T0 = "2026-05-08T03:00:00.000Z";

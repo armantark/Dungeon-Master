@@ -31,13 +31,7 @@
 // from the inspector can target it via the same DOM anchor.
 
 import type { ClientNote } from "./store.svelte";
-import type {
-  GameEvent,
-  GameState,
-  OracleKind,
-  OracleOutcome,
-  StageTiming,
-} from "./types";
+import type { GameEvent, GameState, OracleKind, OracleOutcome, StageTiming } from "./types";
 
 export type TranscriptRowKind = "dm" | "player" | "system";
 export type TranscriptSpeaker = TranscriptRowKind | "ooc";
@@ -135,7 +129,7 @@ function fromEvent(
     case "narrative": {
       const outcome =
         event.oracle_outcome_id !== null
-          ? outcomesById.get(event.oracle_outcome_id) ?? null
+          ? (outcomesById.get(event.oracle_outcome_id) ?? null)
           : null;
       return {
         id: event.id,
@@ -239,9 +233,7 @@ function fromNote(note: ClientNote): TranscriptRow {
 }
 
 function openingRow(state: GameState): TranscriptRow | null {
-  const hasNarrative = state.action_log.some(
-    (event) => event.event_type === "narrative",
-  );
+  const hasNarrative = state.action_log.some((event) => event.event_type === "narrative");
   if (hasNarrative) return null;
   // We render the same `current_scene + "\n\n" + setting_notes`
   // composite ChatFeed uses so search hits in the opening beat
@@ -317,10 +309,7 @@ export function findNarrativeEventForOracle(
 ): string | null {
   let latest: string | null = null;
   for (const event of state.action_log) {
-    if (
-      event.event_type === "narrative"
-      && event.oracle_outcome_id === oracleOutcomeId
-    ) {
+    if (event.event_type === "narrative" && event.oracle_outcome_id === oracleOutcomeId) {
       latest = event.id;
     }
   }
@@ -381,7 +370,7 @@ function buildMatch(
   const suffix = end < haystack.length ? "…" : "";
   const slice = haystack.slice(start, end);
   const snippet = `${prefix}${slice}${suffix}`;
-  const highlightStart = (position - start) + prefix.length;
+  const highlightStart = position - start + prefix.length;
   const highlightEnd = highlightStart + tokenLength;
   return {
     rowId: row.id,
@@ -428,9 +417,7 @@ export function searchTranscript(
     if (row.outcomeSummary !== null) {
       const outcomePos = matchPosition(row.outcomeSummary, tokens);
       if (outcomePos !== -1) {
-        matches.push(
-          buildMatch(row, "outcome", row.outcomeSummary, tokens, outcomePos),
-        );
+        matches.push(buildMatch(row, "outcome", row.outcomeSummary, tokens, outcomePos));
         if (matches.length >= limit) break;
       }
     }

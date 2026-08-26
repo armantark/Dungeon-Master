@@ -1,34 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  applyStageEvent,
-  applyStateTerminal,
-  stateTerminal,
-} from "./stream-runner";
+import { applyStageEvent, applyStateTerminal, stateTerminal } from "./stream-runner";
 
 describe("stream runner", () => {
   it("keeps stage order while reducing status updates", () => {
-    const pending = applyStageEvent([], {
-      type: "stage",
-      stage_id: "planning",
-      label: "Planning",
-      status: "pending",
-    }, 10);
-    const done = applyStageEvent(pending, {
-      type: "stage",
-      stage_id: "planning",
-      label: "Planning",
-      status: "done",
-    }, 20);
+    const pending = applyStageEvent(
+      [],
+      {
+        type: "stage",
+        stage_id: "planning",
+        label: "Planning",
+        status: "pending",
+      },
+      10,
+    );
+    const done = applyStageEvent(
+      pending,
+      {
+        type: "stage",
+        stage_id: "planning",
+        label: "Planning",
+        status: "done",
+      },
+      20,
+    );
 
-    expect(done).toEqual([{
-      stageId: "planning",
-      label: "Planning",
-      status: "done",
-      order: 0,
-      startedAt: null,
-      completedAt: 20,
-    }]);
+    expect(done).toEqual([
+      {
+        stageId: "planning",
+        label: "Planning",
+        status: "done",
+        order: 0,
+        startedAt: null,
+        completedAt: 20,
+      },
+    ]);
   });
 
   it("applies one returned final state exactly once", () => {

@@ -47,16 +47,16 @@ export type ParsedTurn =
 const LIKELIHOOD_HINTS: Record<string, Likelihood> = {
   impossible: "Impossible",
   "very-unlikely": "Very unlikely",
-  "very_unlikely": "Very unlikely",
+  very_unlikely: "Very unlikely",
   unlikely: "Unlikely",
   even: "Even odds",
   "even-odds": "Even odds",
   likely: "Likely",
   "very-likely": "Very likely",
-  "very_likely": "Very likely",
+  very_likely: "Very likely",
   certain: "Nearly certain",
   "nearly-certain": "Nearly certain",
-  "nearly_certain": "Nearly certain",
+  nearly_certain: "Nearly certain",
 };
 
 /**
@@ -185,10 +185,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDescriptor[] = [
 ];
 
 const HELP_TEXT = (() => {
-  const widest = SLASH_COMMANDS.reduce(
-    (acc, cmd) => Math.max(acc, cmd.usage.length),
-    0,
-  );
+  const widest = SLASH_COMMANDS.reduce((acc, cmd) => Math.max(acc, cmd.usage.length), 0);
   const lines = SLASH_COMMANDS.map((cmd) => {
     const padded = cmd.usage.padEnd(widest, " ");
     return `  ${padded}   ${cmd.summary}`;
@@ -365,7 +362,7 @@ export function suggestSlashCommands(input: string): readonly SlashCommandDescri
 function parseAsk(rest: string): ParsedTurn {
   // Look for an optional [likelihood] hint anywhere; we strip it before
   // sending the question so the oracle / DM doesn't see the bracket.
-  const hintMatch = rest.match(/\[([^\]]+)\]\s*$/);
+  const hintMatch = /\[([^\]]+)\]\s*$/.exec(rest);
   let likelihood: Likelihood = "Even odds";
   let question = rest;
 

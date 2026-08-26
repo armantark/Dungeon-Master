@@ -205,11 +205,7 @@ describe("stream resume across reloads", () => {
     // enough to let the `void this.#tryResumeStream()` chain settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(reattachSpy).toHaveBeenCalledWith(
-      "req_resume",
-      expect.any(Object),
-      expect.any(Object),
-    );
+    expect(reattachSpy).toHaveBeenCalledWith("req_resume", expect.any(Object), expect.any(Object));
     expect(resumingDuringMeta).toBe(true);
     // After completion the streaming buffer collapses and the
     // descriptor is cleared so the next bootstrap doesn't try

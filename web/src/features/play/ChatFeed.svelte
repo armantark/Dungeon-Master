@@ -43,13 +43,15 @@ F-09 browsing behavior:
   import { metalScroll } from "../../lib/metalScroll";
   import type { GameState, OracleOutcome, StageTiming } from "../../lib/types";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   // Renamed to `gs` because Svelte's compiler treats a local identifier
   // `state` as a store-subscription target whenever the `$state` rune
   // also appears in the file - see store_rune_conflict.
   const { state: gs }: Props = $props();
 
-  type Msg = {
+  interface Msg {
     // F-10 added the `ooc` speaker for OOC explainer answers. See
     // ChatMessage.svelte for the visual treatment; the union here
     // mirrors the speaker prop accepted by that component.
@@ -73,7 +75,7 @@ F-09 browsing behavior:
     // OOC-only: the player's question, rendered as a `Q:` row
     // above the answer body.
     question?: string | null;
-  };
+  }
 
   const messages: readonly Msg[] = $derived(
     deriveTranscriptRows(gs, game.notes).map((row) => ({
@@ -160,9 +162,7 @@ F-09 browsing behavior:
   });
 
   const latestNarrativeId = $derived.by(() => {
-    const latest = [...gs.action_log]
-      .reverse()
-      .find((event) => event.event_type === "narrative");
+    const latest = [...gs.action_log].reverse().find((event) => event.event_type === "narrative");
     return latest?.id ?? null;
   });
 
@@ -175,8 +175,7 @@ F-09 browsing behavior:
   // decisions inside the chat feed where neighboring messages live.
   const combatEncounter = $derived(combatFromState(gs));
   const showCombatStrip = $derived(
-    combatEncounter !== null
-      && (combatEncounter.active || combatEncounter.summary !== null),
+    combatEncounter !== null && (combatEncounter.active || combatEncounter.summary !== null),
   );
 
   let scroller: HTMLElement | undefined;
@@ -253,9 +252,7 @@ F-09 browsing behavior:
     // HTMLElement> because the {#each} block destroys/creates nodes
     // on streaming churn; rebuilding the map after every render
     // would just re-do this lookup work eagerly.
-    const target = scroller.querySelector<HTMLElement>(
-      `[data-event-id="${CSS.escape(eventId)}"]`,
-    );
+    const target = scroller.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(eventId)}"]`);
     if (target === null) return;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     flashRow(eventId);
@@ -269,9 +266,9 @@ F-09 browsing behavior:
   // a player who scrolled up to read backstory won't get yanked
   // because we gate the scroll on `pinnedToBottom`.
   const totalCount = $derived(
-    messages.length
-      + (provisional !== null ? 1 : 0)
-      + (provisional !== null ? Math.floor(provisional.text.length / 80) : 0),
+    messages.length +
+      (provisional !== null ? 1 : 0) +
+      (provisional !== null ? Math.floor(provisional.text.length / 80) : 0),
   );
 
   $effect(() => {
@@ -319,10 +316,7 @@ F-09 browsing behavior:
   });
 
   onMount(() => {
-    lastPlayerCount = messages.reduce(
-      (count, m) => (m.kind === "player" ? count + 1 : count),
-      0,
-    );
+    lastPlayerCount = messages.reduce((count, m) => (m.kind === "player" ? count + 1 : count), 0);
     if (scroller) {
       resizeObserver = new ResizeObserver(() => {
         if (pinnedToBottom) void settleToBottom();
@@ -339,33 +333,29 @@ F-09 browsing behavior:
 </script>
 
 <div class="feed-shell">
-<section class="feed" bind:this={scroller} onscroll={handleScroll} use:metalScroll>
-  {#if messages.length === 0 && provisional === null}
-    <div class="empty muted">The DM is preparing the opening scene…</div>
-  {:else}
-    {#each messages as message (message.id)}
-      <div
-        class="anchor"
-        class:flash={flashEventId === message.id}
-        data-event-id={message.id}
-      >
-        <ChatMessage
-          eventId={message.id}
-          speaker={message.kind}
-          text={message.text}
-          timestamp={message.timestamp}
-          outcome={message.outcome ?? null}
-          thinking={message.thinking ?? null}
-          stageTimings={message.stageTimings ?? []}
-          question={message.question ?? null}
-          threads={gs.threads}
-          npcs={gs.npcs}
-          canRegenerate={canRegenerateMessage(message.kind, message.id, latestNarrativeId)}
-        />
-      </div>
-    {/each}
-    {#if showCombatStrip}
-      <!--
+  <section class="feed" bind:this={scroller} onscroll={handleScroll} use:metalScroll>
+    {#if messages.length === 0 && provisional === null}
+      <div class="empty muted">The DM is preparing the opening scene…</div>
+    {:else}
+      {#each messages as message (message.id)}
+        <div class="anchor" class:flash={flashEventId === message.id} data-event-id={message.id}>
+          <ChatMessage
+            eventId={message.id}
+            speaker={message.kind}
+            text={message.text}
+            timestamp={message.timestamp}
+            outcome={message.outcome ?? null}
+            thinking={message.thinking ?? null}
+            stageTimings={message.stageTimings ?? []}
+            question={message.question ?? null}
+            threads={gs.threads}
+            npcs={gs.npcs}
+            canRegenerate={canRegenerateMessage(message.kind, message.id, latestNarrativeId)}
+          />
+        </div>
+      {/each}
+      {#if showCombatStrip}
+        <!--
         The inline combat strip rides between the last persisted DM
         message and the provisional bubble (if any). We render it
         here, not inside the per-message loop, because it's a single
@@ -376,12 +366,12 @@ F-09 browsing behavior:
         narrative and means the Inspector no longer has to be open
         to read the fight.
       -->
-      <InlineCombatStrip state={gs} />
-    {/if}
-    {#if provisional}
-      <div class="anchor" data-event-id={provisional.id}>
-        {#if game.streaming.stages.length > 0}
-          <!--
+        <InlineCombatStrip state={gs} />
+      {/if}
+      {#if provisional}
+        <div class="anchor" data-event-id={provisional.id}>
+          {#if game.streaming.stages.length > 0}
+            <!--
             Stage checklist sits *above* the provisional bubble so the
             player has something to read while the backend is still in
             its turn pipeline (planner → mechanics → continuity →
@@ -391,41 +381,41 @@ F-09 browsing behavior:
             the checklist remains visible but the focus naturally moves
             to the prose tokens accumulating below.
           -->
-          <StageChecklist stages={game.streaming.stages} />
-        {/if}
-        <ChatMessage
-          eventId={provisional.id}
-          speaker={provisional.kind}
-          text={provisional.text}
-          timestamp={provisional.timestamp}
-          outcome={provisional.outcome ?? null}
-          thinking={provisional.thinking ?? null}
-          question={provisional.question ?? null}
-          threads={gs.threads}
-          npcs={gs.npcs}
-          streaming={true}
-          resuming={provisional.resuming ?? false}
-          canRegenerate={false}
-        />
-      </div>
+            <StageChecklist stages={game.streaming.stages} />
+          {/if}
+          <ChatMessage
+            eventId={provisional.id}
+            speaker={provisional.kind}
+            text={provisional.text}
+            timestamp={provisional.timestamp}
+            outcome={provisional.outcome ?? null}
+            thinking={provisional.thinking ?? null}
+            question={provisional.question ?? null}
+            threads={gs.threads}
+            npcs={gs.npcs}
+            streaming={true}
+            resuming={provisional.resuming ?? false}
+            canRegenerate={false}
+          />
+        </div>
+      {/if}
     {/if}
-  {/if}
 
-  {#if game.isLoading && game.rollPhase === "idle" && provisional === null}
-    {#if game.streaming.stages.length > 0}
-      <!--
+    {#if game.isLoading && game.rollPhase === "idle" && provisional === null}
+      {#if game.streaming.stages.length > 0}
+        <!--
         Edge case: the stream opened (we received stage frames) but the
         provisional bubble hasn't materialized yet — typically because
         meta hasn't arrived or the route is one we don't render a
         provisional bubble for. Keep the checklist visible so the
         player still gets progress feedback during the wait.
       -->
-      <div class="composing-stages"><StageChecklist stages={game.streaming.stages} /></div>
-    {:else}
-      <div class="composing"><span class="spinner-row">DM is composing</span></div>
+        <div class="composing-stages"><StageChecklist stages={game.streaming.stages} /></div>
+      {:else}
+        <div class="composing"><span class="spinner-row">DM is composing</span></div>
+      {/if}
     {/if}
-  {/if}
-</section>
+  </section>
 
   {#if !pinnedToBottom}
     <button

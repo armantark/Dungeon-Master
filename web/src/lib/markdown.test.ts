@@ -25,7 +25,7 @@ describe("renderMarkdown", () => {
   });
 
   it("renders inline code with backticks", () => {
-    const html = renderMarkdown("Use `\"active\": false` to disable.");
+    const html = renderMarkdown('Use `"active": false` to disable.');
     expect(html).toContain('<code>"active": false</code>');
   });
 

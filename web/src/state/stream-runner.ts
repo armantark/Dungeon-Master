@@ -33,8 +33,7 @@ export function applyStageEvent(
         status: stage.status,
         order: stages.length,
         startedAt: stage.status === "active" ? now : null,
-        completedAt:
-          stage.status === "done" || stage.status === "skipped" ? now : null,
+        completedAt: stage.status === "done" || stage.status === "skipped" ? now : null,
       },
     ];
   }
@@ -46,14 +45,8 @@ export function applyStageEvent(
     label: stage.label,
     status: stage.status,
     order: existing.order,
-    startedAt:
-      stage.status === "active" && existing.startedAt === null
-        ? now
-        : existing.startedAt,
-    completedAt:
-      stage.status === "done" || stage.status === "skipped"
-        ? now
-        : existing.completedAt,
+    startedAt: stage.status === "active" && existing.startedAt === null ? now : existing.startedAt,
+    completedAt: stage.status === "done" || stage.status === "skipped" ? now : existing.completedAt,
   };
   return next;
 }
@@ -87,10 +80,7 @@ export interface StateTerminalTarget {
 }
 
 /** Apply one returned state-stream terminal exactly once. */
-export function applyStateTerminal(
-  terminal: StateTerminal,
-  target: StateTerminalTarget,
-): boolean {
+export function applyStateTerminal(terminal: StateTerminal, target: StateTerminalTarget): boolean {
   if (terminal.kind === "aborted") return false;
   if (terminal.kind === "state") {
     target.replaceState(terminal.event.state);

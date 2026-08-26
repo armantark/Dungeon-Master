@@ -75,7 +75,11 @@ describe("OOC explainer persistence across reloads", () => {
 
     const persisted = window.localStorage.getItem(`dm.ooc.${SAVE_ID}`);
     expect(persisted).not.toBeNull();
-    const parsed = JSON.parse(persisted!) as Array<{ kind: string; question: string; text: string }>;
+    const parsed = JSON.parse(persisted!) as {
+      kind: string;
+      question: string;
+      text: string;
+    }[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.kind).toBe("explanation");
     expect(parsed[0]?.question).toBe("how do saves work?");
@@ -208,9 +212,9 @@ describe("OOC explainer persistence across reloads", () => {
     game.dismissNote("note_alpha");
 
     expect(game.notes.map((n) => n.id)).toEqual(["note_beta"]);
-    const persisted = JSON.parse(
-      window.localStorage.getItem(`dm.ooc.${SAVE_ID}`) ?? "[]",
-    ) as Array<{ id: string }>;
+    const persisted = JSON.parse(window.localStorage.getItem(`dm.ooc.${SAVE_ID}`) ?? "[]") as {
+      id: string;
+    }[];
     expect(persisted.map((n) => n.id)).toEqual(["note_beta"]);
   });
 });

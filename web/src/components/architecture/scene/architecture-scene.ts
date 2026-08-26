@@ -210,10 +210,9 @@ export function createArchitectureScene(options: SceneOptions): ArchitectureScen
     }
 
     const reframe =
-      !previous ||
-      previous.path.id !== next.path.id ||
-      previous.compact !== next.compact ||
-      (next.compact && previous.traceIndex !== next.traceIndex);
+      previous?.path.id !== next.path.id ||
+      previous?.compact !== next.compact ||
+      (next.compact && previous?.traceIndex !== next.traceIndex);
     if (reframe) iso.frame(focusPoints(), margin(), options.reducedMotion || !previous);
     requestFrame();
   }

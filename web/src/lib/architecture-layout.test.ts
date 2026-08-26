@@ -20,10 +20,7 @@ function distanceToRun(point: RoutePoint, from: RoutePoint, to: RoutePoint): num
   const travel =
     length === 0
       ? 0
-      : Math.max(
-          0,
-          Math.min(1, ((point.x - from.x) * runX + (point.z - from.z) * runZ) / length),
-        );
+      : Math.max(0, Math.min(1, ((point.x - from.x) * runX + (point.z - from.z) * runZ) / length));
   return Math.hypot(point.x - (from.x + runX * travel), point.z - (from.z + runZ * travel));
 }
 
@@ -77,10 +74,9 @@ describe("architecture plan layout", () => {
       const zone = ZONES[index]!;
       expect(zone.index).toBe(previous.index + 1);
       expect(zone.bounds[2], zone.id).toBeGreaterThan(previous.bounds[3]);
-      expect(
-        screenDepth(zone.bounds[2], zone.elevation),
-        zone.id,
-      ).toBeGreaterThan(screenDepth(previous.bounds[3], previous.elevation));
+      expect(screenDepth(zone.bounds[2], zone.elevation), zone.id).toBeGreaterThan(
+        screenDepth(previous.bounds[3], previous.elevation),
+      );
     }
   });
 

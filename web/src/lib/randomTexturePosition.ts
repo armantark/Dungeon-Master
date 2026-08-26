@@ -1,8 +1,8 @@
 /*
  * Global texture position randomizer.
- * 
+ *
  * Automatically assigns `--btn-tex-x` and `--btn-tex-y` custom properties
- * to all cast-iron textured UI elements (`button`, `.btn`, `.scene`) 
+ * to all cast-iron textured UI elements (`button`, `.btn`, `.scene`)
  * as they enter the DOM.
  *
  * This ensures that stacks of sibling buttons with identical dimensions
@@ -31,14 +31,12 @@ export function initGlobalTextureRandomization() {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
           const el = node as HTMLElement;
-          if (el.matches && el.matches("button, .btn, .scene")) {
+          if (el.matches("button, .btn, .scene")) {
             assignRandomPosition(el);
           }
-          if (el.querySelectorAll) {
-            el.querySelectorAll("button, .btn, .scene").forEach((child) => {
-              assignRandomPosition(child as HTMLElement);
-            });
-          }
+          el.querySelectorAll("button, .btn, .scene").forEach((child) => {
+            assignRandomPosition(child as HTMLElement);
+          });
         }
       }
     }

@@ -32,7 +32,9 @@ it into a drawer keeps that ceremony.
   import Drawer from "./Drawer.svelte";
   import { metalScroll } from "../../lib/metalScroll";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   // Renamed to `gs` to avoid the Svelte 5 `$state` rune / `state`
   // identifier collision (see store_rune_conflict).
   const { state: gs }: Props = $props();
@@ -98,9 +100,7 @@ it into a drawer keeps that ceremony.
   // to avoid an empty collapsed flap pretending to hold information.
   const cairnNotes = $derived(gs.character?.cairn.notes ?? "");
   const cairnSource = $derived(gs.character?.cairn.source ?? "unset");
-  const showCairnNotes = $derived(
-    hasCairnMechanics(cairnSource) && cairnNotes.trim() !== "",
-  );
+  const showCairnNotes = $derived(hasCairnMechanics(cairnSource) && cairnNotes.trim() !== "");
 
   // The combat tracker only renders when an encounter is being
   // tracked. We fold it into a Drawer (default-open) rather than a

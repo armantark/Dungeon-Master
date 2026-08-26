@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { CharacterSheet } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     template: CharacterSheet;
     onEdit: (template: CharacterSheet) => void;
     onQuickstart: (template: CharacterSheet) => void;
-  };
+  }
 
   const { template, onEdit, onQuickstart }: Props = $props();
 </script>

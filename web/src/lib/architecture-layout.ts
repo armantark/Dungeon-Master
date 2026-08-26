@@ -1,8 +1,4 @@
-import {
-  ARCHITECTURE_NODES,
-  ARCHITECTURE_PATHS,
-  type ArchitectureNode,
-} from "./dev-architecture";
+import { ARCHITECTURE_NODES, ARCHITECTURE_PATHS, type ArchitectureNode } from "./dev-architecture";
 
 /**
  * Screen-aligned plan for the isometric drawing.
@@ -37,12 +33,7 @@ export const PLOT_RISE = 0.16;
 /** Height the route ink floats above a plate, clear of it but not detached. */
 export const INK_RISE = 0.035;
 
-export type ZoneId =
-  | "frontend"
-  | "transport"
-  | "backend"
-  | "persistence"
-  | "desktop";
+export type ZoneId = "frontend" | "transport" | "backend" | "persistence" | "desktop";
 
 /**
  * Hatch is how a section identifies itself without colour: each plate is ruled
@@ -128,9 +119,10 @@ export const ZONES: readonly Zone[] = [
   },
 ];
 
-const ELEVATION = Object.fromEntries(
-  ZONES.map((zone) => [zone.id, zone.elevation]),
-) as Record<ZoneId, number>;
+const ELEVATION = Object.fromEntries(ZONES.map((zone) => [zone.id, zone.elevation])) as Record<
+  ZoneId,
+  number
+>;
 
 export interface NodePlacement {
   id: string;
@@ -150,7 +142,7 @@ export interface NodePlacement {
  * Relay Post sits in Transport rather than Frontend because its whole job is
  * the wire: resolve the API base, open the streaming request, hand the body on.
  */
-const SLOTS: ReadonlyArray<readonly [string, ZoneId, string, number, number]> = [
+const SLOTS: readonly (readonly [string, ZoneId, string, number, number])[] = [
   ["composer", "frontend", "CP", -13, 0],
   ["homes", "frontend", "ST", 13, 0],
   ["relay", "transport", "RL", -13, 7],
@@ -168,13 +160,11 @@ const SLOTS: ReadonlyArray<readonly [string, ZoneId, string, number, number]> = 
   ["shell", "desktop", "SH", 0, 35],
 ];
 
-export const PLACEMENTS: readonly NodePlacement[] = SLOTS.map(
-  ([id, zone, code, x, z]) => {
-    const node = ARCHITECTURE_NODES.find((candidate) => candidate.id === id);
-    if (!node) throw new Error(`Architecture layout references unknown node ${id}`);
-    return { id, node, zone, code, x, z };
-  },
-);
+export const PLACEMENTS: readonly NodePlacement[] = SLOTS.map(([id, zone, code, x, z]) => {
+  const node = ARCHITECTURE_NODES.find((candidate) => candidate.id === id);
+  if (!node) throw new Error(`Architecture layout references unknown node ${id}`);
+  return { id, node, zone, code, x, z };
+});
 
 const PLACEMENT_INDEX = new Map(PLACEMENTS.map((placement) => [placement.id, placement]));
 
@@ -242,7 +232,7 @@ const LANE_STEP = 0.75;
 function dedupe(points: readonly RoutePoint[]): RoutePoint[] {
   return points.filter((point, index) => {
     const previous = points[index - 1];
-    return !previous || previous.x !== point.x || previous.z !== point.z;
+    return previous?.x !== point.x || previous?.z !== point.z;
   });
 }
 
@@ -259,7 +249,7 @@ export function routeLines(stops: readonly NodePlacement[]): RoutePoint[][] {
   const laneUse = { left: 0, right: 0 };
 
   return stops.slice(1).map((to, index) => {
-    const from = stops[index] as NodePlacement;
+    const from = stops[index]!;
     if (from.z === to.z) {
       return dedupe([
         { x: from.x, z: from.z },

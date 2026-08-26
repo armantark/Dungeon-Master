@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  consumeStream,
-  StreamTransportError,
-  type StreamHandlers,
-} from "./streaming";
+import { consumeStream, StreamTransportError, type StreamHandlers } from "./streaming";
 import type { StreamEvent } from "./streaming-types";
 
 // We exercise the parser by stubbing fetch with a Response whose body
@@ -79,10 +75,7 @@ describe("consumeStream", () => {
     // should hold the partial line in its buffer and only emit when
     // the trailing newline arrives in a later chunk.
     const cut = Math.floor(delta.length / 2);
-    const chunks = [
-      `${meta}\n${delta.slice(0, cut)}`,
-      `${delta.slice(cut)}\n`,
-    ];
+    const chunks = [`${meta}\n${delta.slice(0, cut)}`, `${delta.slice(cut)}\n`];
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks(chunks)));
 
     const { events, handlers } = recordingHandlers();
@@ -96,10 +89,7 @@ describe("consumeStream", () => {
   it("flushes a trailing line that has no terminating newline", async () => {
     const meta = JSON.stringify({ type: "meta", request_id: "r", route: "yes_no" });
     const final = JSON.stringify({ type: "final_state", state: { id: "g" }, thinking: null });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(streamFromChunks([`${meta}\n${final}`])),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks([`${meta}\n${final}`])));
 
     const { events, handlers } = recordingHandlers();
     const result = await consumeStream("/api/turn/stream", handlers);
@@ -113,7 +103,7 @@ describe("consumeStream", () => {
     const meta = JSON.stringify({ type: "meta", request_id: "r", route: "yes_no" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks([`${meta}\n`])));
 
-    const result = await consumeStream("/api/turn/stream", { onAny: () => {} });
+    const result = await consumeStream("/api/turn/stream", { onAny: vi.fn() });
 
     vi.unstubAllGlobals();
     expect(result.kind).toBe("aborted");
@@ -125,12 +115,9 @@ describe("consumeStream", () => {
       JSON.stringify({ type: "meta", request_id: "r", route: "yes_no" }),
       JSON.stringify({ type: "error", message: "model timed out", code: "timeout", state: null }),
     ];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(streamFromChunks([lines.join("\n") + "\n"])),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks([lines.join("\n") + "\n"])));
 
-    const result = await consumeStream("/api/turn/stream", { onAny: () => {} });
+    const result = await consumeStream("/api/turn/stream", { onAny: vi.fn() });
 
     vi.unstubAllGlobals();
     expect(result.kind).toBe("error");
@@ -140,17 +127,19 @@ describe("consumeStream", () => {
   it("throws StreamTransportError with status on non-2xx responses", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response("Not Found", { status: 404, headers: { "Content-Type": "text/plain" } }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response("Not Found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+        ),
     );
 
-    await expect(
-      consumeStream("/api/turn/stream", { onAny: () => {} }),
-    ).rejects.toBeInstanceOf(StreamTransportError);
+    await expect(consumeStream("/api/turn/stream", { onAny: vi.fn() })).rejects.toBeInstanceOf(
+      StreamTransportError,
+    );
 
     try {
-      await consumeStream("/api/turn/stream", { onAny: () => {} });
+      await consumeStream("/api/turn/stream", { onAny: vi.fn() });
       throw new Error("expected throw");
     } catch (exc) {
       expect(exc).toBeInstanceOf(StreamTransportError);
@@ -161,14 +150,11 @@ describe("consumeStream", () => {
   });
 
   it("throws StreamTransportError on malformed JSON", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(streamFromChunks(["{not_json}\n"])),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks(["{not_json}\n"])));
 
-    await expect(
-      consumeStream("/api/turn/stream", { onAny: () => {} }),
-    ).rejects.toBeInstanceOf(StreamTransportError);
+    await expect(consumeStream("/api/turn/stream", { onAny: vi.fn() })).rejects.toBeInstanceOf(
+      StreamTransportError,
+    );
     vi.unstubAllGlobals();
   });
 
@@ -196,7 +182,7 @@ describe("consumeStream", () => {
     queueMicrotask(() => controller.abort());
     const result = await consumeStream(
       "/api/turn/stream",
-      { onAny: () => {} },
+      { onAny: vi.fn() },
       { signal: controller.signal },
     );
 
@@ -233,7 +219,7 @@ describe("consumeStream", () => {
     queueMicrotask(() => controller.abort());
     const result = await consumeStream(
       "/api/turn/stream",
-      { onAny: () => {} },
+      { onAny: vi.fn() },
       { signal: controller.signal },
     );
 
@@ -251,9 +237,11 @@ describe("consumeStream", () => {
     ];
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        streamFromChunks([events.map((e) => JSON.stringify(e)).join("\n") + "\n"]),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          streamFromChunks([events.map((e) => JSON.stringify(e)).join("\n") + "\n"]),
+        ),
     );
 
     const calls: string[] = [];
@@ -300,21 +288,48 @@ describe("consumeStream", () => {
     // order so the checklist UI can mirror the real pipeline.
     const lines = [
       JSON.stringify({ type: "meta", request_id: "r", route: "player_action" }),
-      JSON.stringify({ type: "stage", stage_id: "planning_turn", label: "Planning turn", status: "skipped" }),
-      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "pending" }),
-      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "active" }),
-      JSON.stringify({ type: "stage", stage_id: "preparing_narration", label: "Preparing narration", status: "done" }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "planning_turn",
+        label: "Planning turn",
+        status: "skipped",
+      }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "preparing_narration",
+        label: "Preparing narration",
+        status: "pending",
+      }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "preparing_narration",
+        label: "Preparing narration",
+        status: "active",
+      }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "preparing_narration",
+        label: "Preparing narration",
+        status: "done",
+      }),
       JSON.stringify({ type: "content_delta", text: "Ash falls." }),
-      JSON.stringify({ type: "stage", stage_id: "reconciling_continuity", label: "Reconciling continuity", status: "active" }),
-      JSON.stringify({ type: "stage", stage_id: "reconciling_continuity", label: "Reconciling continuity", status: "done" }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "reconciling_continuity",
+        label: "Reconciling continuity",
+        status: "active",
+      }),
+      JSON.stringify({
+        type: "stage",
+        stage_id: "reconciling_continuity",
+        label: "Reconciling continuity",
+        status: "done",
+      }),
       JSON.stringify({ type: "final_state", state: { id: "g" }, thinking: null }),
     ];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(streamFromChunks([lines.join("\n") + "\n"])),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamFromChunks([lines.join("\n") + "\n"])));
 
-    const stageCalls: Array<{ stage_id: string; status: string }> = [];
+    const stageCalls: { stage_id: string; status: string }[] = [];
     const result = await consumeStream("/api/turn/stream", {
       onStage: (event) => stageCalls.push({ stage_id: event.stage_id, status: event.status }),
     });

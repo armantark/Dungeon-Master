@@ -1,10 +1,6 @@
 // Save-library wire contracts.
 
-import type {
-  CampaignDangerProfile,
-  CampaignEndReason,
-  CampaignStatus,
-} from "./campaign";
+import type { CampaignDangerProfile, CampaignEndReason, CampaignStatus } from "./campaign";
 
 // F-12 Save library. Mirrors `SaveSummary` in `save_library.py`.
 //

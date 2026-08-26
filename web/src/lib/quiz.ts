@@ -22,10 +22,7 @@ export interface AnswerState {
 // helpers because it's the broader setup state machine, not a quiz concept.
 export type { SetupMode } from "./character";
 
-export function isQuizAnswered(
-  quiz: CharacterQuiz,
-  answers: Record<string, AnswerState>,
-): boolean {
+export function isQuizAnswered(quiz: CharacterQuiz, answers: Record<string, AnswerState>): boolean {
   return quiz.questions.every((question) => {
     const a = answers[question.id];
     if (a === undefined) return false;

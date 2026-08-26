@@ -187,20 +187,14 @@ export function formatBurden(c: CairnCharacterState): BurdenSummary {
 // checking the rail at a glance sees `DEAD` before `DEPRIVED`. The render
 // component preserves this order verbatim.
 export type StatusKey =
-  | "dead"
-  | "doomed"
-  | "critically_wounded"
-  | "paralyzed"
-  | "delirious"
-  | "deprived"
-  | "overloaded";
+  "dead" | "doomed" | "critically_wounded" | "paralyzed" | "delirious" | "deprived" | "overloaded";
 
 export interface StatusBadge {
   key: StatusKey;
   label: string;
 }
 
-const STATUS_PRIORITY: ReadonlyArray<{ key: StatusKey; label: string }> = [
+const STATUS_PRIORITY: readonly { key: StatusKey; label: string }[] = [
   { key: "dead", label: "Dead" },
   { key: "doomed", label: "Doomed" },
   { key: "critically_wounded", label: "Critical" },
@@ -314,9 +308,7 @@ export function itemConditionLabel(condition: CairnConditionKey): string {
   return CONDITION_LABEL[condition];
 }
 
-export function hasItemPower(
-  power: CairnItemPower | null | undefined,
-): power is CairnItemPower {
+export function hasItemPower(power: CairnItemPower | null | undefined): power is CairnItemPower {
   if (power == null) return false;
   return power.kind !== "none" || power.effect !== "none";
 }
@@ -403,12 +395,9 @@ function formatItemUseHeadline(outcome: OracleOutcome): string {
   const cairn = outcome.cairn;
   if (cairn === null) return "Item use";
   const item = cairn.item_name ?? "item";
-  const power = cairn.item_power_kind === null
-    ? null
-    : itemPowerKindLabel(cairn.item_power_kind);
-  const uses = cairn.uses_before === null
-    ? null
-    : `uses ${cairn.uses_before}->${cairn.uses_after ?? 0}`;
+  const power = cairn.item_power_kind === null ? null : itemPowerKindLabel(cairn.item_power_kind);
+  const uses =
+    cairn.uses_before === null ? null : `uses ${cairn.uses_before}->${cairn.uses_after ?? 0}`;
   return ["Item", item, power, uses].filter((part) => part !== null && part !== "").join(" · ");
 }
 
@@ -416,8 +405,7 @@ function formatSaveHeadline(outcome: OracleOutcome): string {
   const cairn = outcome.cairn;
   if (cairn === null) return "Save";
   const ability = formatAbility(cairn.ability) ?? "Save";
-  const verdict =
-    cairn.success === null ? "rolled" : cairn.success ? "passed" : "failed";
+  const verdict = cairn.success === null ? "rolled" : cairn.success ? "passed" : "failed";
   return `Save · ${ability} · ${verdict}`;
 }
 
@@ -441,11 +429,7 @@ function formatAttackHeadline(outcome: OracleOutcome): string {
 // blow), `combat_started` is null/false and we keep the plain prefix.
 function harmHeadlinePrefix(outcome: OracleOutcome): string {
   const cairn = outcome.cairn;
-  if (
-    cairn !== null
-    && cairn.combat_started === true
-    && cairn.combat_initiator === "enemy"
-  ) {
+  if (cairn !== null && cairn.combat_started === true && cairn.combat_initiator === "enemy") {
     return "Ambush";
   }
   return "Harm";
@@ -471,7 +455,7 @@ function formatRecoveryHeadline(outcome: OracleOutcome): string {
 
 function formatRetreatHeadline(outcome: OracleOutcome): string {
   const cairn = outcome.cairn;
-  if (cairn === null || cairn.retreat_outcome == null) return "Retreat";
+  if (cairn?.retreat_outcome == null) return "Retreat";
   switch (cairn.retreat_outcome) {
     case "caught":
       return "Retreat · Caught";
@@ -510,11 +494,7 @@ export function formatCombatInitiator(
 // one place to update.
 export function isAmbushOpener(outcome: OracleOutcome): boolean {
   const cairn = outcome.cairn;
-  return (
-    cairn !== null
-    && cairn.combat_started === true
-    && cairn.combat_initiator === "enemy"
-  );
+  return cairn !== null && cairn.combat_started === true && cairn.combat_initiator === "enemy";
 }
 
 // --- Survival clock ----------------------------------------------------
@@ -636,7 +616,7 @@ export function formatTurnTimeAdvance(time: CairnTimeAdvance | null): string | n
 export function survivalChanged(resolution: CairnResolution): boolean {
   if (resolution.time_advance !== null && resolution.time_advance !== "none") return true;
   if (resolution.ration_item_id !== null) return true;
-  const pairs: Array<[number | boolean | null, number | boolean | null]> = [
+  const pairs: [number | boolean | null, number | boolean | null][] = [
     [resolution.day_number_before, resolution.day_number_after],
     [resolution.watch_index_before, resolution.watch_index_after],
     [resolution.watches_since_meal_before, resolution.watches_since_meal_after],

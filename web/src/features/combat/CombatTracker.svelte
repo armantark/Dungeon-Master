@@ -43,7 +43,9 @@ go on a sibling component so this one stays the trust surface.
   import type { CombatantState } from "../../lib/combat";
   import type { GameState } from "../../lib/types";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   const { state: gs }: Props = $props();
 
   const encounter = $derived(combatFromState(gs));
@@ -52,7 +54,7 @@ go on a sibling component so this one stays the trust surface.
   );
   const headline = $derived(encounterHeadline(encounter));
   const firstRound = $derived(firstRoundActionGated(encounter));
-  const moraleTriggered = $derived(encounter !== null && encounter.morale_triggered);
+  const moraleTriggered = $derived(encounter?.morale_triggered === true);
   // F-18 loose setups (no target_combatant_id pinned). Rendered above
   // the foe list because they apply to the encounter as a whole.
   const looseAdvantages = $derived(unattachedAdvantages(encounter));
@@ -62,10 +64,10 @@ go on a sibling component so this one stays the trust surface.
   // for the whole fight — they were jumped, and that pretext shapes
   // disengage / morale narration even later. The flag falls off naturally
   // once the encounter clears (this whole section unmounts).
-  const ambushed = $derived(encounter !== null && encounter.active && enemyInitiated(encounter));
+  const ambushed = $derived(encounter?.active === true && enemyInitiated(encounter));
 </script>
 
-{#if encounter !== null && encounter.active}
+{#if encounter?.active === true}
   <section class="combat" aria-label="Active combat">
     <header class="combat__head">
       <span class="kicker">Encounter</span>
@@ -145,10 +147,7 @@ go on a sibling component so this one stays the trust surface.
           {@const tier = combatantHpTier(foe)}
           {@const statusLabel = combatantStatusLabel(foe.status)}
           {@const foeAdvantages = advantagesForCombatant(encounter, foe.id)}
-          <li
-            class="foe foe--{tier} threat--{foe.threat_level}"
-            class:broken={foe.morale_broken}
-          >
+          <li class="foe foe--{tier} threat--{foe.threat_level}" class:broken={foe.morale_broken}>
             <div class="foe__head">
               <span class="foe__name">{foe.name}</span>
               <!--
@@ -325,8 +324,12 @@ go on a sibling component so this one stays the trust surface.
     gap: 0.4rem;
   }
   /* HP tier coloring on the left edge — quick scan when the rail is busy. */
-  .foe--fresh   { border-left: 3px solid var(--gold-tarnished); }
-  .foe--wounded { border-left: 3px solid var(--rust-iron); }
+  .foe--fresh {
+    border-left: 3px solid var(--gold-tarnished);
+  }
+  .foe--wounded {
+    border-left: 3px solid var(--rust-iron);
+  }
   .foe--critical {
     border-left: 3px solid var(--rust-blood);
     background: color-mix(in oklab, var(--rust-blood) 10%, var(--ink-deep) 90%);

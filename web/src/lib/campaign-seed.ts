@@ -64,12 +64,10 @@ export const DANGER_PROFILE_LABEL: Record<CampaignDangerProfile, string> = {
 };
 
 export const DANGER_PROFILE_BLURB: Record<CampaignDangerProfile, string> = {
-  story:
-    "Survivable fights: ordinary foes, low counts, quick morale, strong telegraphing.",
+  story: "Survivable fights: ordinary foes, low counts, quick morale, strong telegraphing.",
   standard:
     "Default Cairn 2e scale: ~3 HP common foes, ~6 HP veterans, serious threats only when telegraphed.",
-  harsh:
-    "Hardier foes and more resource pressure, but retreat and preparation still pay off.",
+  harsh: "Hardier foes and more resource pressure, but retreat and preparation still pay off.",
   lethal:
     "Serious threats and punishing abilities allowed when telegraphed; poor preparation can be fatal.",
 };
@@ -182,8 +180,7 @@ export const CAMPAIGN_SEED_PRESETS: readonly CampaignSeedPreset[] = [
   {
     id: "oppressive_dark_fantasy",
     label: "Oppressive Dark Fantasy",
-    blurb:
-      "The default flavor: high-medieval, grim, dark, rare-numinous magic, regional stakes.",
+    blurb: "The default flavor: high-medieval, grim, dark, rare-numinous magic, regional stakes.",
     seed: {
       preset: "Oppressive Dark Fantasy",
       time_period: "high_medieval",
@@ -195,8 +192,7 @@ export const CAMPAIGN_SEED_PRESETS: readonly CampaignSeedPreset[] = [
       tech_level: "medieval",
       stakes_scale: "regional",
       inspirations: "Berserk + Dark Souls + Fear & Hunger",
-      restrictions:
-        "No modern slang. No copied characters, locations, factions, or lore.",
+      restrictions: "No modern slang. No copied characters, locations, factions, or lore.",
     },
   },
   {
@@ -215,8 +211,7 @@ export const CAMPAIGN_SEED_PRESETS: readonly CampaignSeedPreset[] = [
       tech_level: "iron",
       stakes_scale: "personal_local",
       inspirations: "Princess Mononoke + The Green Knight + Annihilation",
-      restrictions:
-        "No bombast. No god-tier set pieces. No copied characters or factions.",
+      restrictions: "No bombast. No god-tier set pieces. No copied characters or factions.",
     },
   },
   {
@@ -235,8 +230,7 @@ export const CAMPAIGN_SEED_PRESETS: readonly CampaignSeedPreset[] = [
       tech_level: "industrial",
       stakes_scale: "civilizational",
       inspirations: "Berserk + Bloodborne + 40k traitor regiments",
-      restrictions:
-        "No copied factions or characters. No clean victories. No modern slang.",
+      restrictions: "No copied factions or characters. No clean victories. No modern slang.",
     },
   },
   {
@@ -255,8 +249,7 @@ export const CAMPAIGN_SEED_PRESETS: readonly CampaignSeedPreset[] = [
       tech_level: "renaissance",
       stakes_scale: "personal_local",
       inspirations: "Penny Dreadful + The VVitch + The Witcher novels",
-      restrictions:
-        "No bright fairy-tale beats. No copied characters or factions.",
+      restrictions: "No bright fairy-tale beats. No copied characters or factions.",
     },
   },
 ] as const;

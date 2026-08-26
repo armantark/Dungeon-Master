@@ -32,15 +32,13 @@ Design intent:
 <script lang="ts">
   import type { StageProgress } from "../../lib/store.svelte";
 
-  type Props = {
+  interface Props {
     stages: readonly StageProgress[];
     framed?: boolean;
-  };
+  }
   const { stages, framed = true }: Props = $props();
 
-  const sorted = $derived(
-    stages.slice().sort((a, b) => a.order - b.order),
-  );
+  const sorted = $derived(stages.slice().sort((a, b) => a.order - b.order));
 
   // Live tick counter drives reactive re-reads of `performance.now()`
   // for active stages without forcing a per-stage interval.
@@ -49,7 +47,9 @@ Design intent:
 
   $effect(() => {
     if (!hasActive) return;
-    const id = setInterval(() => { tick++; }, 100);
+    const id = setInterval(() => {
+      tick++;
+    }, 100);
     return () => clearInterval(id);
   });
 
@@ -67,18 +67,13 @@ Design intent:
   }
 
   const allDone = $derived(
-    sorted.length > 0 &&
-    sorted.every((s) => s.status === "done" || s.status === "skipped"),
+    sorted.length > 0 && sorted.every((s) => s.status === "done" || s.status === "skipped"),
   );
 
   const totalDuration = $derived.by(() => {
     if (!allDone) return null;
-    const starts = sorted
-      .map((s) => s.startedAt)
-      .filter((t): t is number => t !== null);
-    const ends = sorted
-      .map((s) => s.completedAt)
-      .filter((t): t is number => t !== null);
+    const starts = sorted.map((s) => s.startedAt).filter((t): t is number => t !== null);
+    const ends = sorted.map((s) => s.completedAt).filter((t): t is number => t !== null);
     if (starts.length === 0 || ends.length === 0) return null;
     return formatMs(Math.max(...ends) - Math.min(...starts));
   });
@@ -142,8 +137,7 @@ Design intent:
     background: color-mix(in oklab, var(--ink-deep) 65%, transparent);
     border: 1px solid color-mix(in oklab, var(--gold-tarnished) 45%, transparent);
     border-radius: 3px;
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklab, var(--gold-tarnished) 14%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--gold-tarnished) 14%, transparent);
   }
   .row {
     display: grid;
@@ -247,11 +241,21 @@ Design intent:
     animation: stage-pulse 1.05s ease-in-out infinite;
   }
   @keyframes stage-pulse {
-    0%, 100% { opacity: 0.55; transform: scale(0.85); }
-    50% { opacity: 1; transform: scale(1.1); }
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.1);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
-    .dot.pulse { animation: none; opacity: 0.95; }
+    .dot.pulse {
+      animation: none;
+      opacity: 0.95;
+    }
   }
 
   /* --- done: tarnished checkmark, label fades to bone */

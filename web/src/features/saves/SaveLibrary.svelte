@@ -29,7 +29,9 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
   import { game } from "../../lib/store.svelte";
   import type { SaveSummary } from "../../lib/types";
 
-  type Props = { mode: "empty" | "selecting" };
+  interface Props {
+    mode: "empty" | "selecting";
+  }
   const { mode }: Props = $props();
 
   // Distinct loading flags for the two CTAs so a click on "Begin new"
@@ -107,14 +109,14 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     {#if mode === "empty"}
       <h1>An empty shelf.</h1>
       <p class="lead">
-        No campaigns are bound to this ledger yet. Begin a wanderer's
-        record and the rest of the binding will follow.
+        No campaigns are bound to this ledger yet. Begin a wanderer's record and the rest of the
+        binding will follow.
       </p>
     {:else}
       <h1>The shelf of bound wanderers.</h1>
       <p class="lead">
-        Each tome is a separate canon. Switching binds the chat, the
-        oracle history, and the memory to the one you choose.
+        Each tome is a separate canon. Switching binds the chat, the oracle history, and the memory
+        to the one you choose.
       </p>
     {/if}
     {#if game.libraryError}
@@ -195,11 +197,9 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     {/if}
     <p class="muted hint">
       {#if mode === "empty"}
-        Closed wanderers will join this shelf as they fall, retire, or
-        win.
+        Closed wanderers will join this shelf as they fall, retire, or win.
       {:else}
-        Switching while a turn is in flight is refused — finish or
-        stop the current request first.
+        Switching while a turn is in flight is refused — finish or stop the current request first.
       {/if}
     </p>
   </footer>
@@ -230,7 +230,7 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     --frontispiece-position: right -1rem center;
     --frontispiece-blend: screen;
     --frontispiece-size: auto 130%;
-    --frontispiece-opacity: 0.10;
+    --frontispiece-opacity: 0.1;
     overflow: hidden;
   }
   .library--empty {
@@ -294,7 +294,9 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     flex-direction: column;
     gap: 0.2rem;
     cursor: pointer;
-    transition: transform 160ms ease, box-shadow 160ms ease;
+    transition:
+      transform 160ms ease,
+      box-shadow 160ms ease;
     text-transform: none;
     letter-spacing: 0;
     color: var(--ink-deep);
@@ -472,7 +474,10 @@ keep checkpoint zips?), and that work isn't scoped into F-12.
     border-top: 1px dashed color-mix(in oklab, var(--ink-bruise) 50%, transparent);
     opacity: 0;
     max-height: 0;
-    transition: opacity 200ms ease, max-height 220ms ease, padding 220ms ease;
+    transition:
+      opacity 200ms ease,
+      max-height 220ms ease,
+      padding 220ms ease;
     overflow: hidden;
     /* Reserve no space until the hover/focus reveal kicks in. We use
      * max-height + opacity rather than display:none so the transition

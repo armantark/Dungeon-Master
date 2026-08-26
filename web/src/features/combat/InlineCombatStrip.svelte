@@ -50,11 +50,13 @@ strictly a trust-surface, never a control.
   import type { CombatantState } from "../../lib/combat";
   import type { GameState } from "../../lib/types";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   const { state: gs }: Props = $props();
 
   const encounter = $derived(combatFromState(gs));
-  const active = $derived(encounter !== null && encounter.active);
+  const active = $derived(encounter?.active === true);
   const combatants = $derived<CombatantState[]>(
     encounter === null ? [] : sortCombatants(encounter.combatants),
   );
@@ -69,8 +71,8 @@ strictly a trust-surface, never a control.
   );
   const headline = $derived(encounterHeadline(encounter));
   const firstRound = $derived(firstRoundActionGated(encounter));
-  const ambushed = $derived(encounter !== null && encounter.active && enemyInitiated(encounter));
-  const moraleTriggered = $derived(encounter !== null && encounter.morale_triggered);
+  const ambushed = $derived(encounter?.active === true && enemyInitiated(encounter));
+  const moraleTriggered = $derived(encounter?.morale_triggered === true);
   const looseAdvantages = $derived(unattachedAdvantages(encounter));
 </script>
 
@@ -316,8 +318,12 @@ strictly a trust-surface, never a control.
     gap: 0.6rem;
   }
   /* Hide the default list marker across browsers. */
-  .strip__head::-webkit-details-marker { display: none; }
-  .strip__head::marker { content: ""; }
+  .strip__head::-webkit-details-marker {
+    display: none;
+  }
+  .strip__head::marker {
+    content: "";
+  }
   .strip__head-main {
     display: flex;
     align-items: baseline;
@@ -332,7 +338,9 @@ strictly a trust-surface, never a control.
     font-size: 0.78rem;
     letter-spacing: 0.04em;
   }
-  .strip__count .muted { color: var(--paper-shadow); }
+  .strip__count .muted {
+    color: var(--paper-shadow);
+  }
   /*
    * Chevron rotates instead of being swapped for "▾" because the
    * open/closed cue should be silent typography, not a glyph
@@ -342,7 +350,9 @@ strictly a trust-surface, never a control.
     display: inline-block;
     font-family: var(--font-pixel);
     color: var(--gold-tarnished);
-    transition: transform 120ms ease, color 120ms ease;
+    transition:
+      transform 120ms ease,
+      color 120ms ease;
   }
   .strip[open] .strip__chevron {
     transform: rotate(90deg);
@@ -369,7 +379,9 @@ strictly a trust-surface, never a control.
   .strip[open] > :not(summary):last-child {
     margin-bottom: 0.8rem;
   }
-  .strip .kicker { margin: 0; }
+  .strip .kicker {
+    margin: 0;
+  }
   .headline {
     color: var(--gold-bright);
     font-size: 0.95rem;
@@ -435,8 +447,12 @@ strictly a trust-surface, never a control.
    * and even then it's a single bar — the numeric HP is gated behind
    * the Warden disclosure.
    */
-  .foe--fresh    { border-left: 3px solid var(--gold-tarnished); }
-  .foe--wounded  { border-left: 3px solid var(--rust-iron); }
+  .foe--fresh {
+    border-left: 3px solid var(--gold-tarnished);
+  }
+  .foe--wounded {
+    border-left: 3px solid var(--rust-iron);
+  }
   .foe--critical {
     border-left: 3px solid var(--rust-blood);
     background: color-mix(in oklab, var(--rust-blood) 10%, var(--ink-deep) 90%);
@@ -550,8 +566,12 @@ strictly a trust-surface, never a control.
     text-transform: uppercase;
     user-select: none;
   }
-  .warden > summary::-webkit-details-marker { display: none; }
-  .warden > summary::marker { content: ""; }
+  .warden > summary::-webkit-details-marker {
+    display: none;
+  }
+  .warden > summary::marker {
+    content: "";
+  }
   .warden > summary::before {
     content: "▸ ";
     color: var(--gold-tarnished);
@@ -560,8 +580,12 @@ strictly a trust-surface, never a control.
     content: "▾ ";
     color: var(--gold-bright);
   }
-  .warden > summary:hover { color: var(--gold-bright); }
-  .warden[open] > summary { color: var(--gold-bright); }
+  .warden > summary:hover {
+    color: var(--gold-bright);
+  }
+  .warden[open] > summary {
+    color: var(--gold-bright);
+  }
 
   .stats {
     margin: 0.45rem 0 0.25rem;
@@ -583,14 +607,21 @@ strictly a trust-surface, never a control.
     margin: 0;
     color: var(--paper-warm);
   }
-  .stats .muted { color: var(--paper-shadow); }
+  .stats .muted {
+    color: var(--paper-shadow);
+  }
   .warden__line {
     margin: 0.3rem 0 0;
     display: grid;
     gap: 0.18rem;
   }
-  .warden__line--weakness { font-size: 0.86rem; }
-  .warden__line--tactics  { font-size: 0.82rem; color: var(--paper-shadow); }
+  .warden__line--weakness {
+    font-size: 0.86rem;
+  }
+  .warden__line--tactics {
+    font-size: 0.82rem;
+    color: var(--paper-shadow);
+  }
 
   /* F-18 pending setups (loose and per-foe). */
   .setups {
@@ -614,7 +645,9 @@ strictly a trust-surface, never a control.
     display: grid;
     gap: 0.25rem;
   }
-  .setups--pinned { margin-top: 0.1rem; }
+  .setups--pinned {
+    margin-top: 0.1rem;
+  }
   .setups li {
     display: grid;
     grid-template-columns: max-content 1fr;
@@ -659,6 +692,10 @@ strictly a trust-surface, never a control.
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
-  .small { font-size: 0.78rem; }
-  .muted { color: var(--paper-shadow); }
+  .small {
+    font-size: 0.78rem;
+  }
+  .muted {
+    color: var(--paper-shadow);
+  }
 </style>

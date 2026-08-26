@@ -1,7 +1,10 @@
 <script lang="ts">
   import { game } from "../../lib/store.svelte";
 
-  type Props = { eventId: string; visible: boolean };
+  interface Props {
+    eventId: string;
+    visible: boolean;
+  }
   const { eventId, visible }: Props = $props();
 </script>
 

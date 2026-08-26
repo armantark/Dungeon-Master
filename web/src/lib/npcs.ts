@@ -82,10 +82,7 @@ export function recentlyTouchedNpcIds(
  * stale ids or legacy singular-only outcomes safely collapse away in the
  * UI instead of rendering dead pills.
  */
-export function referencedNpcsForOutcome(
-  npcs: readonly NPC[],
-  outcome: OracleOutcome,
-): NPC[] {
+export function referencedNpcsForOutcome(npcs: readonly NPC[], outcome: OracleOutcome): NPC[] {
   const byId = new Map(npcs.map((npc) => [npc.id, npc] as const));
   return referencedNpcIds(outcome)
     .map((id) => byId.get(id) ?? null)

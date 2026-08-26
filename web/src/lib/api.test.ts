@@ -13,18 +13,20 @@ describe("api base resolver", () => {
   });
 
   it("retargets requests when a runtime base is injected", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "ok" }),
-    });
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fetchSpy);
     setApiBase("http://127.0.0.1:8123/api/");
 
     await api.health();
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "http://127.0.0.1:8123/api/health",
-      expect.objectContaining({ headers: expect.any(Headers) }),
-    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const call = fetchSpy.mock.calls[0];
+    expect(call?.[0]).toBe("http://127.0.0.1:8123/api/health");
+    expect(call?.[1]?.headers).toBeInstanceOf(Headers);
   });
 });

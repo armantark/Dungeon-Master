@@ -26,7 +26,7 @@ backend endpoints that this pass deliberately does not bind to controls.
   } from "../../lib/cairn";
   import type { CairnCharacterState } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     cairn: CairnCharacterState;
     /**
      * When true, render the LLM-authored backfill rationale at the foot
@@ -35,7 +35,7 @@ backend endpoints that this pass deliberately does not bind to controls.
      * this loadout were chosen.
      */
     showNotes?: boolean;
-  };
+  }
 
   const { cairn, showNotes = false }: Props = $props();
 
@@ -62,11 +62,11 @@ backend endpoints that this pass deliberately does not bind to controls.
   // can read "two ticks shy of deprivation" rather than parsing a
   // percent. We render a tick at the warning watermark to make that
   // intermediate stage visible at a glance.
-  function meterSegments(meter: SurvivalMeter): Array<{
+  function meterSegments(meter: SurvivalMeter): {
     filled: boolean;
     warning: boolean;
     tier: SurvivalMeter["tier"];
-  }> {
+  }[] {
     const segments = [];
     for (let i = 1; i <= meter.threshold; i += 1) {
       segments.push({
@@ -91,11 +91,7 @@ backend endpoints that this pass deliberately does not bind to controls.
     for (let i = 1; i <= total; i += 1) {
       const filled = i <= burden.used;
       const tier: StatusKey | "comfortable" | "backpack" | "overloaded" =
-        i <= burden.comfortable
-          ? "comfortable"
-          : i <= burden.backpack
-            ? "backpack"
-            : "overloaded";
+        i <= burden.comfortable ? "comfortable" : i <= burden.backpack ? "backpack" : "overloaded";
       items.push({ filled, tier });
     }
     return items;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
 
   import { ROLE_META, type ArchitecturePath } from "../../lib/dev-architecture";
   import { PLACEMENTS, ZONES } from "../../lib/architecture-layout";
@@ -33,9 +34,7 @@
   let focusedNodeId = $state<string | null>(null);
   let compact = $state(false);
 
-  const stepIndex = $derived(
-    new Map(activePath.steps.map((step, index) => [step.node, index])),
-  );
+  const stepIndex = $derived(new Map(activePath.steps.map((step, index) => [step.node, index])));
   const currentStep = $derived(traceIndex >= 0 ? activePath.steps[traceIndex] : undefined);
   const previousNodeId = $derived(
     traceIndex >= 1 ? activePath.steps[traceIndex - 1]?.node : undefined,
@@ -68,7 +67,7 @@
    */
   function codeOrder(): string[] {
     const order: string[] = [];
-    const seen = new Set<string>();
+    const seen = new SvelteSet<string>();
     const push = (id: string | null | undefined) => {
       if (!id || seen.has(id)) return;
       seen.add(id);
@@ -91,7 +90,11 @@
       element.style.opacity = visible ? "1" : "0";
       element.style.pointerEvents = visible ? "auto" : "none";
     };
-    const add = (id: string, element: HTMLElement | undefined, point?: { x: number; y: number }) => {
+    const add = (
+      id: string,
+      element: HTMLElement | undefined,
+      point?: { x: number; y: number },
+    ) => {
       if (!element || !point || element.offsetWidth === 0) return;
       candidates.push({
         id,
@@ -260,7 +263,10 @@
     gap: 0.3rem;
     padding: 0.05rem 0.2rem;
     color: var(--atlas-ink);
-    font: 600 10.5px/1.4 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 10.5px/1.4 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0.11em;
     text-transform: uppercase;
     white-space: nowrap;
@@ -287,14 +293,22 @@
     border-radius: 0;
     box-shadow: none;
     text-shadow: none;
-    font: 600 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font:
+      600 11px/1.35 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
     letter-spacing: 0.06em;
     text-transform: none;
     white-space: nowrap;
     pointer-events: auto;
     cursor: pointer;
     opacity: 0;
-    transition: color 110ms ease, background 110ms ease, border-color 110ms ease;
+    transition:
+      color 110ms ease,
+      background 110ms ease,
+      border-color 110ms ease;
   }
   .code::before {
     display: none;
@@ -345,7 +359,10 @@
     border-radius: 0;
     box-shadow: none;
     text-shadow: none;
-    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif;
+    font:
+      600 12px/1.5 ui-sans-serif,
+      system-ui,
+      sans-serif;
     letter-spacing: 0;
     text-transform: none;
     cursor: pointer;

@@ -1,5 +1,10 @@
 dist
 node_modules
+index.html
+public/textures/SOURCES.md
+src-tauri/capabilities/default.json
+src-tauri/gen/schemas
+src-tauri/tauri.conf.json
 src-tauri/target
 src-tauri/binaries
 src-tauri/icons

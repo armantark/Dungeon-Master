@@ -22,16 +22,13 @@ Visual hierarchy mirrors the death-knell feel of a Cairn campaign:
     instead of "replaces this archive").
 -->
 <script lang="ts">
-  import {
-    endHeadline,
-    endKicker,
-    endSummary,
-    formatEndedAt,
-  } from "../../lib/end-campaign";
+  import { endHeadline, endKicker, endSummary, formatEndedAt } from "../../lib/end-campaign";
   import { game } from "../../lib/store.svelte";
   import type { CampaignEndReason, GameState } from "../../lib/types";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   const { state: gs }: Props = $props();
 
   // The non-null assertion via fallback is deliberate. The parent
@@ -41,9 +38,7 @@ Visual hierarchy mirrors the death-knell feel of a Cairn campaign:
   // legacy-state migration that somehow lost the reason field shouldn't
   // brick the UI; the deterministic per-reason fallback prose still
   // reads sensibly under retirement.
-  const reason = $derived<CampaignEndReason>(
-    gs.campaign_end_reason ?? "retirement",
-  );
+  const reason = $derived<CampaignEndReason>(gs.campaign_end_reason ?? "retirement");
   const kicker = $derived(endKicker(reason));
   const headline = $derived(endHeadline(reason));
   const summary = $derived(endSummary(gs));

@@ -24,10 +24,7 @@ authored without dismissing the menu first.
     type CommonAction,
   } from "../../lib/common-actions";
   import { game } from "../../lib/store.svelte";
-  import {
-    suggestSlashCommands,
-    type SlashCommandDescriptor,
-  } from "../../lib/slash";
+  import { suggestSlashCommands, type SlashCommandDescriptor } from "../../lib/slash";
 
   let value = $state("");
   let textarea: HTMLTextAreaElement;
@@ -107,8 +104,7 @@ authored without dismissing the menu first.
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        suggestionIndex =
-          (suggestionIndex - 1 + suggestions.length) % suggestions.length;
+        suggestionIndex = (suggestionIndex - 1 + suggestions.length) % suggestions.length;
         return;
       }
       // Tab always completes. Enter completes only when no modifiers
@@ -117,11 +113,8 @@ authored without dismissing the menu first.
       // dismissing the menu, and Cmd/Ctrl+Enter falls through to the
       // submit branch below.
       if (
-        event.key === "Tab"
-        || (event.key === "Enter"
-          && !event.shiftKey
-          && !event.metaKey
-          && !event.ctrlKey)
+        event.key === "Tab" ||
+        (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey)
       ) {
         const cmd = suggestions[suggestionIndex];
         if (cmd) {
@@ -170,12 +163,8 @@ authored without dismissing the menu first.
   // /help. We don't change the placeholder mid-session (placeholders
   // are sticky for muscle memory), but the footer hint can shift —
   // it's an explicit signal, not a guess at intent.
-  const encounter = $derived(
-    game.state === null ? null : combatFromState(game.state),
-  );
-  const inActiveCombat = $derived(
-    encounter !== null && encounter.active,
-  );
+  const encounter = $derived(game.state === null ? null : combatFromState(game.state));
+  const inActiveCombat = $derived(encounter?.active === true);
 
   // F-07 common-actions tray. Source of truth for which pills appear
   // is `deriveCommonActions`; this component only renders + dispatches.
@@ -198,7 +187,13 @@ authored without dismissing the menu first.
   }
 </script>
 
-<form class="composer" onsubmit={(e) => { e.preventDefault(); void send(); }}>
+<form
+  class="composer"
+  onsubmit={(e) => {
+    e.preventDefault();
+    void send();
+  }}
+>
   <div class="textarea-wrap">
     <textarea
       bind:this={textarea}
@@ -211,16 +206,10 @@ authored without dismissing the menu first.
       aria-label="Player command"
       aria-autocomplete="list"
       aria-controls={showSuggestions ? "composer-slash-menu" : undefined}
-      class:frozen={game.isLoading}
-    ></textarea>
+      class:frozen={game.isLoading}></textarea>
 
     {#if showSuggestions}
-      <ul
-        id="composer-slash-menu"
-        class="suggestions"
-        role="listbox"
-        aria-label="Slash commands"
-      >
+      <ul id="composer-slash-menu" class="suggestions" role="listbox" aria-label="Slash commands">
         {#each suggestions as cmd, idx (cmd.name)}
           <li role="presentation">
             <button
@@ -299,9 +288,7 @@ authored without dismissing the menu first.
           {game.cancelLabel}
         </button>
       {/if}
-      <button type="submit" disabled={game.isLoading || !value.trim()}>
-        Send
-      </button>
+      <button type="submit" disabled={game.isLoading || !value.trim()}> Send </button>
     </div>
   </div>
 </form>
@@ -445,8 +432,7 @@ authored without dismissing the menu first.
      * composer surface rather than floating above it. Matches the
      * receipt-strip + chaos-pip vocabulary already on screen.
      */
-    box-shadow: inset 0 -1px 0
-      color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
+    box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--gold-tarnished) 25%, transparent);
   }
   .action:hover:not(:disabled),
   .action:focus-visible {

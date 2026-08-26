@@ -33,7 +33,7 @@ buffer without round-tripping the backend.
   import { game } from "../../lib/store.svelte";
   import type { GameState } from "../../lib/types";
 
-  type Props = {
+  interface Props {
     state: GameState;
     /**
      * When true, the editor renders read-only archive prose instead
@@ -45,7 +45,7 @@ buffer without round-tripping the backend.
      * error toast.
      */
     archived?: boolean;
-  };
+  }
   // Rebound to `gs` to avoid colliding with Svelte 5's `$state` rune
   // when this file uses both the rune and the prop name.
   const { state: gs, archived = false }: Props = $props();
@@ -71,12 +71,10 @@ buffer without round-tripping the backend.
   });
 
   const dirty = $derived(
-    world !== gs.directives.world_guidance ||
-      play !== gs.directives.play_guidance,
+    world !== gs.directives.world_guidance || play !== gs.directives.play_guidance,
   );
   const hasContent = $derived(
-    gs.directives.world_guidance.trim() !== "" ||
-      gs.directives.play_guidance.trim() !== "",
+    gs.directives.world_guidance.trim() !== "" || gs.directives.play_guidance.trim() !== "",
   );
 
   async function commit(): Promise<void> {
@@ -95,11 +93,9 @@ buffer without round-tripping the backend.
 <div class="directives">
   <p class="kicker">Out-of-character · persistent</p>
   <p class="muted intro">
-    Durable steering the system remembers across turns. Not narrated,
-    not part of the story log — closer to a stable system-prompt
-    nudge than a journal. Empty fields are fine; only fill these in
-    if the model has been quietly missing a rule you don't want to
-    keep retyping.
+    Durable steering the system remembers across turns. Not narrated, not part of the story log —
+    closer to a stable system-prompt nudge than a journal. Empty fields are fine; only fill these in
+    if the model has been quietly missing a rule you don't want to keep retyping.
   </p>
 
   {#if archived}
@@ -125,44 +121,28 @@ buffer without round-tripping the backend.
         </section>
       {/if}
     {:else}
-      <p class="muted archived-hint">
-        Archived — no directives were set on this campaign.
-      </p>
+      <p class="muted archived-hint">Archived — no directives were set on this campaign.</p>
     {/if}
   {:else if editing}
     <label for="directives-world">World guidance</label>
     <p class="muted hint">
-      Stable rules of this world the model should respect. Examples:
-      “miracles are subtle,” “coin is rare,” “the hierophant cannot
-      speak first.”
+      Stable rules of this world the model should respect. Examples: “miracles are subtle,” “coin is
+      rare,” “the hierophant cannot speak first.”
     </p>
-    <textarea
-      id="directives-world"
-      bind:value={world}
-      rows="3"
-      placeholder="No world guidance set."
+    <textarea id="directives-world" bind:value={world} rows="3" placeholder="No world guidance set."
     ></textarea>
 
     <label for="directives-play">Play guidance</label>
     <p class="muted hint">
-      How the system should pace and frame play for you. Examples:
-      “end scenes on a question, not a cliffhanger,” “keep combat
-      lethal,” “let me sit with silences.”
+      How the system should pace and frame play for you. Examples: “end scenes on a question, not a
+      cliffhanger,” “keep combat lethal,” “let me sit with silences.”
     </p>
-    <textarea
-      id="directives-play"
-      bind:value={play}
-      rows="3"
-      placeholder="No play guidance set."
+    <textarea id="directives-play" bind:value={play} rows="3" placeholder="No play guidance set."
     ></textarea>
 
     <div class="row">
-      <button class="ghost" onclick={revert} disabled={game.isLoading}>
-        Cancel
-      </button>
-      <button onclick={commit} disabled={!dirty || game.isLoading}>
-        Save directives
-      </button>
+      <button class="ghost" onclick={revert} disabled={game.isLoading}> Cancel </button>
+      <button onclick={commit} disabled={!dirty || game.isLoading}> Save directives </button>
     </div>
   {:else}
     <div class="preview">
@@ -180,10 +160,7 @@ buffer without round-tripping the backend.
           </section>
         {/if}
       {:else}
-        <p class="muted empty">
-          No directives set. The campaign runs on its own canon
-          alone.
-        </p>
+        <p class="muted empty">No directives set. The campaign runs on its own canon alone.</p>
       {/if}
     </div>
     <div class="row">

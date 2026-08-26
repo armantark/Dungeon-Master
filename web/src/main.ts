@@ -22,6 +22,7 @@ if (
   )
 ) {
   showArchitecture = true;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- svelte-check preserves component binding metadata that typed ESLint erases for this lazy import.
   ArchitectureRoot = (await import("./ArchitectureApp.svelte")).default as typeof App;
 }
 
@@ -34,8 +35,6 @@ if (!showArchitecture) {
 // Start randomizing --btn-tex-x and y on all buttons globally
 initGlobalTextureRandomization();
 
-const app = ArchitectureRoot
-  ? mount(ArchitectureRoot, { target })
-  : mount(App, { target });
+const app = ArchitectureRoot ? mount(ArchitectureRoot, { target }) : mount(App, { target });
 
 export default app;

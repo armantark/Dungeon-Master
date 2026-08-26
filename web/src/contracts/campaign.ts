@@ -25,11 +25,7 @@ export type NPCPlayerLabelKind = "proper_name" | "descriptor";
 // through a "is play allowed?" boolean — switching on
 // `campaign_status` keeps the App-level layout split mechanical and
 // exhaustive at the type level.
-export type CampaignStatus =
-  | "character_creation"
-  | "ready_to_start"
-  | "active"
-  | "ended";
+export type CampaignStatus = "character_creation" | "ready_to_start" | "active" | "ended";
 
 // Mirrors backend `CampaignEndReason`. `death` is the auto-end the
 // service triggers when a turn drops STR / HP to a fatal Cairn state;
@@ -106,19 +102,9 @@ export type CampaignGenre =
 export type CampaignMagicLevel = "none" | "rare_numinous" | "common" | "ubiquitous";
 
 export type CampaignTechLevel =
-  | "stone"
-  | "iron"
-  | "medieval"
-  | "renaissance"
-  | "industrial"
-  | "modern"
-  | "spacefaring";
+  "stone" | "iron" | "medieval" | "renaissance" | "industrial" | "modern" | "spacefaring";
 
-export type CampaignStakesScale =
-  | "personal_local"
-  | "regional"
-  | "civilizational"
-  | "cosmic";
+export type CampaignStakesScale = "personal_local" | "regional" | "civilizational" | "cosmic";
 
 // Mirrors backend `CampaignSeed`. Lives on `GameState.campaign_seed`
 // once a seed has been authored; the backend defaults every new state

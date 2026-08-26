@@ -61,7 +61,9 @@ Why a dedicated modal instead of folding key entry into SettingsModal:
     provider = game.credentialSetupProvider;
     apiKey = "";
     window.addEventListener("keydown", handleKey);
-    panelRef?.focus();
+    const panel = panelRef;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte's bind:this transform obscures the DOM method type from typed ESLint.
+    if (panel instanceof HTMLDivElement) panel.focus();
     return () => window.removeEventListener("keydown", handleKey);
   });
 </script>
@@ -89,9 +91,9 @@ Why a dedicated modal instead of folding key entry into SettingsModal:
         <span class="kicker">Bring Your Own Key</span>
         <h2 id="credential-setup-title">Connect a model provider</h2>
         <p class="muted desc">
-          Enter a Gemini or OpenRouter API key to enable AI-driven setup and play.
-          This beta stores the key in the app's local config on this machine; your
-          existing terminal <code>.env</code> flow still works unchanged.
+          Enter a Gemini or OpenRouter API key to enable AI-driven setup and play. This beta stores
+          the key in the app's local config on this machine; your existing terminal <code>.env</code
+          > flow still works unchanged.
         </p>
       </header>
 
@@ -132,9 +134,7 @@ Why a dedicated modal instead of folding key entry into SettingsModal:
           type="password"
           autocomplete="off"
           spellcheck="false"
-          placeholder={provider === "gemini"
-            ? "Paste a Gemini key"
-            : "Paste an OpenRouter key"}
+          placeholder={provider === "gemini" ? "Paste a Gemini key" : "Paste an OpenRouter key"}
           disabled={isSaving}
         />
       </label>

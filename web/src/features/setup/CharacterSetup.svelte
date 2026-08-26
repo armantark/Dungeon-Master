@@ -25,17 +25,15 @@ Why three paths plus a quiz step:
     type AnswerState,
     type SetupMode,
   } from "../../lib/quiz";
-  import type {
-    CharacterQuiz,
-    CharacterSheet,
-    GameState,
-  } from "../../lib/types";
+  import type { CharacterQuiz, CharacterSheet, GameState } from "../../lib/types";
   import CampaignSeedEditor from "./CampaignSeedEditor.svelte";
   import CharacterEditor from "./CharacterEditor.svelte";
   import CharacterTemplateCard from "./CharacterTemplateCard.svelte";
   import LoadingPanel from "../play/LoadingPanel.svelte";
 
-  type Props = { state: GameState };
+  interface Props {
+    state: GameState;
+  }
   const { state: gs }: Props = $props();
 
   let mode: SetupMode = $state(untrack(() => deriveSetupMode(gs.campaign_status)));
@@ -44,9 +42,7 @@ Why three paths plus a quiz step:
   let quiz: CharacterQuiz | null = $state(null);
   let answers: Record<string, AnswerState> = $state({});
   let finalNote = $state("");
-  let draft: CharacterSheet = $state(
-    untrack(() => gs.character ?? blankCharacterDraft()),
-  );
+  let draft: CharacterSheet = $state(untrack(() => gs.character ?? blankCharacterDraft()));
 
   $effect(() => {
     if (gs.campaign_status === "ready_to_start" || gs.campaign_status === "active") {
@@ -143,9 +139,9 @@ Why three paths plus a quiz step:
       <h2>Choose who enters the world.</h2>
     </div>
     <p>
-      The world should grow around the character, not the other way around. Pick an
-      archetypal survivor, start from scratch, or describe a concept and answer a
-      short interview before the AI drafts you a sheet.
+      The world should grow around the character, not the other way around. Pick an archetypal
+      survivor, start from scratch, or describe a concept and answer a short interview before the AI
+      drafts you a sheet.
     </p>
   </div>
 
@@ -181,11 +177,7 @@ Why three paths plus a quiz step:
         <strong>Start with a blank sheet</strong>
         <span>Fill every field yourself and generate the campaign around that final version.</span>
       </button>
-      <button
-        class="mode-card iron"
-        disabled={game.isLoading}
-        onclick={() => (mode = "scratch")}
-      >
+      <button class="mode-card iron" disabled={game.isLoading} onclick={() => (mode = "scratch")}>
         <span class="kicker">Assist</span>
         <strong>Describe a concept, answer an interview</strong>
         <span>The AI generates an interview tailored to your concept, then drafts the sheet.</span>
@@ -202,8 +194,11 @@ Why three paths plus a quiz step:
     {/if}
   {:else if mode === "templates"}
     <div class="toolbar">
-      <button class="ghost" onclick={() => (mode = "choose")} disabled={game.isLoading}>Back</button>
-      <button class="ghost" onclick={loadTemplates} disabled={game.isLoading}>Regenerate templates</button>
+      <button class="ghost" onclick={() => (mode = "choose")} disabled={game.isLoading}>Back</button
+      >
+      <button class="ghost" onclick={loadTemplates} disabled={game.isLoading}
+        >Regenerate templates</button
+      >
     </div>
     {#if game.isLoading}
       <LoadingPanel
@@ -215,11 +210,7 @@ Why three paths plus a quiz step:
     {:else}
       <div class="template-grid">
         {#each templates as template (template.name + template.archetype)}
-          <CharacterTemplateCard
-            {template}
-            onEdit={editTemplate}
-            onQuickstart={quickstart}
-          />
+          <CharacterTemplateCard {template} onEdit={editTemplate} onQuickstart={quickstart} />
         {/each}
       </div>
     {/if}
@@ -279,8 +270,8 @@ Why three paths plus a quiz step:
             Concept: <em>{quiz.concept}</em>
           </p>
           <p class="muted small">
-            Pick an option or write your own. Every answer commits a detail
-            the AI is forbidden from contradicting later.
+            Pick an option or write your own. Every answer commits a detail the AI is forbidden from
+            contradicting later.
           </p>
         </div>
 
@@ -355,7 +346,8 @@ Why three paths plus a quiz step:
         <div class="review__header iron">
           <span class="kicker">Interview · 2 of 2</span>
           <p>
-            <strong>Concept:</strong> {quiz.concept}
+            <strong>Concept:</strong>
+            {quiz.concept}
           </p>
         </div>
 
@@ -367,7 +359,7 @@ Why three paths plus a quiz step:
               <p class="prompt">{question.prompt}</p>
               <p class="answer">
                 {a?.selected ?? a?.otherText ?? "(unanswered)"}
-                {#if a !== undefined && a.selected === null && a.otherText !== ""}
+                {#if a?.selected === null && a.otherText !== ""}
                   <span class="muted small"> (your own)</span>
                 {/if}
               </p>
@@ -381,8 +373,7 @@ Why three paths plus a quiz step:
             id="final-note"
             rows="3"
             bind:value={finalNote}
-            placeholder="A scar, a name, a habit — anything the AI must not skip."
-          ></textarea>
+            placeholder="A scar, a name, a habit — anything the AI must not skip."></textarea>
         </div>
 
         <div class="toolbar toolbar--end">
@@ -400,7 +391,12 @@ Why three paths plus a quiz step:
         </button>
       {/if}
     </div>
-    <CharacterEditor character={draft} onChange={(next) => (draft = next)} />
+    <CharacterEditor
+      character={draft}
+      onChange={(next: CharacterSheet) => {
+        draft = next;
+      }}
+    />
     <div class="toolbar toolbar--end">
       <button class="ghost" onclick={saveDraft}>Save draft</button>
       <button onclick={saveAndStart}>Finalize and start campaign</button>

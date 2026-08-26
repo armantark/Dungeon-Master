@@ -88,7 +88,13 @@ describe("ooc-storage", () => {
     window.localStorage.setItem(
       "dm.ooc." + SAVE_A,
       JSON.stringify([
-        { id: "ok", kind: "explanation", text: "answer", question: "q", created_at: "2025-01-01T00:00:00Z" },
+        {
+          id: "ok",
+          kind: "explanation",
+          text: "answer",
+          question: "q",
+          created_at: "2025-01-01T00:00:00Z",
+        },
         { id: 7, kind: "explanation", text: "bad" }, // wrong shape
         "not even an object",
         { id: "wrong-kind", kind: "error", text: "no", created_at: "2025-01-01T00:00:00Z" },

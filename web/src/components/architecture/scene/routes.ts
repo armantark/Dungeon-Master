@@ -37,8 +37,8 @@ const WEIGHT = [-0.055, 0.055];
 function polyline(points: readonly RoutePoint[], offset: number): THREE.BufferAttribute {
   const vertices: number[] = [];
   for (let index = 0; index + 1 < points.length; index += 1) {
-    const from = points[index] as RoutePoint;
-    const to = points[index + 1] as RoutePoint;
+    const from = points[index]!;
+    const to = points[index + 1]!;
     // Every run is axis aligned, so the perpendicular is whichever axis is not
     // travelling. Corners open by the offset, and a joint dot covers each one.
     const shiftX = from.z === to.z ? 0 : offset;
@@ -62,16 +62,10 @@ function polyline(points: readonly RoutePoint[], offset: number): THREE.BufferAt
  * follows a route the way it follows a wiring diagram. Nothing arcs over the
  * buildings, so no run can be mistaken for structure.
  */
-export function createRoutes(
-  path: ArchitecturePath,
-  allowMotion: boolean,
-): RouteNetwork {
+export function createRoutes(path: ArchitecturePath, allowMotion: boolean): RouteNetwork {
   const group = new THREE.Group();
   const materials = Object.fromEntries(
-    Object.entries(INK).map(([state, color]) => [
-      state,
-      new THREE.LineBasicMaterial({ color }),
-    ]),
+    Object.entries(INK).map(([state, color]) => [state, new THREE.LineBasicMaterial({ color })]),
   ) as Record<HopState, THREE.LineBasicMaterial>;
 
   const stops = path.steps.map((step) => {
@@ -89,7 +83,7 @@ export function createRoutes(
       new THREE.BufferGeometry().setAttribute("position", polyline(points, 0)),
       materials.overview,
     );
-    line.raycast = () => {};
+    line.raycast = () => undefined;
     group.add(line);
     return line;
   });
@@ -103,7 +97,7 @@ export function createRoutes(
         new THREE.BufferGeometry().setAttribute("position", polyline(points, offset)),
         materials.current,
       );
-      line.raycast = () => {};
+      line.raycast = () => undefined;
       run.add(line);
     }
     run.visible = false;
@@ -121,7 +115,7 @@ export function createRoutes(
       );
       dot.rotation.x = -Math.PI / 2;
       dot.position.set(point.x, groundAt(point.z) + INK_RISE + 0.004, point.z);
-      dot.raycast = () => {};
+      dot.raycast = () => undefined;
       dots.add(dot);
     }
     group.add(dots);
@@ -133,7 +127,7 @@ export function createRoutes(
     new THREE.MeshBasicMaterial({ color: INK.current }),
   );
   travel.rotation.x = -Math.PI / 2;
-  travel.raycast = () => {};
+  travel.raycast = () => undefined;
   travel.visible = false;
   group.add(travel);
 
@@ -144,7 +138,7 @@ export function createRoutes(
 
   function paint(hop: number, state: HopState): void {
     (hairlines[hop] as THREE.LineSegments).material = materials[state];
-    for (const dot of (joints[hop] as THREE.Group).children) {
+    for (const dot of joints[hop]!.children) {
       ((dot as THREE.Mesh).material as THREE.MeshBasicMaterial).color.set(INK[state]);
     }
   }
@@ -161,7 +155,7 @@ export function createRoutes(
           index,
           cursor < 0 ? "overview" : index === hop ? "current" : index < hop ? "past" : "future",
         );
-        (heavy[index] as THREE.Group).visible = index === hop;
+        heavy[index]!.visible = index === hop;
       }
 
       track = hop >= 0 ? (lines[hop] ?? []) : [];
@@ -174,8 +168,8 @@ export function createRoutes(
       phase = (phase + elapsed * 0.22) % 1;
       const span = (track.length - 1) * phase;
       const leg = Math.min(track.length - 2, Math.floor(span));
-      const from = track[leg] as RoutePoint;
-      const to = track[leg + 1] as RoutePoint;
+      const from = track[leg]!;
+      const to = track[leg + 1]!;
       const local = span - leg;
       const x = from.x + (to.x - from.x) * local;
       const z = from.z + (to.z - from.z) * local;

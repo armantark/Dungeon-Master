@@ -55,12 +55,7 @@ Everything else remains peekable reference in the Inspector.
   // layout up-front so the layout tree below stays exhaustive:
   // loading | library-empty | library-selecting | setup | active | ended.
   type LayoutMode =
-    | "loading"
-    | "library-empty"
-    | "library-selecting"
-    | "setup"
-    | "active"
-    | "ended";
+    "loading" | "library-empty" | "library-selecting" | "setup" | "active" | "ended";
   const layout: LayoutMode = $derived.by<LayoutMode>(() => {
     if (game.runtimeStatus === "checking" || game.runtimeStatus === "error") {
       return "loading";
@@ -75,9 +70,7 @@ Everything else remains peekable reference in the Inspector.
     return "setup";
   });
   const showPlayChrome = $derived(layout === "active" || layout === "ended");
-  const isLibrarySplash = $derived(
-    layout === "library-empty" || layout === "library-selecting",
-  );
+  const isLibrarySplash = $derived(layout === "library-empty" || layout === "library-selecting");
 </script>
 
 <div class="app">
@@ -109,7 +102,11 @@ Everything else remains peekable reference in the Inspector.
     <main class="app__setup">
       <div class="error">
         {game.runtimeError}
-        <button type="button" class="btn ghost retry-btn" onclick={() => void game.bootstrapRuntime()}>
+        <button
+          type="button"
+          class="btn ghost retry-btn"
+          onclick={() => void game.bootstrapRuntime()}
+        >
           Retry
         </button>
       </div>
@@ -157,8 +154,8 @@ Everything else remains peekable reference in the Inspector.
         <div class="loading parchment deckle">
           <div class="spinner-row">Generating campaign…</div>
           <p class="muted">
-            The model is composing the opening scene, threads, NPCs, and
-            oracle word banks. First runs can take ~10–30 seconds.
+            The model is composing the opening scene, threads, NPCs, and oracle word banks. First
+            runs can take ~10–30 seconds.
           </p>
         </div>
       </div>

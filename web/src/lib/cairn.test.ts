@@ -474,9 +474,7 @@ describe("item power helpers", () => {
 
     expect(hasItemPower(power)).toBe(true);
     expect(itemPowerTitle(power)).toBe("Holy relic · Icon of Saint Brindle");
-    expect(itemPowerSummary(power)).toBe(
-      "Restore WIL by 2 when invoked in honest distress.",
-    );
+    expect(itemPowerSummary(power)).toBe("Restore WIL by 2 when invoked in honest distress.");
   });
 });
 
@@ -500,7 +498,7 @@ describe("formatAbility / formatStance / formatRestKind", () => {
     for (const kind of kinds) {
       const formatted = formatRestKind(kind);
       expect(formatted).not.toBeNull();
-      expect((formatted as string).length).toBeGreaterThan(0);
+      expect(formatted!.length).toBeGreaterThan(0);
     }
     expect(formatRestKind(null)).toBeNull();
   });
@@ -529,9 +527,7 @@ describe("cairnHeadline", () => {
       uses_after: 1,
     });
 
-    expect(cairnHeadline(outcome)).toBe(
-      "Item · Icon of Saint Brindle · Holy relic · uses 2->1",
-    );
+    expect(cairnHeadline(outcome)).toBe("Item · Icon of Saint Brindle · Holy relic · uses 2->1");
   });
 
   it("returns null-safe headlines when cairn is missing for a Cairn kind", () => {
@@ -801,45 +797,41 @@ describe("formatSurvivalLine", () => {
       `Day 1 · Dawn · Watch 1/${WATCHES_PER_DAY}`,
     );
     expect(
-      formatSurvivalLine(
-        survivalAt({ day_number: 3, watch_index: 4, day_phase: "night" }),
-      ),
+      formatSurvivalLine(survivalAt({ day_number: 3, watch_index: 4, day_phase: "night" })),
     ).toBe(`Day 3 · Night · Watch 5/${WATCHES_PER_DAY}`);
   });
 
   it("clamps the human watch number at WATCHES_PER_DAY for the deep-night beat", () => {
     // watch_index=5 is the deep-night beat; the human watch should
     // read 6/6, never 7/6, even if the backend ever overshoots.
-    expect(
-      formatSurvivalLine(
-        survivalAt({ watch_index: 5, day_phase: "deep_night" }),
-      ),
-    ).toBe(`Day 1 · Deep night · Watch ${WATCHES_PER_DAY}/${WATCHES_PER_DAY}`);
+    expect(formatSurvivalLine(survivalAt({ watch_index: 5, day_phase: "deep_night" }))).toBe(
+      `Day 1 · Deep night · Watch ${WATCHES_PER_DAY}/${WATCHES_PER_DAY}`,
+    );
   });
 });
 
 describe("foodPressureTier / sleepPressureTier", () => {
   it("returns 'easy' below the warning watermark", () => {
     expect(foodPressureTier(survivalAt({ watches_since_meal: 0 }))).toBe("easy");
-    expect(
-      foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES - 1 })),
-    ).toBe("easy");
+    expect(foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES - 1 }))).toBe(
+      "easy",
+    );
     expect(sleepPressureTier(survivalAt({ watches_since_sleep: 0 }))).toBe("easy");
-    expect(
-      sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES - 1 })),
-    ).toBe("easy");
+    expect(sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES - 1 }))).toBe(
+      "easy",
+    );
   });
 
   it("returns 'warning' between the warning and deprivation watermarks", () => {
     // The "warning" tier is presentational — the backend has *not*
     // yet flipped the deprived flag, so we must not claim to be
     // authoritative. We pin both edges of the range here.
-    expect(
-      foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES })),
-    ).toBe("warning");
-    expect(
-      sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES })),
-    ).toBe("warning");
+    expect(foodPressureTier(survivalAt({ watches_since_meal: FOOD_WARNING_WATCHES }))).toBe(
+      "warning",
+    );
+    expect(sleepPressureTier(survivalAt({ watches_since_sleep: SLEEP_WARNING_WATCHES }))).toBe(
+      "warning",
+    );
     // Pressure can sit at the deprivation watermark while the
     // backend still hasn't flipped (e.g. an item suppresses it). We
     // honor the backend flag, so without it we still read 'warning'.
@@ -855,14 +847,12 @@ describe("foodPressureTier / sleepPressureTier", () => {
     // pressure is below the warning watermark but who is *flagged*
     // deprived (e.g. by a scar) should still read 'deprived' on the
     // food meter — because that's what is gating HP.
-    expect(
-      foodPressureTier(survivalAt({ watches_since_meal: 0, food_deprived: true })),
-    ).toBe("deprived");
-    expect(
-      sleepPressureTier(
-        survivalAt({ watches_since_sleep: 1, sleep_deprived: true }),
-      ),
-    ).toBe("deprived");
+    expect(foodPressureTier(survivalAt({ watches_since_meal: 0, food_deprived: true }))).toBe(
+      "deprived",
+    );
+    expect(sleepPressureTier(survivalAt({ watches_since_sleep: 1, sleep_deprived: true }))).toBe(
+      "deprived",
+    );
   });
 });
 
@@ -908,12 +898,8 @@ describe("survivalChanged", () => {
   });
 
   it("returns true when the router billed real time", () => {
-    expect(
-      survivalChanged({ ...emptySurvival(), time_advance: "watch" }),
-    ).toBe(true);
-    expect(
-      survivalChanged({ ...emptySurvival(), time_advance: "overnight" }),
-    ).toBe(true);
+    expect(survivalChanged({ ...emptySurvival(), time_advance: "watch" })).toBe(true);
+    expect(survivalChanged({ ...emptySurvival(), time_advance: "overnight" })).toBe(true);
   });
 
   it("returns true when the player ate, even with no time passing", () => {

@@ -3,10 +3,10 @@
   import type { CharacterSheet } from "../../lib/types";
   import CairnReadout from "../combat/CairnReadout.svelte";
 
-  type Props = {
+  interface Props {
     character: CharacterSheet;
     onChange: (character: CharacterSheet) => void;
-  };
+  }
 
   const { character, onChange }: Props = $props();
 
@@ -22,11 +22,7 @@
     onChange({ ...character, [key]: value });
   }
 
-  function updateInventory(
-    idx: number,
-    key: "name" | "details",
-    value: string,
-  ): void {
+  function updateInventory(idx: number, key: "name" | "details", value: string): void {
     const next = character.inventory.map((item, itemIdx) =>
       itemIdx === idx ? { ...item, [key]: value } : item,
     );
@@ -71,7 +67,7 @@
         id="name"
         type="text"
         value={character.name}
-        oninput={(event) => update("name", (event.currentTarget as HTMLInputElement).value)}
+        oninput={(event) => update("name", event.currentTarget.value)}
       />
     </div>
     <div>
@@ -80,8 +76,7 @@
         id="archetype"
         type="text"
         value={character.archetype}
-        oninput={(event) =>
-          update("archetype", (event.currentTarget as HTMLInputElement).value)}
+        oninput={(event) => update("archetype", event.currentTarget.value)}
       />
     </div>
   </div>
@@ -91,16 +86,14 @@
     id="epithet"
     rows="2"
     value={character.epithet}
-    oninput={(event) => update("epithet", (event.currentTarget as HTMLTextAreaElement).value)}
-  ></textarea>
+    oninput={(event) => update("epithet", event.currentTarget.value)}></textarea>
 
   <label for="backstory">Backstory</label>
   <textarea
     id="backstory"
     rows="5"
     value={character.backstory}
-    oninput={(event) => update("backstory", (event.currentTarget as HTMLTextAreaElement).value)}
-  ></textarea>
+    oninput={(event) => update("backstory", event.currentTarget.value)}></textarea>
 
   <div class="grid">
     <div>
@@ -109,8 +102,7 @@
         id="drive"
         rows="2"
         value={character.drive}
-        oninput={(event) => update("drive", (event.currentTarget as HTMLTextAreaElement).value)}
-      ></textarea>
+        oninput={(event) => update("drive", event.currentTarget.value)}></textarea>
     </div>
     <div>
       <label for="flaw">Flaw</label>
@@ -118,8 +110,7 @@
         id="flaw"
         rows="2"
         value={character.flaw}
-        oninput={(event) => update("flaw", (event.currentTarget as HTMLTextAreaElement).value)}
-      ></textarea>
+        oninput={(event) => update("flaw", event.currentTarget.value)}></textarea>
     </div>
   </div>
 
@@ -128,7 +119,7 @@
     id="condition"
     type="text"
     value={character.condition}
-    oninput={(event) => update("condition", (event.currentTarget as HTMLInputElement).value)}
+    oninput={(event) => update("condition", event.currentTarget.value)}
   />
 
   <div class="inventory-head">
@@ -141,14 +132,12 @@
         <input
           type="text"
           value={item.name}
-          oninput={(event) =>
-            updateInventory(idx, "name", (event.currentTarget as HTMLInputElement).value)}
+          oninput={(event) => updateInventory(idx, "name", event.currentTarget.value)}
         />
         <textarea
           rows="2"
           value={item.details}
-          oninput={(event) =>
-            updateInventory(idx, "details", (event.currentTarget as HTMLTextAreaElement).value)}
+          oninput={(event) => updateInventory(idx, "details", event.currentTarget.value)}
         ></textarea>
         <button class="ghost" type="button" onclick={() => removeItem(idx)}>Remove</button>
       </div>

@@ -128,8 +128,7 @@ export function createIsoCamera(): IsoCamera {
 
     step(elapsed: number): boolean {
       const settled =
-        target.distanceToSquared(goalTarget) < 1e-6 &&
-        Math.abs(viewHeight - goalViewHeight) < 1e-3;
+        target.distanceToSquared(goalTarget) < 1e-6 && Math.abs(viewHeight - goalViewHeight) < 1e-3;
       if (settled) {
         target.copy(goalTarget);
         viewHeight = goalViewHeight;

@@ -30,11 +30,7 @@ button collapses the modal once they've verified.
 -->
 <script lang="ts">
   import { game } from "../../lib/store.svelte";
-  import type {
-    LLMProviderCredential,
-    LLMPreset,
-    LLMPresetOption,
-  } from "../../lib/types";
+  import type { LLMProviderCredential, LLMPreset, LLMPresetOption } from "../../lib/types";
 
   let panelRef: HTMLDivElement | null = $state(null);
 
@@ -49,12 +45,8 @@ button collapses the modal once they've verified.
     game.settings?.provider_credentials ?? [],
   );
   const isSaving = $derived(game.settingsStatus === "saving");
-  const isLoading = $derived(
-    game.settingsStatus === "loading" && game.settings === null,
-  );
-  const hasLoadError = $derived(
-    game.settingsStatus === "error" && game.settings === null,
-  );
+  const isLoading = $derived(game.settingsStatus === "loading" && game.settings === null);
+  const hasLoadError = $derived(game.settingsStatus === "error" && game.settings === null);
 
   function close(): void {
     if (isSaving) return;
@@ -79,7 +71,9 @@ button collapses the modal once they've verified.
     window.addEventListener("keydown", handleKey);
     // Focus the dialog on open so subsequent keypresses (Tab, Esc)
     // route to it instead of whatever button opened it.
-    panelRef?.focus();
+    const panel = panelRef;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call -- Svelte's bind:this transform obscures the DOM method type from typed ESLint.
+    if (panel instanceof HTMLDivElement) panel.focus();
     return () => window.removeEventListener("keydown", handleKey);
   });
 
@@ -112,9 +106,8 @@ button collapses the modal once they've verified.
         <span class="kicker">Configuration</span>
         <h2 id="settings-modal-title">Narrative Model</h2>
         <p id="settings-modal-desc" class="muted desc">
-          Choose which LLM stack drives narration, planner routing, and
-          mechanical reasoning. The change applies immediately and is
-          persisted to <code>data/runtime_settings.json</code>.
+          Choose which LLM stack drives narration, planner routing, and mechanical reasoning. The
+          change applies immediately and is persisted to <code>data/runtime_settings.json</code>.
         </p>
       </header>
 
@@ -125,9 +118,7 @@ button collapses the modal once they've verified.
       {:else if hasLoadError}
         <div class="state-row error">
           <p>Couldn't load LLM settings: {game.settingsError}</p>
-          <button type="button" class="btn" onclick={() => void retryLoad()}>
-            Retry
-          </button>
+          <button type="button" class="btn" onclick={() => void retryLoad()}> Retry </button>
         </div>
       {:else}
         {#if game.settings}
@@ -158,9 +149,7 @@ button collapses the modal once they've verified.
                     <span class="credential-label">{credential.label}</span>
                     <span class="credential-status">
                       {#if credential.configured}
-                        {credential.source === "env"
-                          ? "Loaded from .env"
-                          : "Saved in app settings"}
+                        {credential.source === "env" ? "Loaded from .env" : "Saved in app settings"}
                         {#if credential.masked_key}
                           <code>{credential.masked_key}</code>
                         {/if}
@@ -241,12 +230,7 @@ button collapses the modal once they've verified.
       {/if}
 
       <footer class="foot">
-        <button
-          type="button"
-          class="btn"
-          onclick={close}
-          disabled={isSaving}
-        >
+        <button type="button" class="btn" onclick={close} disabled={isSaving}>
           {isSaving ? "Saving…" : "Done"}
         </button>
       </footer>
@@ -424,7 +408,10 @@ button collapses the modal once they've verified.
     font-family: var(--font-body);
     text-transform: none;
     letter-spacing: 0;
-    transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    transition:
+      border-color 120ms ease,
+      background 120ms ease,
+      transform 120ms ease;
   }
   .preset-card:hover:not(:disabled),
   .preset-card:focus-visible:not(:disabled) {

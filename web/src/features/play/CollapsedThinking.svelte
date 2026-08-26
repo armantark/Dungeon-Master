@@ -33,7 +33,7 @@ work without any reset choreography.
   import type { Snippet } from "svelte";
   import { untrack } from "svelte";
 
-  type Props = {
+  interface Props {
     text: string;
     streaming?: boolean;
     // When true, the block is hidden when text is empty. Persisted
@@ -59,7 +59,7 @@ work without any reset choreography.
     // content — without this we'd hide the strip just because the
     // model produced no reasoning, even if the timings are present.
     forceVisible?: boolean;
-  };
+  }
   const {
     text,
     streaming = false,
@@ -74,21 +74,14 @@ work without any reset choreography.
   let open: boolean = $state(untrack(() => false));
 
   const hasText = $derived(text.trim() !== "");
-  const visible = $derived(
-    streaming || hasText || !hideWhenEmpty || forceVisible,
-  );
+  const visible = $derived(streaming || hasText || !hideWhenEmpty || forceVisible);
   const lineCount = $derived(text === "" ? 0 : text.split("\n").length);
   const wordCount = $derived(text === "" ? 0 : text.trim().split(/\s+/).length);
 </script>
 
 {#if visible}
   <div class="thinking" class:open class:streaming>
-    <button
-      type="button"
-      class="strip pixel"
-      onclick={() => (open = !open)}
-      aria-expanded={open}
-    >
+    <button type="button" class="strip pixel" onclick={() => (open = !open)} aria-expanded={open}>
       <span class="dot" aria-hidden="true"></span>
       <span class="label">
         {#if streaming}Thinking…{:else if hasText}Reasoning trace{:else}Pipeline trace{/if}
@@ -188,8 +181,15 @@ work without any reset choreography.
     animation: pulse 1.2s ease-in-out infinite;
   }
   @keyframes pulse {
-    0%, 100% { opacity: 0.45; transform: scale(0.85); }
-    50% { opacity: 1; transform: scale(1.05); }
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .thinking.streaming .dot {

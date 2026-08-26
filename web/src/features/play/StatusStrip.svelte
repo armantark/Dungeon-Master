@@ -14,7 +14,11 @@ Anything more would compete with the conversation below.
   import type { GameState } from "../../lib/types";
   import SystemMenu from "./SystemMenu.svelte";
 
-  type Props = { chaos: number; sceneNumber: number; state: GameState };
+  interface Props {
+    chaos: number;
+    sceneNumber: number;
+    state: GameState;
+  }
   const { chaos, sceneNumber, state: gs }: Props = $props();
 
   // The combat badge appears only when an encounter is active. Clicking
@@ -24,7 +28,7 @@ Anything more would compete with the conversation below.
   // the player on every encounter start.
   const encounter = $derived(combatFromState(gs));
   const combatHeadline = $derived(encounterHeadline(encounter));
-  const showCombat = $derived(encounter !== null && encounter.active);
+  const showCombat = $derived(encounter?.active === true);
   // F-05: when the foe opened the fight, swap the kicker to "Ambush"
   // so the player's at-a-glance read of the strip is the cause of the
   // fight, not a generic "Combat" label. The button title gains the
@@ -100,12 +104,7 @@ Anything more would compete with the conversation below.
     position: relative;
     z-index: 900; /* force strip to sit above everything else */
     background:
-      /* Top bar gradient */
-      linear-gradient(
-        180deg,
-        #161310 0%,
-        #0a0807 100%
-      );
+      /* Top bar gradient */ linear-gradient(180deg, #161310 0%, #0a0807 100%);
   }
   .strip::after {
     content: "";
@@ -114,16 +113,19 @@ Anything more would compete with the conversation below.
     pointer-events: none;
     z-index: 0;
     background-image:
-      linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.45)),
-      url("/textures/linen.jpg");
+      linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.45)), url("/textures/linen.jpg");
     /*
      * `background-size: 100% auto` keeps the linen at full strip width
      * while letting the natural drape extend off the top + bottom of
      * the bar; pairing it with `background-position-y: 50%` shows the
      * mid-y slice of the source image where the deepest folds sit.
      */
-    background-size: cover, 100% auto;
-    background-position: center, center 50%;
+    background-size:
+      cover,
+      100% auto;
+    background-position:
+      center,
+      center 50%;
     background-repeat: no-repeat, no-repeat;
   }
   .strip > * {
@@ -187,9 +189,9 @@ Anything more would compete with the conversation below.
     pointer-events: none;
     border-style: solid;
     border-width: 2px;
-    border-top-color: rgba(255, 225, 165, 0.40);
+    border-top-color: rgba(255, 225, 165, 0.4);
     border-left-color: rgba(255, 225, 165, 0.15);
-    border-bottom-color: rgba(0, 0, 0, 0.90);
+    border-bottom-color: rgba(0, 0, 0, 0.9);
     border-right-color: rgba(0, 0, 0, 0.65);
   }
   .scene > * {

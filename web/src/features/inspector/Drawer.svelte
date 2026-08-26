@@ -7,13 +7,13 @@ Used as the host for ThreadsPanel, NPCsPanel, and notes.
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
 
-  type Props = {
+  interface Props {
     title: string;
     open?: boolean;
     maxHeight?: string;
     reopenToken?: number;
     children: Snippet;
-  };
+  }
   const { title, open = true, maxHeight = "none", reopenToken = 0, children }: Props = $props();
 
   // The prop is intentionally one-shot: the parent specifies the initial

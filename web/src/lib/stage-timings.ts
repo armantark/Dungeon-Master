@@ -31,9 +31,7 @@ function isoToMs(value: string | null): number | null {
  * built by `applyStageEvent`, so `StageChecklist` can render it
  * without knowing which source it came from.
  */
-export function stageTimingsToProgress(
-  timings: readonly StageTiming[],
-): StageProgress[] {
+export function stageTimingsToProgress(timings: readonly StageTiming[]): StageProgress[] {
   return timings.map((t, index) => ({
     stageId: t.stage_id,
     label: t.label,

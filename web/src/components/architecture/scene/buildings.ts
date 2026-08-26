@@ -102,7 +102,7 @@ class Builder {
     const outline = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 30), this.edges);
     // Lines are picked against a world-space threshold, so an outline can steal
     // a click from the solid in front of it. Only the faces are pickable.
-    outline.raycast = () => {};
+    outline.raycast = () => undefined;
     mesh.add(outline);
     return mesh;
   }
@@ -323,7 +323,5 @@ export function applyMood(handle: BuildingHandle, mood: BuildingMood): void {
     material.color.copy(tone);
     if (mood === "focus") material.color.lerp(WASH, 0.42);
   }
-  handle.edges.color.set(
-    mood === "focus" ? EDGE_FOCUS : mood === "path" ? EDGE_PATH : EDGE_PLAIN,
-  );
+  handle.edges.color.set(mood === "focus" ? EDGE_FOCUS : mood === "path" ? EDGE_PATH : EDGE_PLAIN);
 }

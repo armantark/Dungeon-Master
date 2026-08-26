@@ -137,24 +137,18 @@ describe("GameStore setup streaming", () => {
   });
 
   it("translates /retreat into a free-text turn so the planner runs", async () => {
-    const streamSpy = vi
-      .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue(completedStateStream());
+    const streamSpy = vi.spyOn(api, "streamSubmitTurn").mockResolvedValue(completedStateStream());
 
     const consumed = await game.submit("/retreat down the chapel stair");
 
     expect(consumed).toBe(true);
     expect(streamSpy).toHaveBeenCalledTimes(1);
     const [textArg] = streamSpy.mock.calls[0]!;
-    expect(textArg).toBe(
-      "I attempt to retreat from combat: down the chapel stair",
-    );
+    expect(textArg).toBe("I attempt to retreat from combat: down the chapel stair");
   });
 
   it("uses a neutral default text when /retreat has no reason", async () => {
-    const streamSpy = vi
-      .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue(completedStateStream());
+    const streamSpy = vi.spyOn(api, "streamSubmitTurn").mockResolvedValue(completedStateStream());
 
     await game.submit("/retreat");
 
@@ -168,11 +162,9 @@ describe("GameStore setup streaming", () => {
     // ACQUIRE_ITEM. We assert the verb the player typed is preserved
     // verbatim because the resulting narration leans on that fictional
     // framing (looting vs. buying vs. taking).
-    const streamSpy = vi
-      .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue(completedStateStream());
+    const streamSpy = vi.spyOn(api, "streamSubmitTurn").mockResolvedValue(completedStateStream());
 
-    const cases: Array<[string, string]> = [
+    const cases: [string, string][] = [
       ["/loot the captain's chest", "I loot the captain's chest."],
       ["/take a wax-sealed letter", "I take a wax-sealed letter."],
       ["/buy rope and a lantern", "I buy rope and a lantern."],
@@ -194,9 +186,7 @@ describe("GameStore setup streaming", () => {
     // when the body would otherwise read like a fragment; respecting
     // existing terminators avoids the planner seeing `…now!.` style
     // double-punctuation.
-    const streamSpy = vi
-      .spyOn(api, "streamSubmitTurn")
-      .mockResolvedValue(completedStateStream());
+    const streamSpy = vi.spyOn(api, "streamSubmitTurn").mockResolvedValue(completedStateStream());
 
     await game.submit("/loot the chest before the guards return!");
 
@@ -218,17 +208,16 @@ describe("GameStore setup streaming", () => {
   });
 
   it("keeps composer text available when a backend turn submission fails", async () => {
-    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
-      () =>
-        Promise.resolve({
-          kind: "error",
-          event: {
-            type: "error",
-            message: "Turn planning failed before any deterministic resolution could be chosen.",
-            code: "planning_failed",
-            state: null,
-          },
-        } as never),
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation(() =>
+      Promise.resolve({
+        kind: "error",
+        event: {
+          type: "error",
+          message: "Turn planning failed before any deterministic resolution could be chosen.",
+          code: "planning_failed",
+          state: null,
+        },
+      } as never),
     );
 
     const consumed = await game.submit("I ask the patriarch's name.");
@@ -243,9 +232,7 @@ describe("GameStore setup streaming", () => {
     // than the streaming turn surface. We pass null when the body is
     // empty so the backend's deterministic default fires; any
     // non-empty body is forwarded verbatim.
-    const endSpy = vi
-      .spyOn(api, "endCampaign")
-      .mockResolvedValue({} as never);
+    const endSpy = vi.spyOn(api, "endCampaign").mockResolvedValue({} as never);
 
     const consumed = await game.submit("/retire I lay the blade by the hearth.");
 
@@ -257,9 +244,7 @@ describe("GameStore setup streaming", () => {
   });
 
   it("forwards null summary on a bare /victory so the backend writes its deterministic default", async () => {
-    const endSpy = vi
-      .spyOn(api, "endCampaign")
-      .mockResolvedValue({} as never);
+    const endSpy = vi.spyOn(api, "endCampaign").mockResolvedValue({} as never);
 
     await game.submit("/victory");
 
@@ -274,30 +259,28 @@ describe("GameStore setup streaming", () => {
   });
 
   it("dispatches /ask to the read-only preview endpoint and lands a session-only OOC note", async () => {
-    const previewSpy = vi
-      .spyOn(api, "previewYesNo")
-      .mockResolvedValue({
-        id: "oracle_preview_1",
-        created_at: "2025-01-01T00:00:00Z",
-        kind: "yes_no",
-        summary: "Yes: Is the gate watched?",
-        rolls: [{ label: "fate", result: 17, sides: 100 }],
-        question: "Is the gate watched?",
-        likelihood: "Likely",
-        answer: "Yes",
-        probability: 70,
-        chaos_factor: 5,
-        event_focus: null,
-        event_action: null,
-        event_tone: null,
-        event_subject: null,
-        referenced_thread_id: null,
-        referenced_thread_ids: [],
-        referenced_npc_id: null,
-        referenced_npc_ids: [],
-        scene_status: null,
-        cairn: null,
-      } as never);
+    const previewSpy = vi.spyOn(api, "previewYesNo").mockResolvedValue({
+      id: "oracle_preview_1",
+      created_at: "2025-01-01T00:00:00Z",
+      kind: "yes_no",
+      summary: "Yes: Is the gate watched?",
+      rolls: [{ label: "fate", result: 17, sides: 100 }],
+      question: "Is the gate watched?",
+      likelihood: "Likely",
+      answer: "Yes",
+      probability: 70,
+      chaos_factor: 5,
+      event_focus: null,
+      event_action: null,
+      event_tone: null,
+      event_subject: null,
+      referenced_thread_id: null,
+      referenced_thread_ids: [],
+      referenced_npc_id: null,
+      referenced_npc_ids: [],
+      scene_status: null,
+      cairn: null,
+    } as never);
     const committedSpy = vi.spyOn(api, "askYesNo");
 
     const consumed = await game.submit("/ask Is the gate watched? [likely]");
@@ -326,17 +309,15 @@ describe("GameStore setup streaming", () => {
     // is OOC (kind `"explanation"`) and carries the player's
     // verbatim question on the same record so the chat feed can
     // render a Q+A pair.
-    const streamSpy = vi
-      .spyOn(api, "streamExplain")
-      .mockResolvedValue({
-        kind: "final",
-        final: {
-          type: "final_payload",
-          kind: "explanation",
-          payload: { answer: "Atk targets a foe; the receipt records the d20 roll." },
-          thinking: null,
-        },
-      } as never);
+    const streamSpy = vi.spyOn(api, "streamExplain").mockResolvedValue({
+      kind: "final",
+      final: {
+        type: "final_payload",
+        kind: "explanation",
+        payload: { answer: "Atk targets a foe; the receipt records the d20 roll." },
+        thinking: null,
+      },
+    } as never);
 
     const consumed = await game.submit("/explain how does atk work?");
 
@@ -361,12 +342,10 @@ describe("GameStore setup streaming", () => {
     vi.spyOn(api, "streamExplain").mockRejectedValue(
       new StreamTransportError("not found", { status: 404 }),
     );
-    const unarySpy = vi
-      .spyOn(api, "explain")
-      .mockResolvedValue({
-        answer: "Recovery restores HP outside combat using deprivations.",
-        thinking: "",
-      });
+    const unarySpy = vi.spyOn(api, "explain").mockResolvedValue({
+      answer: "Recovery restores HP outside combat using deprivations.",
+      thinking: "",
+    });
 
     const consumed = await game.submit("/explain how does recovery work?");
 
@@ -389,9 +368,7 @@ describe("GameStore setup streaming", () => {
     expect(consumed).toBe(true);
     expect(streamSpy).not.toHaveBeenCalled();
     expect(unarySpy).not.toHaveBeenCalled();
-    expect(
-      game.notes.some((n) => n.kind === "error" && n.text.includes("/explain")),
-    ).toBe(true);
+    expect(game.notes.some((n) => n.kind === "error" && n.text.includes("/explain"))).toBe(true);
   });
 
   it("surfaces server-aborted setup streams as an error instead of silent null", async () => {
@@ -445,59 +422,60 @@ describe("GameStore setup streaming", () => {
         .map((s) => ({ id: s.stageId, status: s.status, order: s.order }));
     }
 
-    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
-      (_text, handlers) => {
-        handlers.onMeta?.({ type: "meta", request_id: "req_1", route: "player_action" });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "planning_turn",
-          label: "Planning turn",
-          status: "pending",
-        });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "preparing_narration",
-          label: "Preparing narration",
-          status: "pending",
-        });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "streaming_narration",
-          label: "Streaming narration",
-          status: "pending",
-        });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "planning_turn",
-          label: "Planning turn",
-          status: "active",
-        });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "planning_turn",
-          label: "Planning turn",
-          status: "done",
-        });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "preparing_narration",
-          label: "Preparing narration",
-          status: "active",
-        });
-        handlers.onContentDelta?.({ type: "content_delta", text: "Ash falls." });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "reconciling_continuity",
-          label: "Reconciling continuity",
-          status: "active",
-        });
-        // Snapshot mid-stream so we can assert in-place updates and
-        // stable ordering before the stream completes, including a
-        // stage that arrived after prose was already flowing.
-        observedDuringStream = getStages();
-        return Promise.resolve({ kind: "final", final: { type: "final_state", state: finalState, thinking: null } } as never);
-      },
-    );
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation((_text, handlers) => {
+      handlers.onMeta?.({ type: "meta", request_id: "req_1", route: "player_action" });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "planning_turn",
+        label: "Planning turn",
+        status: "pending",
+      });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "preparing_narration",
+        label: "Preparing narration",
+        status: "pending",
+      });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "streaming_narration",
+        label: "Streaming narration",
+        status: "pending",
+      });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "planning_turn",
+        label: "Planning turn",
+        status: "active",
+      });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "planning_turn",
+        label: "Planning turn",
+        status: "done",
+      });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "preparing_narration",
+        label: "Preparing narration",
+        status: "active",
+      });
+      handlers.onContentDelta?.({ type: "content_delta", text: "Ash falls." });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "reconciling_continuity",
+        label: "Reconciling continuity",
+        status: "active",
+      });
+      // Snapshot mid-stream so we can assert in-place updates and
+      // stable ordering before the stream completes, including a
+      // stage that arrived after prose was already flowing.
+      observedDuringStream = getStages();
+      return Promise.resolve({
+        kind: "final",
+        final: { type: "final_state", state: finalState, thinking: null },
+      } as never);
+    });
 
     await game.submitTurn("I peer into the dark.");
 
@@ -533,27 +511,25 @@ describe("GameStore setup streaming", () => {
     // stage frames, then call cancelCurrentRequest from a microtask
     // and assert the stages array is empty after the call resolves.
     vi.spyOn(api, "cancelRequest").mockResolvedValue(undefined as never);
-    vi.spyOn(api, "streamSubmitTurn").mockImplementation(
-      (_text, handlers, signal) => {
-        handlers.onMeta?.({ type: "meta", request_id: "req_42", route: "player_action" });
-        handlers.onStage?.({
-          type: "stage",
-          stage_id: "planning_turn",
-          label: "Planning turn",
-          status: "active",
+    vi.spyOn(api, "streamSubmitTurn").mockImplementation((_text, handlers, signal) => {
+      handlers.onMeta?.({ type: "meta", request_id: "req_42", route: "player_action" });
+      handlers.onStage?.({
+        type: "stage",
+        stage_id: "planning_turn",
+        label: "Planning turn",
+        status: "active",
+      });
+      // Trigger cancel from the same tick so the abort is observed
+      // before the next handler call would land. The promise the
+      // store awaits resolves with `kind: "aborted"` once the
+      // signal trips.
+      queueMicrotask(() => game.cancelCurrentRequest());
+      return new Promise((resolve) => {
+        signal?.addEventListener("abort", () => {
+          resolve({ kind: "aborted", reason: "client" } as never);
         });
-        // Trigger cancel from the same tick so the abort is observed
-        // before the next handler call would land. The promise the
-        // store awaits resolves with `kind: "aborted"` once the
-        // signal trips.
-        queueMicrotask(() => game.cancelCurrentRequest());
-        return new Promise((resolve) => {
-          signal?.addEventListener("abort", () => {
-            resolve({ kind: "aborted", reason: "client" } as never);
-          });
-        });
-      },
-    );
+      });
+    });
 
     await game.submitTurn("I look around.");
 
@@ -569,21 +545,16 @@ describe("GameStore setup streaming", () => {
     // whatever the backend echoes back as the new canonical
     // state — empty strings included, since "clear my guidance"
     // is a legal commit.
-    const updateSpy = vi
-      .spyOn(api, "updateDirectives")
-      .mockResolvedValue({
-        id: "state_after",
-        directives: {
-          world_guidance: "Miracles are subtle.",
-          play_guidance: "End scenes on a question.",
-        },
-      } as never);
+    const updateSpy = vi.spyOn(api, "updateDirectives").mockResolvedValue({
+      id: "state_after",
+      directives: {
+        world_guidance: "Miracles are subtle.",
+        play_guidance: "End scenes on a question.",
+      },
+    } as never);
     const notesSpy = vi.spyOn(api, "updateNotes");
 
-    await game.updateDirectives(
-      "Miracles are subtle.",
-      "End scenes on a question.",
-    );
+    await game.updateDirectives("Miracles are subtle.", "End scenes on a question.");
 
     expect(notesSpy).not.toHaveBeenCalled();
     expect(updateSpy).toHaveBeenCalledTimes(1);

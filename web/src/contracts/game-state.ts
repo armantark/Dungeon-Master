@@ -10,12 +10,7 @@ import type {
   NPC,
 } from "./campaign";
 import type { EncounterState } from "./encounter";
-import type {
-  GameEvent,
-  OracleOutcome,
-  OracleTables,
-  SceneStatus,
-} from "./oracle";
+import type { GameEvent, OracleOutcome, OracleTables, SceneStatus } from "./oracle";
 
 export interface GameState {
   id: string;

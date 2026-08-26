@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  endHeadline,
-  endKicker,
-  endSummary,
-  formatEndedAt,
-  isCampaignEnded,
-} from "./end-campaign";
+import { endHeadline, endKicker, endSummary, formatEndedAt, isCampaignEnded } from "./end-campaign";
 import { defaultCampaignSeed } from "./campaign-seed";
 import type { CampaignEndReason, GameState } from "./types";
 
@@ -73,12 +67,8 @@ describe("isCampaignEnded", () => {
   });
 
   it("returns false for active or setup state", () => {
-    expect(
-      isCampaignEnded(endedState({ campaign_status: "active" })),
-    ).toBe(false);
-    expect(
-      isCampaignEnded(endedState({ campaign_status: "character_creation" })),
-    ).toBe(false);
+    expect(isCampaignEnded(endedState({ campaign_status: "active" }))).toBe(false);
+    expect(isCampaignEnded(endedState({ campaign_status: "character_creation" }))).toBe(false);
   });
 
   it("returns true only when campaign_status is the terminal 'ended'", () => {
