@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d141c'/%3E%3Cpath d='M13 18h16l5 6h17v25H13z' fill='%2360a5fa'/%3E%3Cpath d='M18 31h28M18 38h22' stroke='%230d141c' stroke-width='4'/%3E%3C/svg%3E">
+  <title>Dungeon Master package reorganization results</title>
+  <style>
+    :root{--bg:#0d141c;--panel:#151f2b;--panel-2:#1b2937;--line:#304355;--text:#edf4f8;--dim:#9cadba;--green:#4ade80;--blue:#60a5fa;--amber:#fbbf24;--radius:14px}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,rgba(96,165,250,.14),transparent 32%),var(--bg);color:var(--text);font:15px/1.55 Inter,system-ui,sans-serif}.wrap{width:min(1180px,calc(100% - 32px));margin:auto;padding:42px 0 68px}.badge,.eyebrow,.tag{font:700 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.1em}.badge{display:inline-block;padding:7px 10px;border:1px solid var(--green);border-radius:999px;color:#a5f3be;background:rgba(74,222,128,.08)}h1{margin:16px 0 8px;font-size:clamp(30px,5vw,50px);line-height:1.05}.lead{max-width:850px;color:var(--dim);font-size:17px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:28px 0}.stat,.card,.flow,.proof{background:linear-gradient(145deg,var(--panel),#111923);border:1px solid var(--line);border-radius:var(--radius)}.stat{padding:16px}.stat b{display:block;font-size:27px}.stat span{color:var(--dim)}.flow{padding:18px;margin-bottom:18px}.track{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.node{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);position:relative}.node:not(:last-child)::after{content:"→";position:absolute;right:-14px;top:28%;z-index:2;color:var(--blue);font-size:20px}.node small{display:block;color:var(--dim)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:20px}.card h2{margin:7px 0;font-size:20px}.card p{color:var(--dim)}.eyebrow{color:var(--blue)}.eyebrow.green{color:var(--green)}.eyebrow.amber{color:var(--amber)}.list{margin:14px 0 0;padding-left:20px}.list li{margin:7px 0}.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.tag{padding:5px 7px;border-radius:6px;background:var(--panel-2);color:#c8d4dd}.proof{margin-top:18px;padding:18px;border-left:3px solid var(--green)}.proof strong{color:#a5f3be}.decision{margin-top:14px;padding:16px;border-left:3px solid var(--blue);background:rgba(96,165,250,.06);border-radius:0 10px 10px 0}.decision strong{color:#9ec8ff}code{color:#dceaf3}@media(max-width:860px){.stats,.track,.grid{grid-template-columns:1fr}.node:not(:last-child)::after{content:"↓";right:12px;top:auto;bottom:-18px}.wrap{width:min(100% - 20px,1180px);padding-top:24px}}
+  </style>
+</head>
+<body><main class="wrap">
+  <span class="badge">Implementation complete</span>
+  <h1>The repository now explains itself by responsibility.</h1>
+  <p class="lead">Backend transport, mechanics, model work, memory, and application workflows have clear homes. Frontend features, wire contracts, and client workflows also have clear homes. Stable facades keep existing imports and runtime contracts intact.</p>
+
+  <section class="stats" aria-label="Measured results">
+    <div class="stat"><b>341</b><span>backend tests passed</span></div>
+    <div class="stat"><b>338</b><span>frontend tests passed</span></div>
+    <div class="stat"><b>0</b><span>lint or type errors</span></div>
+    <div class="stat"><b>0</b><span>npm audit findings</span></div>
+  </section>
+
+  <section class="flow" aria-label="Turn flow">
+    <div class="track">
+      <div class="node"><b>HTTP</b><small>transport/http</small></div>
+      <div class="node"><b>Plan</b><small>llm/planning</small></div>
+      <div class="node"><b>Resolve</b><small>mechanics</small></div>
+      <div class="node"><b>Narrate</b><small>llm/narration</small></div>
+      <div class="node"><b>Commit</b><small>application + store</small></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <article class="card">
+      <span class="eyebrow">Backend ownership</span>
+      <h2>Compatibility facades are now thin.</h2>
+      <ul class="list">
+        <li><code>api.py</code> is 17 lines. HTTP work lives in <code>transport/http/</code>.</li>
+        <li><code>cairn.py</code> is 64 lines. Rules live in four mechanics modules.</li>
+        <li><code>narrative.py</code> is 59 lines and <code>turn_router.py</code> is 43 lines.</li>
+        <li>Typed plan execution uses explicit ports instead of a mixin tied to <code>GameService</code>.</li>
+      </ul>
+      <div class="tags"><span class="tag">transport/http</span><span class="tag">application</span><span class="tag">mechanics</span><span class="tag">llm</span><span class="tag">memory</span></div>
+    </article>
+
+    <article class="card">
+      <span class="eyebrow green">Frontend ownership</span>
+      <h2>Product code follows the user experience.</h2>
+      <ul class="list">
+        <li><code>features/</code> groups combat, inspector, play, saves, settings, and setup.</li>
+        <li><code>contracts/</code> owns domain wire types. The old import facade is 8 lines.</li>
+        <li><code>state/</code> separates save, runtime, play, and stream workflows.</li>
+        <li><code>GameStore</code> stays the only rune-backed reactive state owner.</li>
+      </ul>
+      <div class="tags"><span class="tag">Svelte 5</span><span class="tag">TypeScript</span><span class="tag">explicit workflows</span><span class="tag">full-state replacement</span></div>
+    </article>
+
+    <article class="card">
+      <span class="eyebrow">Enforced standards</span>
+      <h2>Style checks are executable.</h2>
+      <ul class="list">
+        <li>Ruff formats and lints all 99 Python files.</li>
+        <li>Strict mypy reports no issues in 94 source files.</li>
+        <li>Prettier and type-aware ESLint govern TypeScript and Svelte.</li>
+        <li><code>svelte-check</code> reports 0 errors and 0 warnings.</li>
+      </ul>
+    </article>
+
+    <article class="card">
+      <span class="eyebrow amber">Preserved contracts</span>
+      <h2>The refactor did not redesign the product.</h2>
+      <ul class="list">
+        <li>Public Python and frontend imports remain valid.</li>
+        <li>HTTP paths, OpenAPI shape, NDJSON events, and save formats remain compatible.</li>
+        <li>Model ids, prompts, mechanics, and UI behavior did not change.</li>
+        <li>The source-cited development map now points to the new implementation owners.</li>
+      </ul>
+    </article>
+  </section>
+
+  <div class="proof"><strong>Final proof:</strong> Ruff format and lint passed. Strict mypy passed. Pytest passed 341 tests. Prettier, ESLint, and Svelte diagnostics passed. Vitest passed 338 tests in 26 files. Vite built 217 modules. The npm audit found 0 vulnerabilities. The earlier isolated browser smoke switched saves and committed a deterministic action without state bleed.</div>
+  <div class="decision"><strong>Independent simplification verdict:</strong> No valid deletions remain. Keep the thin facades, explicit service ports, canonical state owners, and narrow framework-specific lint exceptions.</div>
+</main></body></html>

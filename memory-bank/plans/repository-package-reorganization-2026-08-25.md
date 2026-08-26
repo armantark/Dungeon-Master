@@ -139,3 +139,7 @@ Criteria:
 - 2026-08-25: Driver installed the Python and TypeScript standards gates and split HTTP schemas, runtime wiring, and turn-stage timing into focused modules.
 - 2026-08-25: Mechanics closed with four domain modules and a 63-line compatibility facade; model and memory infrastructure closed with separate memory, completion, narration, and planning owners.
 - 2026-08-25: Second fanout wave started for application use cases and HTTP route groups.
+- 2026-08-25: Application mixins were rejected as a false seam. Typed plan execution now uses a composed executor with explicit service ports, while cross-cutting lifecycle and persistence work stays in `GameService`.
+- 2026-08-25: Frontend state extraction completed with `GameStore` as the sole rune-backed owner and explicit play, save, runtime, and stream workflows.
+- 2026-08-25: Full verification passed: Ruff format/lint, strict mypy, 341 backend tests, Prettier, type-aware ESLint, zero Svelte diagnostics, 338 frontend tests, a 217-module production build, and an npm audit with zero findings.
+- 2026-08-25: Independent deletion review returned no must-fix items. Results are recorded in `memory-bank/status-updates/repository-package-reorganization-results-2026-08-25.html`.
