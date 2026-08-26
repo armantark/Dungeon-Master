@@ -16,10 +16,8 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, status
 from fastapi import Path as ApiPath
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 
 from dungeon_master import __version__
-from dungeon_master.cancel import CancellationToken
 from dungeon_master.config import (
     LLMCredentialsStore,
     LLMRuntimeSettings,
@@ -27,7 +25,6 @@ from dungeon_master.config import (
     build_llm_runtime,
 )
 from dungeon_master.models import GameState, OracleOutcome
-from dungeon_master.narrative import CompletionDelta
 from dungeon_master.save_library import SaveLibrary
 from dungeon_master.service import GameService
 from dungeon_master.state_store import StateStore
@@ -99,78 +96,31 @@ from dungeon_master.transport.http.schemas import (
     SelectSaveRequest,
     YesNoRequest,
 )
+from dungeon_master.transport.http.streaming import active_save_id as _active_save_id
+from dungeon_master.transport.http.streaming import (
+    start_game_state_stream as _start_game_state_stream,
+)
+from dungeon_master.transport.http.streaming import start_setup_stream as _start_setup_stream
+from dungeon_master.transport.http.streaming import streaming_response as _streaming_response
 from dungeon_master.transport.stream_runtime import (
-    PayloadKind,
     StreamRuntime,
-    StreamSession,
     StreamSessionNotFoundError,
     StreamSessionSaveMismatchError,
 )
 from dungeon_master.turn_router import TurnPlanningError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Generator
+    from collections.abc import AsyncIterator, Generator
+
+    from fastapi.responses import StreamingResponse
+
+    from dungeon_master.cancel import CancellationToken
+    from dungeon_master.narrative import CompletionDelta
 
 logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api")
-
-
-# FastAPI only adapts retained sessions to HTTP responses. Session creation,
-# cancellation, NDJSON production, worker ownership, and replay live in the
-# transport runtime.
-
-
-def _active_save_id(app: FastAPI) -> str | None:
-    library = getattr(app.state, "save_library", None)
-    if not isinstance(library, SaveLibrary):
-        return None
-    return library.active_save_id()
-
-
-def _streaming_response(session: StreamSession) -> StreamingResponse:
-    return StreamingResponse(session.attach(), media_type="application/x-ndjson")
-
-
-def _start_game_state_stream(
-    request: Request,
-    *,
-    generator_factory: Callable[
-        [CancellationToken],
-        Generator[CompletionDelta, None, GameState],
-    ],
-    route: str,
-    stream_runtime: StreamRuntime,
-) -> StreamingResponse:
-    session = stream_runtime.start_game_state(
-        route=route,
-        save_id=_active_save_id(request.app),
-        generator_factory=generator_factory,
-    )
-    return _streaming_response(session)
-
-
-def _start_setup_stream[SetupResult](  # noqa: PLR0913
-    request: Request,
-    *,
-    generator_factory: Callable[
-        [CancellationToken],
-        Generator[CompletionDelta, None, SetupResult],
-    ],
-    route: str,
-    payload_kind: PayloadKind,
-    serialize: Callable[[SetupResult], dict[str, object]],
-    stream_runtime: StreamRuntime,
-) -> StreamingResponse:
-    session = stream_runtime.start_payload(
-        route=route,
-        save_id=_active_save_id(request.app),
-        generator_factory=generator_factory,
-        payload_kind=payload_kind,
-        serializer=serialize,
-    )
-    return _streaming_response(session)
 
 
 @router.get("/health")
