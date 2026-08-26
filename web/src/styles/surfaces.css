@@ -1,0 +1,567 @@
+/* --- Surfaces --------------------------------------------------------- */
+
+/*
+ * Parchment cards — the primary "paper" surface (DM messages, NPC and
+ * thread cards, receipts, save library tiles, etc.).
+ *
+ * Layers, bottom-up:
+ *   1. Three-stop radial-and-linear gradient that gives the page its
+ *      stained, warm-to-shadow falloff. This is the *colour* of paper.
+ *   2. A pseudo-element grain layer (`::before`) carrying the CC0 paper
+ *      tile from `web/public/textures/`. The tile is a transparent
+ *      grayscale PNG — its dark spots overlay the gradient through plain
+ *      alpha so we get real fibre irregularity without messing with the
+ *      pigment math. Multiply blend would darken too aggressively under
+ *      receipts' dense tag/dl rows; alpha at moderate opacity stays
+ *      readable. This is the *texture* of paper.
+ *   3. Actual content (kicker, headlines, body, child rails, etc.).
+ *
+ * `isolation: isolate` keeps the grain confined to this card's stacking
+ * context so it can't bleed into popovers anchored against it. The
+ * `position: relative; z-index: 1` rule on direct children guarantees
+ * content paints above the grain on every renderer (we hit a Tauri/
+ * WebKit rendering bug on small panels before; the explicit z-index
+ * sidesteps that whole class of compositor surprise).
+ */
+.parchment {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(74, 38, 22, 0.16), transparent 45%),
+    radial-gradient(circle at 88% 82%, rgba(74, 38, 22, 0.22), transparent 55%),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--paper-warm) 96%, var(--ink-bruise)) 0%,
+      var(--paper-bone) 50%,
+      color-mix(in oklab, var(--paper-stained) 92%, var(--ink-bruise)) 100%
+    );
+  color: var(--ink-deep);
+  border: 1px solid color-mix(in oklab, var(--ink-bruise) 60%, transparent);
+  /*
+   * Inset shadow widened and darkened to give every card a "stained
+   * edge" ring — the paper looks more handled, less brand-new. This
+   * is a substrate effect that doesn't need a texture asset, and it
+   * registers visibly without depending on perception of fine grain.
+   * The outer drop-shadow stays the same so cards still feel like
+   * they sit above the page.
+   */
+  box-shadow:
+    inset 0 0 0 1px rgba(60, 30, 10, 0.1),
+    inset 0 0 90px rgba(60, 30, 10, 0.32),
+    inset 0 0 20px rgba(60, 30, 10, 0.18),
+    0 18px 36px -12px rgba(0, 0, 0, 0.65);
+  padding: 1.4rem 1.6rem;
+}
+/*
+ * Parchment substrate — real paper fibre, not procedural noise.
+ *
+ * Texture is Transparent Textures' `natural-paper.png` — 523x384
+ * tileable PNG of authentic paper-fibre photography. Earlier rounds
+ * stacked procedurally-generated stain and grain layers; both were
+ * obviously fake at retina and forced multiple compromises. One real
+ * paper texture at gentle alpha + multiply does the same job better.
+ *
+ * `multiply` at 22% darkens cream paper naturally where the fibre is
+ * darker; doesn't compete with body text legibility because the source
+ * tile's standard deviation is tight (~3%).
+ */
+.parchment::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/natural-paper.png");
+  background-size: 523px 384px;
+  background-repeat: repeat;
+  /*
+   * 0.45 plain-alpha — visible paper-fibre highlights but not so
+   * dense that body text loses contrast. Bumped down from 1.0 after
+   * legibility feedback on Save Library cards (cream text on heavy
+   * fibre was unreadable).
+   */
+  opacity: 0.45;
+}
+.parchment > * {
+  position: relative;
+  z-index: 1;
+}
+
+.parchment .kicker {
+  color: color-mix(in oklab, var(--rust-blood) 85%, var(--ink-black));
+}
+.parchment h2,
+.parchment h3 {
+  color: color-mix(in oklab, var(--ink-bruise) 80%, var(--ink-black));
+}
+.parchment .muted {
+  color: color-mix(in oklab, var(--ink-bruise) 65%, var(--paper-shadow));
+}
+
+.deckle {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><filter id='r'><feTurbulence type='fractalNoise' baseFrequency='0.018 0.04' numOctaves='2' seed='9'/><feDisplacementMap in='SourceGraphic' scale='6'/></filter><rect x='1' y='1' width='98' height='98' fill='black' filter='url(%23r)'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><filter id='r'><feTurbulence type='fractalNoise' baseFrequency='0.018 0.04' numOctaves='2' seed='9'/><feDisplacementMap in='SourceGraphic' scale='6'/></filter><rect x='1' y='1' width='98' height='98' fill='black' filter='url(%23r)'/></svg>");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+/*
+ * Iron chassis — the "front-ish" dark surface (above the ebony
+ * backdrop, below parchment cards). Fiction: leather-clad iron panels
+ * — desk blotter, codex cover, dossier folio.
+ *
+ * Texture is now globally applied via `.iron::after` (was opt-in via
+ * `.iron-grained` for a few rounds — see history). The earlier reason
+ * to make it opt-in was a Tauri/WebKit text-rendering bug triggered
+ * by `mix-blend-mode` on a global pseudo. Switching to plain-alpha
+ * compositing (no mix-blend-mode) removes that constraint, so leather
+ * can be on every `.iron` surface — which is what the user expects:
+ * if there's a front-ish dark panel, it should be leather-clad.
+ *
+ * `.iron-grained` is kept as an alias so existing components don't
+ * need to be updated, but the texture is now on the base class too.
+ *
+ * Source: Transparent Textures' `dark-leather.png` (see SOURCES.md).
+ */
+.iron {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--ink-deep) 98%, var(--rust-iron)) 0%,
+    var(--ink-black) 100%
+  );
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+  box-shadow:
+    var(--shadow-deep),
+    inset 0 1px 0 rgba(255, 220, 150, 0.06),
+    inset 0 0 80px rgba(0, 0, 0, 0.55);
+  color: var(--paper-bone);
+}
+/*
+ * `.cloth` — black linen drape used for the top status strip and any
+ * other surface that should read as fabric (vs. leather, parchment,
+ * cast iron). Sourced from an AI-generated linen photograph
+ * (see `memory-bank/linen.png`). The image is a wide drape, so we
+ * scale to cover the surface height and let the natural fold pattern
+ * read at the strip's own dimensions; no blend modes, no filters.
+ */
+.cloth {
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.35)),
+    url("/textures/linen.jpg") center/cover no-repeat,
+    #0c0a08;
+  color: var(--paper-bone);
+}
+.cloth > * {
+  position: relative;
+  z-index: 1;
+}
+.iron::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/textures/dark-leather.png");
+  background-size: 300px 300px;
+  background-repeat: repeat;
+  /*
+   * The texture is a highly transparent dark-gray PNG. On a
+   * near-black background, plain alpha blending makes it invisible.
+   * `screen` blend mode forces the texture's faint gray pixels to
+   * lighten the black background slightly, revealing the pore pattern.
+   * We apply a `brightness` boost so the pores actually register
+   * visibly as specular highlights on the black leather.
+   */
+  mix-blend-mode: screen;
+  filter: brightness(2.5) contrast(1.2);
+  opacity: 0.6;
+}
+.iron > * {
+  position: relative;
+  z-index: 1;
+}
+.iron-grained {
+  position: relative;
+  isolation: isolate;
+}
+
+/* --- Buttons ---------------------------------------------------------- */
+
+/*
+ * Buttons and dropdowns — matte cast-iron chips.
+ *
+ * Cast iron, not brushed aluminium: matte, near-black, with subtle
+ * pitted surface variation rather than directional brush strokes.
+ * The `::before` pseudo stamps `concrete-wall.png` (a dark, highly
+ * textured pore map) at plain alpha to create the sand-cast iron
+ * pitting.
+ *
+ * Base gradient is darker than the chassis (`#1a1612` → `#0a0806`)
+ * so buttons sit visually as a heavier, denser metal than the
+ * leather-clad panels they live on.
+ *
+ * Hover: the pseudo brightens via opacity (iron catching slightly
+ * more light) and the border + label go gold-bright.
+ */
+button,
+.btn {
+  --btn-bg: linear-gradient(180deg, #1a1612 0%, #0a0806 100%);
+  --btn-color: var(--paper-warm);
+  --btn-border: color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+  --btn-iron-inset: -1px;
+
+  position: relative;
+  /*
+   * `isolation: isolate` creates a stacking context. That lets us
+   * paint the cast-iron texture as a `::before` pseudo with
+   * `z-index: -1` — below the inline text, but contained so the
+   * negative z-index doesn't escape the button.
+   *
+   * Why pseudo, not the `background` shorthand: per-component
+   * styles set `background:` on certain buttons (`.jump-latest`,
+   * `.action`, etc.). The shorthand resets *all* background
+   * properties, so putting the texture there meant any
+   * component-level override silently wiped it out and the texture
+   * was missing on most buttons. The pseudo is independent of
+   * `background` and survives those overrides.
+   */
+  isolation: isolate;
+  appearance: none;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-color);
+  font-family: var(--font-pixel);
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  border-radius: 0;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    filter 160ms ease;
+  /*
+   * Outer drop shadow lives on the button (outset, paints behind the
+   * element). The INSET bevel cannot live here — the `::before`
+   * pseudo at `z-index: -1` paints in step 2 of the stacking-context
+   * painting order, which is *after* the button's own background +
+   * inset box-shadow (step 1), so any inset bevel on the button is
+   * silently covered by the cast-iron pseudo and reads as "no bevel
+   * at all." The bevel instead sits on `::before` itself (below).
+   */
+  box-shadow: 0 5px 12px -6px rgba(0, 0, 0, 0.9);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
+}
+/*
+ * Cast iron pseudo. `z-index: -1` puts it between the button's own
+ * background (painted first in the isolate'd context) and the inline
+ * text (which paints in step 7 of the CSS painting order). So:
+ *   1. button background-color/gradient (component-level override or
+ *      the default `--btn-bg`)
+ *   2. cast-iron texture overlay
+ *   3. button label (always above texture, no z-index needed on
+ *      child elements or text nodes — solves the previous "labels
+ *      invisible on bare-text-node buttons" bug)
+ *
+ * `cover` + scroll attachment scales the texture to fit each button
+ * individually so there's no tiling and no "blank dark patch" sampling
+ * issue. The source is pre-baked to ~50% brightness on disk
+ * (`magick -modulate 50,...`) so the texture reads at its intended
+ * luminance without CSS filters.
+ */
+button::before,
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: var(--btn-iron-inset);
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("/textures/cast-iron.jpg");
+  /* 
+   * Fixed large size ensures that random background-position successfully 
+   * pans the texture across all axes, even for wide/short buttons 
+   * (where 'cover' would lock the X-axis panning).
+   */
+  background-size: 800px 800px;
+  background-position: var(--btn-tex-x, 50%) var(--btn-tex-y, 50%);
+  background-repeat: no-repeat;
+
+  /*
+   * Perfect 45-degree mitered chamfer.
+   * CSS borders naturally meet at diagonal 45-degree angles. By using 
+   * semi-transparent rgba colors for the border, the cast-iron 
+   * texture (which renders underneath the border because background-clip
+   * defaults to border-box) shows through.
+   * This creates lit and shadowed faces that look like sculpted iron 
+   * rather than flat painted plastic strips, and the miter gives a
+   * perfect 45-degree bevel angle at the corners.
+   */
+  border-style: solid;
+  border-width: 2px;
+  border-top-color: rgba(255, 225, 165, 0.4);
+  border-left-color: rgba(255, 225, 165, 0.15);
+  border-bottom-color: rgba(0, 0, 0, 0.9);
+  border-right-color: rgba(0, 0, 0, 0.65);
+
+  transition: opacity 160ms ease;
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  --btn-border: var(--gold-bright);
+  color: var(--gold-bright);
+  filter: brightness(1.12);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/*
+ * `.ghost` — transparent (no cast iron, no fill) chips for "secondary"
+ * actions that should recede visually (e.g. inspector close, chaos +/−
+ * steppers). Resets the layered background to none + drops the
+ * shadow / shadow halo so the chip reads as gold-outline-only.
+ */
+button.ghost {
+  --btn-border: color-mix(in oklab, var(--gold-tarnished) 40%, transparent);
+  background: transparent;
+  text-shadow: none;
+  box-shadow: none;
+}
+
+button.link {
+  --btn-border: transparent;
+  background: transparent;
+  border-color: transparent;
+  padding: 0.2rem 0.4rem;
+  box-shadow: none;
+  text-shadow: none;
+  font-size: 0.8rem;
+}
+
+/*
+ * `no-iron` — opt-out for buttons that exist only as semantic /
+ * accessibility hosts (the inspector scrim, drag handles, etc.) and
+ * should not look like a control. Suppresses the cast-iron pseudo,
+ * the bevel, and the gold border so the host element gets only the
+ * background its component CSS already provides.
+ */
+button.no-iron,
+.btn.no-iron {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  text-shadow: none;
+  isolation: auto;
+}
+button.no-iron::before,
+.btn.no-iron::before {
+  display: none;
+}
+
+/* --- Form controls --------------------------------------------------- */
+
+input[type="text"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  background: color-mix(in oklab, var(--ink-deep) 92%, var(--paper-stained));
+  color: var(--paper-warm);
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 35%, transparent);
+  border-radius: 0;
+  padding: 0.6rem 0.75rem;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.45;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+
+textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--gold-bright);
+}
+
+label {
+  display: block;
+  font-family: var(--font-pixel);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gold-tarnished);
+  margin-bottom: 0.3rem;
+}
+
+/* --- Utility ---------------------------------------------------------- */
+
+/*
+ * Frontispiece plate — a single woodcut/etching used as a hero element
+ * for the empty save shelf and the campaign-ended banner. The plate is
+ * a CC0/PD scan (see `web/public/textures/SOURCES.md`) pre-baked to
+ * grayscale + JPEG ~70%. We render it at low opacity with a hard
+ * top/bottom vignette so it functions as substrate, not illustration:
+ * the type and CTA still own the foreground.
+ *
+ * `--frontispiece-image` is the only required custom property; callers
+ * may override `--frontispiece-opacity`, `--frontispiece-position`, and
+ * `--frontispiece-blend` to tune per-surface. Default blend is `screen`
+ * (lifts the dark plate up against a dark chassis); use `multiply` when
+ * placing the plate against a light parchment surface instead.
+ */
+.frontispiece {
+  --frontispiece-image: url("/textures/knight-death-engraving.jpg");
+  --frontispiece-opacity: 0.18;
+  --frontispiece-position: right center;
+  --frontispiece-blend: screen;
+  --frontispiece-size: cover;
+
+  position: relative;
+  isolation: isolate;
+}
+
+.frontispiece::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: var(--frontispiece-image);
+  background-position: var(--frontispiece-position);
+  background-size: var(--frontispiece-size);
+  background-repeat: no-repeat;
+  mix-blend-mode: var(--frontispiece-blend);
+  opacity: var(--frontispiece-opacity);
+  filter: grayscale(100%) contrast(1.05);
+}
+
+/*
+ * Vignette pass — top/bottom fade keeps the plate from competing with
+ * headlines and CTA pills along the surface edges. Pure CSS so we can
+ * tune it without re-rasterizing the image asset.
+ */
+.frontispiece::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--ink-black) 70%, transparent) 0%,
+    transparent 28%,
+    transparent 70%,
+    color-mix(in oklab, var(--ink-black) 80%, transparent) 100%
+  );
+}
+
+.frontispiece > * {
+  position: relative;
+  z-index: 2;
+}
+
+.hr-gold {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--gold-tarnished) 12%,
+    var(--gold-bright) 50%,
+    var(--gold-tarnished) 88%,
+    transparent 100%
+  );
+  margin: 0.8rem 0;
+  opacity: 0.55;
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-pixel);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--gold-tarnished) 60%, transparent);
+  color: var(--gold-bright);
+  background: rgba(0, 0, 0, 0.2);
+  -webkit-font-smoothing: none;
+}
+
+.tag--player {
+  color: var(--paper-warm);
+  border-color: color-mix(in oklab, var(--paper-bone) 50%, transparent);
+}
+.tag--oracle {
+  color: var(--gold-bright);
+}
+.tag--narrative {
+  color: color-mix(in oklab, var(--paper-warm) 85%, var(--gold-bright));
+}
+.tag--system {
+  color: color-mix(in oklab, var(--rust-iron) 70%, var(--paper-stained));
+  border-color: color-mix(in oklab, var(--rust-iron) 50%, transparent);
+}
+/*
+ * Cairn-flavored receipts (save / attack / harm / recovery). We use the
+ * verdigris green to mark them apart from oracle-flavored gold so the
+ * eye separates engine-determinist (oracle) from rules-determinist
+ * (Cairn) at a glance, without inventing a new pigment.
+ */
+.tag--cairn {
+  color: color-mix(in oklab, var(--green-verdigris) 70%, var(--gold-bright));
+  border-color: color-mix(in oklab, var(--green-verdigris) 60%, transparent);
+}
+
+.error {
+  border-left: 3px solid var(--rust-iron);
+  background: rgba(122, 40, 32, 0.18);
+  color: color-mix(in oklab, var(--paper-warm) 90%, var(--rust-iron));
+  padding: 0.6rem 0.8rem;
+  font-family: var(--font-pixel);
+  font-size: 0.85rem;
+  -webkit-font-smoothing: none;
+}
+
+.spinner-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-pixel);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  color: var(--gold-tarnished);
+  text-transform: uppercase;
+  -webkit-font-smoothing: none;
+}
+
+.spinner-row::before {
+  content: "";
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1px solid var(--gold-tarnished);
+  border-top-color: var(--gold-bright);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
