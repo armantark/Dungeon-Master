@@ -2,7 +2,7 @@
 
 ## Workflow Reminder (solo project — commit straight to main)
 
-This project is solo. The user has explicitly invoked the solo-project exception to the global "do not commit/push to main without approval" rule. **Do not spin up feature branches on this repo.** Commit directly to `main`, commit early and often (at minimum once per turn that produces real changes), and push to `origin/main` after each commit. See `projectbrief.md` → "Workflow Rules" for the full rationale.
+This project is solo. **Do not spin up feature branches on this repo.** Commit directly to `main`, commit early and often (at minimum once per turn that produces real changes), and do not push unless the user explicitly asks. See `projectbrief.md` → "Workflow Rules" for the full rationale.
 
 ## Current Focus
 
@@ -22,12 +22,12 @@ The most recent source-note state is:
 
 The current code state is:
 
-- FastAPI backend at `src/dungeon_master/api.py`, started by `uv run dungeon-master`.
+- `src/dungeon_master/api.py` is the stable FastAPI import facade; HTTP implementation lives under `src/dungeon_master/transport/http/` and is started by `uv run dungeon-master`.
 - Core game package code lives under `src/dungeon_master/`.
-- The 2026-08-25 simplification pass established internal ownership packages behind the stable public facades: `generation/` owns character/world generation, `mechanics/inventory.py` owns transfer plus derived loadout repair, `application/continuity.py` owns parallel post-narration proposals, `application/turn_commit.py` owns narration-derived canonical mutations, and `transport/stream_runtime.py` owns stream sessions, cancellation, NDJSON production, and reattachment.
+- The 2026-08-25 package pass established responsibility-based owners behind stable public facades. `transport/http/` owns HTTP assembly, schemas, runtime wiring, routes, and NDJSON adaptation. `mechanics/` owns combat, generation, inventory, and survival rules. `llm/planning/` and `llm/narration/` own structured planning and prose generation. `memory/` owns context projection, retrieval, and rendering. `application/turn_plan_execution.py` owns typed turn-plan execution, while `service.py` remains the application facade for cross-cutting campaign, persistence, and stream boundaries.
 - `TurnPlan` is now the only router contract. The legacy `RoutedTurn` DTO and its plan conversion paths are deleted. `TurnRoute` remains only as the high-level summary carried by a plan.
 - Continuity now has one durability boundary: every completed narration gets one bounded post-narration reconciliation opportunity. The pre-narration classifier, its runtime profile, and its three stream stages are deleted.
-- Frontend terminal state has one owner in `web/src/lib/store/stream-runner.ts`; `consumeStream` returns terminal events without dispatching them. `GameStore` fetches a selected save before synchronously publishing its id and state, and the canonical required encounter wire types live in `lib/contracts/encounter.ts`.
+- Frontend product UI lives under `web/src/features/`, wire types under `web/src/contracts/`, and client workflows under `web/src/state/`. `GameStore` is the sole rune-backed reactive owner; campaign, save-library, runtime-settings, and stream workflows receive explicit dependencies and publish complete server state through it. `web/src/lib/store.svelte.ts` and `web/src/lib/types.ts` remain compatibility facades.
 - Desktop beta shell now exists under `web/src-tauri/`. It is a Tauri v2 wrapper around the existing Svelte app plus a bundled Python FastAPI sidecar, not a rewrite of the product. The Rust host must retain the sidecar `CommandChild` for the life of the app, and the backend CORS policy explicitly allows Tauri's `tauri://localhost` origin so the packaged WebView can talk to the localhost sidecar.
 - Desktop BYOK is now app-level rather than env-only. Backend settings now resolve credentials in the order **stored app-data key -> `.env` -> unavailable fallback**, FastAPI exposes `POST /api/settings/credentials`, and the frontend gates startup through a first-run `CredentialSetupModal` whenever no Gemini/OpenRouter key exists.
 - Desktop app icon assets now live under `web/src-tauri/icons/`, generated from the rounded-corner master source at `web/src-tauri/app-icon.png`. The master icon is a transparent 1024px rounded rectangle so macOS `.icns` output carries the expected cropped corners instead of relying on the OS to mask a square image.

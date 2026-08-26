@@ -74,6 +74,17 @@ These captures use the isolated fixture save library (`dungeon-master-fixtures`)
 
 The HTTP surface is intentionally thin: every committed mutation returns the complete `GameState`, so the frontend replaces its local mirror instead of reconciling partial diffs. Model outputs remain proposals until Python validates and commits them. Typed mechanics run only when the plan requires them; after narration, the continuity workers always get one bounded reconciliation opportunity and may return no changes.
 
+### Source layout
+
+- `src/dungeon_master/transport/http/`: FastAPI assembly, request schemas, runtime dependencies, route groups, and NDJSON response adaptation.
+- `src/dungeon_master/application/`: typed turn-plan execution, post-narration reconciliation, and canonical turn commit workflows.
+- `src/dungeon_master/mechanics/`: combat, character generation, inventory, and survival rules; `cairn.py` is the stable public facade.
+- `src/dungeon_master/llm/`: shared completion transport, typed planning, and narration; `turn_router.py` and `narrative.py` are stable public facades.
+- `src/dungeon_master/memory/`: bounded context projection, retrieval, rendering, and the stable `MemoryManager` interface.
+- `web/src/features/`: product-facing Svelte components grouped by combat, inspector, play, saves, settings, and setup.
+- `web/src/contracts/`: TypeScript wire contracts grouped by backend domain; `lib/types.ts` is the stable import facade.
+- `web/src/state/`: the rune-backed `GameStore` plus explicit campaign, save-library, settings, and streaming workflows; `lib/store.svelte.ts` is the stable import facade.
+
 ## Run
 
 Two processes (one terminal per process is easiest):

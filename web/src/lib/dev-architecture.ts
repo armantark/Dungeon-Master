@@ -101,7 +101,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "POST /api/turn/stream · open NDJSON body",
     rationale: "Browser and desktop share one transport. Only the runtime base URL changes.",
     citations: [
-      { file: "web/src/lib/api.ts", line: 376 },
+      { file: "web/src/lib/api.ts", line: 354 },
       { file: "web/src/lib/desktop.ts", line: 12 },
     ],
   },
@@ -121,8 +121,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "meta · stage · thinking_delta · content_delta · final_state · error",
     rationale: "One session object owns the wire vocabulary, replay, and live-tail behavior.",
     citations: [
-      { file: "src/dungeon_master/api.py", line: 839 },
-      { file: "src/dungeon_master/transport/stream_runtime.py", line: 140 },
+      { file: "src/dungeon_master/transport/http/routes/gameplay.py", line: 160 },
+      { file: "src/dungeon_master/transport/stream_runtime.py", line: 196 },
     ],
   },
   {
@@ -141,8 +141,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Stage events + one new GameState",
     rationale: "Turn order lives in Python rather than being distributed across model calls.",
     citations: [
-      { file: "src/dungeon_master/service.py", line: 1513 },
-      { file: "src/dungeon_master/service.py", line: 1680 },
+      { file: "src/dungeon_master/service.py", line: 1120 },
+      { file: "src/dungeon_master/application/turn_plan_execution.py", line: 110 },
     ],
   },
   {
@@ -161,8 +161,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     rationale:
       "A bad summary can degrade one turn, but it cannot corrupt canon because the sidecar is disposable.",
     citations: [
-      { file: "src/dungeon_master/memory.py", line: 335 },
-      { file: "src/dungeon_master/service.py", line: 3013 },
+      { file: "src/dungeon_master/memory/projection.py", line: 47 },
+      { file: "src/dungeon_master/memory/retrieval.py", line: 19 },
     ],
   },
   {
@@ -181,8 +181,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Validated TurnPlan",
     rationale: "Downstream code branches on typed fields, never on model prose.",
     citations: [
-      { file: "src/dungeon_master/turn_router.py", line: 460 },
-      { file: "src/dungeon_master/service.py", line: 3013 },
+      { file: "src/dungeon_master/llm/planning/router.py", line: 51 },
+      { file: "src/dungeon_master/service.py", line: 1741 },
     ],
   },
   {
@@ -201,9 +201,9 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Rolled outcome + rule effects",
     rationale: "The model may describe success or failure, but Python decides which occurred.",
     citations: [
-      { file: "src/dungeon_master/oracle.py", line: 30 },
-      { file: "src/dungeon_master/cairn.py", line: 707 },
-      { file: "src/dungeon_master/service.py", line: 1838 },
+      { file: "src/dungeon_master/oracle.py", line: 31 },
+      { file: "src/dungeon_master/mechanics/combat.py", line: 188 },
+      { file: "src/dungeon_master/application/turn_plan_execution.py", line: 110 },
     ],
   },
   {
@@ -222,8 +222,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "thinking_delta + content_delta",
     rationale: "Narration can interpret an outcome but cannot invent or mutate it.",
     citations: [
-      { file: "src/dungeon_master/narrative.py", line: 210 },
-      { file: "src/dungeon_master/service.py", line: 2936 },
+      { file: "src/dungeon_master/llm/narration/engine.py", line: 136 },
+      { file: "src/dungeon_master/llm/narration/engine.py", line: 264 },
     ],
   },
   {
@@ -265,7 +265,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
       "A partial turn cannot replace the previous valid save, and a bad narration can be regenerated from its named checkpoint.",
     citations: [
       { file: "src/dungeon_master/state_store.py", line: 44 },
-      { file: "src/dungeon_master/service.py", line: 3165 },
+      { file: "src/dungeon_master/state_store.py", line: 99 },
     ],
   },
   {
@@ -303,9 +303,9 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     rationale:
       "Wholesale replacement prevents client-side merge rules from drifting from server authority.",
     citations: [
-      { file: "web/src/state/stream/streaming.ts", line: 107 },
-      { file: "web/src/state/stream-runner.ts", line: 67 },
-      { file: "web/src/state/game-store.svelte.ts", line: 1306 },
+      { file: "web/src/state/stream.ts", line: 216 },
+      { file: "web/src/state/stream-runner.ts", line: 86 },
+      { file: "web/src/state/save.ts", line: 162 },
     ],
   },
   {
