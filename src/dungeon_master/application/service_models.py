@@ -13,7 +13,6 @@ from dungeon_master.models import (
 from dungeon_master.prompt_fragments import JSON_ONLY
 
 CURRENT_NPC_ROSTER_VERSION = 2
-CURRENT_SAVE_SCHEMA_VERSION = 4
 PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}
 MIN_COORDINATED_ATTACK_PARTICIPANTS = 2
 RECENT_NPC_CONTEXT_LIMIT = 4
