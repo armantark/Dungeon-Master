@@ -1,8 +1,8 @@
 from pathlib import Path
 
+from dungeon_master.domain.models import EventType, GameEvent
 from dungeon_master.memory import MemoryState
-from dungeon_master.models import EventType, GameEvent
-from dungeon_master.state_store import StateStore
+from dungeon_master.persistence.state_store import StateStore
 from tests.factories import sample_state
 
 

@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
 
 LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 TRACE_LOGGER = logging.getLogger("dungeon_master.trace")

@@ -9,10 +9,10 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from dungeon_master import __version__
+from dungeon_master.application.game_service import GameService
 from dungeon_master.config import LLMCredentialsStore, RuntimeSettingsStore
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService
-from dungeon_master.state_store import StateStore
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 from dungeon_master.transport.http.routes import gameplay, mechanics, setup, system
 from dungeon_master.transport.http.runtime import (
     build_credentials_store,

@@ -6,7 +6,14 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import (
+    CampaignSeed,
+    CharacterQuiz,
+    CharacterQuizAnswer,
+    CharacterSheet,
+    GameState,
+)
 from dungeon_master.generation.character_fallbacks import (
     _fallback_draft,
     _fallback_quiz,
@@ -27,14 +34,7 @@ from dungeon_master.generation.contracts import (
     GeneratedCharacterTemplates,
 )
 from dungeon_master.generation.direction import render_creative_direction
-from dungeon_master.models import (
-    CampaignSeed,
-    CharacterQuiz,
-    CharacterQuizAnswer,
-    CharacterSheet,
-    GameState,
-)
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     CompletionDelta,
     CompletionFunction,
     CompletionRequest,
@@ -45,7 +45,7 @@ from dungeon_master.narrative import (
     extract_json_object,
     iter_text_deltas,
 )
-from dungeon_master.prompt_fragments import JSON_ONLY, JSON_ONLY_PERSIST, SEED_AUTHORITY
+from dungeon_master.llm.prompt_fragments import JSON_ONLY, JSON_ONLY_PERSIST, SEED_AUTHORITY
 
 logger = logging.getLogger(__name__)
 

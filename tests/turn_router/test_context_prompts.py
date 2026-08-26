@@ -2,8 +2,8 @@ import json
 
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
-from dungeon_master.turn_router import (
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
+from dungeon_master.llm.planning import (
     TurnRoute,
     TurnRouter,
 )

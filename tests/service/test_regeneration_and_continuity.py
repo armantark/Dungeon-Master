@@ -1,7 +1,8 @@
 from pathlib import Path
 from typing import cast
 
-from dungeon_master.models import (
+from dungeon_master.application.game_service import GameService
+from dungeon_master.domain.models import (
     NPC,
     CharacterQuizAnswer,
     EventType,
@@ -12,16 +13,15 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
 )
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import GameService
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import (
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnPlan,
     TurnRoute,
     TurnRouter,
 )
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.persistence.state_store import StateStore
 from tests.service.cairn_fakes import (
     FakeCairnEngine,
 )

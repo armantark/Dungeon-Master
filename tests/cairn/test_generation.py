@@ -1,9 +1,4 @@
-from dungeon_master.cairn import (
-    CairnEngine,
-    GeneratedCairnBackfill,
-    GeneratedCairnItemProfile,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnAbility,
     CairnItemState,
     CairnItemTag,
@@ -17,7 +12,12 @@ from dungeon_master.models import (
     CampaignToneDarkBright,
     CampaignToneGrimNoble,
 )
-from dungeon_master.narrative import NarrativeConfig
+from dungeon_master.llm.narration import NarrativeConfig
+from dungeon_master.mechanics.engine import (
+    CairnEngine,
+    GeneratedCairnBackfill,
+    GeneratedCairnItemProfile,
+)
 from tests.cairn.support import (
     RecordingBackfillCompletion,
 )

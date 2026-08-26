@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dungeon_master.models import StageStatus, StageTiming, utc_now
-from dungeon_master.narrative import StreamStageStatus
+from dungeon_master.domain.models import StageStatus, StageTiming, utc_now
+from dungeon_master.llm.narration import StreamStageStatus
 
 TURN_STREAM_STAGE_LABELS: dict[str, str] = {
     "planning_turn": "Planning turn",

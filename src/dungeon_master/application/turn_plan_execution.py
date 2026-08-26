@@ -4,6 +4,7 @@ import json
 
 from pydantic import ValidationError
 
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.application.service_models import (
     MIN_COORDINATED_ATTACK_PARTICIPANTS,
     PLAYER_ACTOR_ALIASES,
@@ -17,10 +18,8 @@ from dungeon_master.application.service_models import (
     ServiceActor,
 )
 from dungeon_master.application.service_ports import CairnPort, CapabilityOracleGuardPort
-from dungeon_master.cairn import AttackActor, SurvivalUpdate
-from dungeon_master.cancel import CancellationToken
 from dungeon_master.config import LLMRuntimeBundle
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     NPC,
     AttackStance,
     CairnResolution,
@@ -36,7 +35,7 @@ from dungeon_master.models import (
     PartyMember,
     SceneStatus,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionRequest,
     NarrativeConfig,
@@ -44,8 +43,9 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.turn_router import PlannedTurnOp, PlannedTurnOpKind, TurnPlan
+from dungeon_master.llm.planning import PlannedTurnOp, PlannedTurnOpKind, TurnPlan
+from dungeon_master.mechanics.engine import AttackActor, SurvivalUpdate
+from dungeon_master.mechanics.oracle import OracleEngine
 
 
 class TurnPlanExecutor:

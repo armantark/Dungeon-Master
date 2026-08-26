@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from pydantic import Field
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CampaignStatus,
     CharacterSheet,
     OracleOutcome,
     StrictModel,
 )
-from dungeon_master.prompt_fragments import JSON_ONLY
+from dungeon_master.llm.prompt_fragments import JSON_ONLY
 
 CURRENT_NPC_ROSTER_VERSION = 2
 PLAYER_ACTOR_ALIASES = {"player", "me", "myself", "you", "main character", "wanderer"}

@@ -2,6 +2,19 @@ from __future__ import annotations
 
 from typing import Final
 
+from dungeon_master.domain.models import (
+    NPC,
+    EventType,
+    GameState,
+    GameThread,
+    NPCPlayerLabelKind,
+    NPCStatus,
+    OracleKind,
+    OracleOutcome,
+    SceneStatus,
+    ThreadStatus,
+    utc_now,
+)
 from dungeon_master.memory.contracts import (
     CallbackCandidate,
     CommittedTurnMemory,
@@ -16,19 +29,6 @@ from dungeon_master.memory.contracts import (
 )
 from dungeon_master.memory.rendering import MemoryRendering
 from dungeon_master.memory.rendering import clip as _clip
-from dungeon_master.models import (
-    NPC,
-    EventType,
-    GameState,
-    GameThread,
-    NPCPlayerLabelKind,
-    NPCStatus,
-    OracleKind,
-    OracleOutcome,
-    SceneStatus,
-    ThreadStatus,
-    utc_now,
-)
 
 MAX_RECENT_TURNS: Final[int] = 8
 MAX_RECENT_DEVELOPMENTS: Final[int] = 4

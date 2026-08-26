@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     NPC,
     CairnCharacterState,
     CairnItemState,
@@ -30,8 +30,8 @@ from dungeon_master.models import (
     Roll,
     SceneStatus,
 )
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.state_store import StateStore
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 
 # Intentional dev-only default outside the repo so fixture seeding can never
 # clobber the canonical `data/` tree by accident.

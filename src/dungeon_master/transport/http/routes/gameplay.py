@@ -9,7 +9,8 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 from fastapi import Path as ApiPath
 from fastapi.responses import StreamingResponse  # noqa: TC002
 
-from dungeon_master.models import GameState, OracleOutcome
+from dungeon_master.domain.models import GameState, OracleOutcome
+from dungeon_master.llm.planning import TurnPlanningError
 from dungeon_master.transport.http.runtime import ServiceDep, StreamRuntimeDep
 from dungeon_master.transport.http.schemas import (
     CampaignSeedRequest,
@@ -24,7 +25,6 @@ from dungeon_master.transport.http.schemas import (
     YesNoRequest,
 )
 from dungeon_master.transport.http.streaming import start_game_state_stream, start_setup_stream
-from dungeon_master.turn_router import TurnPlanningError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

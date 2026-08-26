@@ -56,11 +56,11 @@ Success criteria:
 
 1. Campaign generation failure raises `CampaignGenerationError`; it never returns fabricated active canon.
 2. Character and world generation implementations move behind `generation/` modules.
-3. Existing `dungeon_master.campaign` imports remain valid.
+3. Existing `dungeon_master.generation` imports remain valid.
 4. Character fallback behavior remains valid when no model is configured.
 5. `CHECK: uv run pytest tests/test_campaign.py -q`; `EXPECT: all tests pass`.
-6. `CHECK: uv run ruff check src/dungeon_master/campaign.py src/dungeon_master/generation tests/test_campaign.py`; `EXPECT: All checks passed!`.
-7. `CHECK: uv run mypy src/dungeon_master/campaign.py src/dungeon_master/generation`; `EXPECT: Success: no issues found`.
+6. `CHECK: uv run ruff check src/dungeon_master/generation/__init__.py src/dungeon_master/generation tests/test_campaign.py`; `EXPECT: All checks passed!`.
+7. `CHECK: uv run mypy src/dungeon_master/generation/__init__.py src/dungeon_master/generation`; `EXPECT: Success: no issues found`.
 
 ### Wave 1B: Mechanics inventory ownership
 
@@ -74,8 +74,8 @@ Success criteria:
 4. Transfer recomputes armor, burden, survival flags, and terminal character state for both actors.
 5. Existing Cairn public imports remain valid.
 6. `CHECK: uv run pytest tests/test_cairn.py -q`; `EXPECT: all tests pass`.
-7. `CHECK: uv run ruff check src/dungeon_master/cairn.py src/dungeon_master/mechanics tests/test_cairn.py`; `EXPECT: All checks passed!`.
-8. `CHECK: uv run mypy src/dungeon_master/cairn.py src/dungeon_master/mechanics`; `EXPECT: Success: no issues found`.
+7. `CHECK: uv run ruff check src/dungeon_master/mechanics/engine.py src/dungeon_master/mechanics tests/test_cairn.py`; `EXPECT: All checks passed!`.
+8. `CHECK: uv run mypy src/dungeon_master/mechanics/engine.py src/dungeon_master/mechanics`; `EXPECT: Success: no issues found`.
 
 ### Wave 1C: Frontend state and stream ownership
 

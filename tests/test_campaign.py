@@ -5,13 +5,7 @@ from typing import cast
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.campaign import (
-    CampaignGenerationError,
-    CampaignGenerator,
-    CharacterDraftMode,
-    CharacterGenerator,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CampaignGenre,
     CampaignMagicLevel,
     CampaignSeed,
@@ -21,7 +15,13 @@ from dungeon_master.models import (
     CampaignToneDarkBright,
     CampaignToneGrimNoble,
 )
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
+from dungeon_master.generation import (
+    CampaignGenerationError,
+    CampaignGenerator,
+    CharacterDraftMode,
+    CharacterGenerator,
+)
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
 

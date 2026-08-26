@@ -1,4 +1,4 @@
-from dungeon_master.prompt_fragments import JSON_ONLY
+from dungeon_master.llm.prompt_fragments import JSON_ONLY
 
 TURN_ROUTER_SYSTEM_PROMPT = f"""You plan a bounded backend action sequence for a solo
 TTRPG player's free-text turn before narration happens.

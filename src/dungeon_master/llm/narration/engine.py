@@ -6,7 +6,7 @@ import re
 import time
 from collections.abc import Generator
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.config import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_POLICY,
@@ -16,6 +16,17 @@ from dungeon_master.config import (
 )
 from dungeon_master.config import (
     LLMConfig as NarrativeConfig,
+)
+from dungeon_master.domain.models import (
+    CairnCharacterState,
+    CampaignStatus,
+    EncounterThreatLevel,
+    EnemyCombatant,
+    GameState,
+    OracleKind,
+    OracleOutcome,
+    PartyMember,
+    SceneStatus,
 )
 from dungeon_master.llm.completion.contracts import (
     ChatMessage,
@@ -31,18 +42,7 @@ from dungeon_master.llm.completion.transport import (
     iter_text_deltas,
     provider_completion,
 )
-from dungeon_master.models import (
-    CairnCharacterState,
-    CampaignStatus,
-    EncounterThreatLevel,
-    EnemyCombatant,
-    GameState,
-    OracleKind,
-    OracleOutcome,
-    PartyMember,
-    SceneStatus,
-)
-from dungeon_master.prompt_fragments import SEED_AUTHORITY
+from dungeon_master.llm.prompt_fragments import SEED_AUTHORITY
 
 OUTMATCHED_THREAT_MARGIN = 10
 TACTICALLY_DANGEROUS_THREAT_MARGIN = 5

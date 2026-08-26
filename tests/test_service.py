@@ -1,19 +1,21 @@
 from collections.abc import Callable, Generator
 from threading import Event
 
-from dungeon_master.campaign import (
-    CampaignWorldResult,
-    CharacterDraftMode,
-    CharacterDraftResult,
-    CharacterQuizResult,
-    CharacterTemplatesResult,
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.application.capability_guard import CapabilityOracleGuardResult
+from dungeon_master.application.updates.character_effects import CharacterEffectUpdateResult
+from dungeon_master.application.updates.inventory import InventoryUpdateResult
+from dungeon_master.application.updates.npcs import (
+    GeneratedNPCUpdateBatch,
+    LegacyNPCRosterRepairResult,
+    NPCUpdateResult,
 )
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
-from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
+from dungeon_master.application.updates.threads import (
+    GeneratedThreadUpdateBatch,
+    ThreadUpdateResult,
+)
 from dungeon_master.config import LLMConfig, LLMRuntimeBundle, single_llm_runtime
-from dungeon_master.inventory_updater import InventoryUpdateResult
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CampaignSeed,
     CampaignStatus,
     CharacterQuiz,
@@ -25,13 +27,14 @@ from dungeon_master.models import (
     Likelihood,
     OracleOutcome,
 )
-from dungeon_master.narrative import CompletionDelta, NarrativeConfig
-from dungeon_master.npc_updater import (
-    GeneratedNPCUpdateBatch,
-    LegacyNPCRosterRepairResult,
-    NPCUpdateResult,
+from dungeon_master.generation import (
+    CampaignWorldResult,
+    CharacterDraftMode,
+    CharacterDraftResult,
+    CharacterQuizResult,
+    CharacterTemplatesResult,
 )
-from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
+from dungeon_master.llm.narration import CompletionDelta, NarrativeConfig
 from tests.factories import sample_state
 from tests.service.cairn_fakes import FakeCairnEngine
 

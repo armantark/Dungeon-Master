@@ -7,8 +7,8 @@ from enum import StrEnum
 
 from pydantic import Field, ValidationError
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import (
     NPC,
     GameState,
     NPCPlayerLabelKind,
@@ -16,7 +16,7 @@ from dungeon_master.models import (
     OracleOutcome,
     StrictModel,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionFunction,
     CompletionRequest,
@@ -25,7 +25,7 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
-from dungeon_master.prompt_fragments import (
+from dungeon_master.llm.prompt_fragments import (
     CONTINUITY_UPDATER_PREAMBLE,
     JSON_ONLY,
     no_invention_rule,

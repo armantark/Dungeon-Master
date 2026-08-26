@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, HTTPException, status
 
-from dungeon_master.models import GameState
+from dungeon_master.domain.models import GameState
 from dungeon_master.transport.http.runtime import ServiceDep
 from dungeon_master.transport.http.schemas import (
     CairnAcquireRequest,

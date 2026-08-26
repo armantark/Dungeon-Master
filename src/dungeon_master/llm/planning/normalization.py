@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from dungeon_master.domain.models import CairnTimeAdvance, Likelihood
 from dungeon_master.llm.planning.contracts import (
     GeneratedTurnPlan,
     PlannedTurnOp,
@@ -9,7 +10,6 @@ from dungeon_master.llm.planning.contracts import (
     TurnPlan,
     TurnRoute,
 )
-from dungeon_master.models import CairnTimeAdvance, Likelihood
 
 LIKELIHOOD_HINTS: dict[str, Likelihood] = {
     "impossible": Likelihood.IMPOSSIBLE,

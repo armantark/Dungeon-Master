@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,

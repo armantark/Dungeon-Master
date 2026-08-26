@@ -1,4 +1,4 @@
-from dungeon_master.prompt_fragments import (
+from dungeon_master.llm.prompt_fragments import (
     CAIRN_ALLOWED_ENUMS,
     CAIRN_ITEM_SEMANTICS,
     CONTINUITY_UPDATER_PREAMBLE,

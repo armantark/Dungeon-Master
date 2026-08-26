@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dungeon_master.domain.models import GameState, NPCStatus, OracleOutcome, ThreadStatus
 from dungeon_master.memory.contracts import (
     MemoryState,
     NarrativeMemoryContext,
@@ -13,7 +14,6 @@ from dungeon_master.memory.projection import (
     _npc_memory_label,
     _scene_key,
 )
-from dungeon_master.models import GameState, NPCStatus, OracleOutcome, ThreadStatus
 
 
 class MemoryRetrieval(MemoryProjection):

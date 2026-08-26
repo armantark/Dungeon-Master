@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
+from dungeon_master.application.game_service import GameService
 from dungeon_master.config import (
     LLMCredentials,
     LLMCredentialsStore,
@@ -18,14 +19,13 @@ from dungeon_master.config import (
     describe_llm_presets,
     resolve_provider_credentials,
 )
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService
-from dungeon_master.settings import (
+from dungeon_master.config.paths import (
     credentials_path_from_env,
     runtime_settings_path_from_env,
     state_path_from_env,
 )
-from dungeon_master.state_store import StateStore
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 from dungeon_master.transport.http.schemas import (
     LLMPresetOptionResponse,
     LLMProviderCredentialResponse,

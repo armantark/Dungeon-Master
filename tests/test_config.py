@@ -14,7 +14,7 @@ from dungeon_master.config import (
     RuntimeSettingsStore,
     build_llm_runtime,
 )
-from dungeon_master.models import OracleKind
+from dungeon_master.domain.models import OracleKind
 
 
 def test_app_config_uses_new_narration_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

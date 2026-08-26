@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dungeon_master.mechanics.inventory import ResolvedActor, sync_survival_flags
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnCharacterState,
     CairnDayPhase,
     CairnItemTag,
@@ -24,6 +23,7 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
 )
+from dungeon_master.mechanics.inventory import ResolvedActor, sync_survival_flags
 
 D6_SIDES = 6
 WATCHES_PER_DAY = 6

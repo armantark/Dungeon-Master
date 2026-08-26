@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from dungeon_master.domain.models import OracleKind, SceneStatus
 from dungeon_master.memory.contracts import (
     ConversationMessage,
     MemoryState,
     SceneMemory,
     TurnMemory,
 )
-from dungeon_master.models import OracleKind, SceneStatus
 
 TIMELINE_SUMMARY_BLOCK_TURNS = 5
 

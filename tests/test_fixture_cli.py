@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from dungeon_master.fixture_cli import main, seed_fixture_library
-from dungeon_master.models import CampaignEndReason, CampaignStatus, NPCPlayerLabelKind
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.state_store import StateStore
+from dungeon_master.domain.models import CampaignEndReason, CampaignStatus, NPCPlayerLabelKind
+from dungeon_master.entrypoints.fixtures import main, seed_fixture_library
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 
 
 def test_seed_fixture_library_creates_isolated_save_library(tmp_path: Path) -> None:

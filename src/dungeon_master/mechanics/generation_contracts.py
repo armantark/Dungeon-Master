@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from pydantic import Field, model_validator
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnAbility,
     CairnItemPower,
     CairnItemTag,
@@ -16,7 +16,7 @@ from dungeon_master.models import (
     GameState,
     StrictModel,
 )
-from dungeon_master.prompt_fragments import (
+from dungeon_master.llm.prompt_fragments import (
     CAIRN_ALLOWED_ENUMS,
     CAIRN_ITEM_SEMANTICS,
     JSON_ONLY,

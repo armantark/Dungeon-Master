@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.cancel import CancellationToken, RequestCancelledError
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken, RequestCancelledError
+from dungeon_master.domain.models import (
     CairnCharacterState,
     CairnItemState,
     CairnItemTag,
@@ -28,7 +28,7 @@ from dungeon_master.models import (
     PartyMember,
     SceneStatus,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     DEFAULT_MODEL,
     DEFAULT_REASONING_POLICY,
     CompletionRequest,
@@ -166,7 +166,7 @@ def test_completion_logs_llm_trace(
             usage={"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
         )
 
-    monkeypatch.setattr("dungeon_master.narrative.litellm_completion", fake_completion)
+    monkeypatch.setattr("dungeon_master.llm.narration.litellm_completion", fake_completion)
     request = CompletionRequest(
         model="test-model",
         messages=[{"role": "user", "content": "hello"}],
@@ -204,7 +204,7 @@ def test_completion_prefers_reasoning_token_cap_over_effort_alias(
             choices=[{"message": {"role": "assistant", "content": "The abbey waits."}}],
         )
 
-    monkeypatch.setattr("dungeon_master.narrative.litellm_completion", fake_completion)
+    monkeypatch.setattr("dungeon_master.llm.narration.litellm_completion", fake_completion)
     request = CompletionRequest(
         model="test-model",
         messages=[{"role": "user", "content": "hello"}],

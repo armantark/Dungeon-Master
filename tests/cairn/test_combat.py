@@ -1,13 +1,6 @@
 import pytest
 
-from dungeon_master.cairn import (
-    AttackActor,
-    CairnEngine,
-    EncounterScalingPolicy,
-    GeneratedEncounterCombatant,
-    GeneratedEncounterSeed,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnItemState,
     CairnItemTag,
@@ -26,7 +19,14 @@ from dungeon_master.models import (
     EnemyCombatant,
     InventoryItem,
 )
-from dungeon_master.narrative import NarrativeConfig
+from dungeon_master.llm.narration import NarrativeConfig
+from dungeon_master.mechanics.engine import (
+    AttackActor,
+    CairnEngine,
+    EncounterScalingPolicy,
+    GeneratedEncounterCombatant,
+    GeneratedEncounterSeed,
+)
 from tests.cairn.support import (
     RecordingAcquisitionCompletion,
     _active_encounter_state,

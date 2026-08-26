@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.application.continuity import NarratedTurn
 from dungeon_master.application.service_models import (
     CLARIFICATION_EVENT_TITLE,
@@ -18,16 +19,7 @@ from dungeon_master.application.stage_timing import (
 from dungeon_master.application.state_management import ApplicationState
 from dungeon_master.application.turn_commit import TurnCommitter
 from dungeon_master.application.turn_plan_execution import TurnPlanExecutor
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.explainer import ExplanationResult
-from dungeon_master.memory import (
-    CommittedTurnMemory,
-    ConversationMessage,
-    MemoryManager,
-    MemoryState,
-    active_encounter_line_for_state,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CharacterSheet,
     EventType,
     GameEvent,
@@ -36,14 +28,21 @@ from dungeon_master.models import (
     OracleOutcome,
     SceneStatus,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.explanation import ExplanationResult
+from dungeon_master.llm.narration import (
     CompletionDelta,
     NarrativeResult,
     StreamStageStatus,
     StreamStageUpdate,
 )
-from dungeon_master.state_store import StateStore, TurnCheckpointRecord
-from dungeon_master.turn_router import TurnPlan, TurnRouter
+from dungeon_master.llm.planning import TurnPlan, TurnRouter
+from dungeon_master.memory import (
+    ConversationMessage,
+    MemoryManager,
+    MemoryState,
+    active_encounter_line_for_state,
+)
+from dungeon_master.persistence.state_store import StateStore, TurnCheckpointRecord
 
 
 class TurnWorkflow:
@@ -72,78 +71,6 @@ class TurnWorkflow:
     def _store(self) -> StateStore:
         return self._state.store
 
-    def load_state(self, *, cancel_token: CancellationToken | None = None) -> GameState:
-        return self._state.load_state(cancel_token=cancel_token)
-
-    def load_state_readonly(
-        self,
-        *,
-        cancel_token: CancellationToken | None = None,
-    ) -> GameState:
-        return self._state.load_state_readonly(cancel_token=cancel_token)
-
-    def record_event(self, state: GameState, event: GameEvent) -> None:
-        self._state.record_event(state, event)
-
-    def queue_event(self, state: GameState, queue: list[GameEvent], event: GameEvent) -> None:
-        self._state.queue_event(state, queue, event)
-
-    def persist_streamed_state(
-        self,
-        state: GameState,
-        events: list[GameEvent],
-        *,
-        turn_checkpoint: TurnCheckpointRecord | None = None,
-        committed_turn: CommittedTurnMemory | None = None,
-        cancel_token: CancellationToken | None = None,
-    ) -> None:
-        self._state.persist_streamed_state(
-            state,
-            events,
-            turn_checkpoint=turn_checkpoint,
-            committed_turn=committed_turn,
-            cancel_token=cancel_token,
-        )
-
-    def save_state_commit(
-        self,
-        state: GameState,
-        *,
-        create_checkpoint: bool,
-        committed_turn: CommittedTurnMemory | None = None,
-    ) -> None:
-        self._state.save_state_commit(
-            state,
-            create_checkpoint=create_checkpoint,
-            committed_turn=committed_turn,
-        )
-
-    def ensure_active(self, state: GameState) -> None:
-        self._state.ensure_active(state)
-
-    def auto_end_campaign_if_needed(
-        self,
-        state: GameState,
-        *,
-        outcome: OracleOutcome,
-    ) -> GameEvent | None:
-        return self._state.auto_end_campaign_if_needed(state, outcome=outcome)
-
-    def memory_for_state(
-        self,
-        state: GameState,
-        *,
-        existing_memory: MemoryState | None = None,
-        force_rebuild: bool = False,
-        checkpoint_overrides: Mapping[str, TurnCheckpointRecord] | None = None,
-    ) -> MemoryState:
-        return self._state.memory_for_state(
-            state,
-            existing_memory=existing_memory,
-            force_rebuild=force_rebuild,
-            checkpoint_overrides=checkpoint_overrides,
-        )
-
     def explain(self, question: str) -> ExplanationResult:
         state, memory_context = self._load_state_and_memory_context_for_explainer(question)
         return self._explainer.generate_result(
@@ -170,14 +97,14 @@ class TurnWorkflow:
         )
 
     def submit_player_action(self, action: str) -> GameState:
-        state = self.load_state()
-        self.ensure_active(state)
+        state = self._state.load_state()
+        self._state.ensure_active(state)
         outcome = OracleOutcome(
             kind=OracleKind.PLAYER_ACTION,
             summary="Narrative continuation requested without an oracle roll.",
             chaos_factor=state.chaos_factor,
         )
-        self.record_event(
+        self._state.record_event(
             state,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=action),
         )
@@ -198,14 +125,14 @@ class TurnWorkflow:
         after Python has produced the mechanical outcome.
         """
         plan, state = self._plan_turn_and_load_state(text)
-        self.ensure_active(state)
-        self.record_event(
+        self._state.ensure_active(state)
+        self._state.record_event(
             state,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
         )
         clarification = self._clarification_prompt_for_plan(plan)
         if clarification is not None:
-            self.record_event(
+            self._state.record_event(
                 state,
                 GameEvent(
                     event_type=EventType.NARRATIVE,
@@ -213,7 +140,7 @@ class TurnWorkflow:
                     content=clarification.question,
                 ),
             )
-            self.save_state_commit(state, create_checkpoint=True)
+            self._state.save_state_commit(state, create_checkpoint=True)
             return state
         executed = self._execute_turn_plan(state, plan)
         self.commit_oracle_turn(
@@ -226,8 +153,8 @@ class TurnWorkflow:
         return state
 
     def regenerate_response(self, narrative_event_id: str) -> GameState:
-        state = self.load_state()
-        self.ensure_active(state)
+        state = self._state.load_state()
+        self._state.ensure_active(state)
 
         latest_narrative = next(
             (
@@ -270,7 +197,7 @@ class TurnWorkflow:
             message = "Turn checkpoint is missing the original oracle outcome."
             raise ValueError(message)
 
-        self.record_event(
+        self._state.record_event(
             restored_state,
             GameEvent(
                 event_type=EventType.SYSTEM,
@@ -278,7 +205,7 @@ class TurnWorkflow:
                 content="Repaired the latest DM response after a retry request.",
             ),
         )
-        working_memory = self.memory_for_state(restored_state, force_rebuild=True)
+        working_memory = self._state.memory_for_state(restored_state, force_rebuild=True)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
@@ -293,7 +220,7 @@ class TurnWorkflow:
             memory_context=memory_context,
             scene_messages=scene_messages,
         )
-        self.record_event(
+        self._state.record_event(
             restored_state,
             GameEvent(
                 event_type=EventType.NARRATIVE,
@@ -313,7 +240,7 @@ class TurnWorkflow:
             ),
             working_memory=working_memory,
         )
-        self.save_state_commit(
+        self._state.save_state_commit(
             restored_state,
             create_checkpoint=True,
             committed_turn=committed_turn,
@@ -331,15 +258,15 @@ class TurnWorkflow:
             skipped_stage_ids={"planning_turn", "resolving_mechanics"},
             tracker=tracker,
         )
-        state = self.load_state(cancel_token=cancel_token)
-        self.ensure_active(state)
+        state = self._state.load_state(cancel_token=cancel_token)
+        self._state.ensure_active(state)
         outcome = OracleOutcome(
             kind=OracleKind.PLAYER_ACTION,
             summary="Narrative continuation requested without an oracle roll.",
             chaos_factor=state.chaos_factor,
         )
         queued_events: list[GameEvent] = []
-        self.queue_event(
+        self._state.queue_event(
             state,
             queued_events,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=action),
@@ -367,9 +294,9 @@ class TurnWorkflow:
         yield self._stage_delta("planning_turn", StreamStageStatus.ACTIVE, tracker=tracker)
         plan, state = self._plan_turn_and_load_state(text, cancel_token=cancel_token)
         yield self._stage_delta("planning_turn", StreamStageStatus.DONE, tracker=tracker)
-        self.ensure_active(state)
+        self._state.ensure_active(state)
         queued_events: list[GameEvent] = []
-        self.queue_event(
+        self._state.queue_event(
             state,
             queued_events,
             GameEvent(event_type=EventType.PLAYER, title="Player action", content=text),
@@ -381,7 +308,7 @@ class TurnWorkflow:
                 StreamStageStatus.SKIPPED,
                 tracker=tracker,
             )
-            self.queue_event(
+            self._state.queue_event(
                 state,
                 queued_events,
                 GameEvent(
@@ -391,7 +318,7 @@ class TurnWorkflow:
                     stage_timings=tracker.snapshot(),
                 ),
             )
-            self.persist_streamed_state(
+            self._state.persist_streamed_state(
                 state,
                 queued_events,
                 cancel_token=cancel_token,
@@ -426,8 +353,8 @@ class TurnWorkflow:
             skipped_stage_ids={"planning_turn", "resolving_mechanics"},
             tracker=tracker,
         )
-        state = self.load_state(cancel_token=cancel_token)
-        self.ensure_active(state)
+        state = self._state.load_state(cancel_token=cancel_token)
+        self._state.ensure_active(state)
         latest_narrative = next(
             (
                 event
@@ -467,7 +394,7 @@ class TurnWorkflow:
             message = "Turn checkpoint is missing the original oracle outcome."
             raise ValueError(message)
 
-        self.queue_event(
+        self._state.queue_event(
             restored_state,
             queued_events,
             GameEvent(
@@ -478,7 +405,7 @@ class TurnWorkflow:
         )
         self.raise_if_cancelled(cancel_token)
         yield self._stage_delta("preparing_narration", StreamStageStatus.ACTIVE, tracker=tracker)
-        working_memory = self.memory_for_state(restored_state, force_rebuild=True)
+        working_memory = self._state.memory_for_state(restored_state, force_rebuild=True)
         memory_context, scene_messages, _ = self._memory_context_for_narrator(
             restored_state,
             player_input=checkpoint.player_input,
@@ -510,7 +437,7 @@ class TurnWorkflow:
             working_memory=working_memory,
         )
         yield self._stage_delta("reconciling_continuity", StreamStageStatus.DONE, tracker=tracker)
-        self.queue_event(
+        self._state.queue_event(
             restored_state,
             queued_events,
             GameEvent(
@@ -522,7 +449,7 @@ class TurnWorkflow:
                 stage_timings=tracker.snapshot(),
             ),
         )
-        self.persist_streamed_state(
+        self._state.persist_streamed_state(
             restored_state,
             queued_events,
             cancel_token=cancel_token,
@@ -561,9 +488,9 @@ class TurnWorkflow:
         working_memory = self._load_turn_memory_state(state)
         self._stamp_scene_snapshot(state, outcome)
         state.oracle_history.append(outcome)
-        terminal_event = self.auto_end_campaign_if_needed(state, outcome=outcome)
+        terminal_event = self._state.auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
-            self.record_event(
+            self._state.record_event(
                 state,
                 GameEvent(
                     event_type=EventType.ORACLE,
@@ -593,7 +520,7 @@ class TurnWorkflow:
             memory_context=memory_context,
             scene_messages=scene_messages,
         )
-        self.record_event(
+        self._state.record_event(
             state,
             GameEvent(
                 event_type=EventType.NARRATIVE,
@@ -614,8 +541,8 @@ class TurnWorkflow:
             working_memory=working_memory,
         )
         if terminal_event is not None:
-            self.record_event(state, terminal_event)
-        self.save_state_commit(
+            self._state.record_event(state, terminal_event)
+        self._state.save_state_commit(
             state,
             create_checkpoint=True,
             committed_turn=committed_turn,
@@ -636,9 +563,9 @@ class TurnWorkflow:
         working_memory = self._load_turn_memory_state(state)
         self._stamp_scene_snapshot(state, outcome)
         state.oracle_history.append(outcome)
-        terminal_event = self.auto_end_campaign_if_needed(state, outcome=outcome)
+        terminal_event = self._state.auto_end_campaign_if_needed(state, outcome=outcome)
         if oracle_title is not None:
-            self.queue_event(
+            self._state.queue_event(
                 state,
                 queued_events,
                 GameEvent(
@@ -701,7 +628,7 @@ class TurnWorkflow:
         # continuity reconciliation, so the persisted narrative event
         # matches the full visible checklist the user saw during the turn.
         timings = tracker.snapshot() if tracker is not None else []
-        self.queue_event(
+        self._state.queue_event(
             state,
             queued_events,
             GameEvent(
@@ -714,8 +641,8 @@ class TurnWorkflow:
             ),
         )
         if terminal_event is not None:
-            self.queue_event(state, queued_events, terminal_event)
-        self.persist_streamed_state(
+            self._state.queue_event(state, queued_events, terminal_event)
+        self._state.persist_streamed_state(
             state,
             queued_events,
             turn_checkpoint=turn_checkpoint,
@@ -828,9 +755,9 @@ class TurnWorkflow:
     ) -> tuple[TurnPlan, GameState]:
         with ThreadPoolExecutor(max_workers=2) as executor:
             memory_future = executor.submit(self._store.load_memory_or_none)
-            state = self.load_state(cancel_token=cancel_token)
+            state = self._state.load_state(cancel_token=cancel_token)
             existing_memory = memory_future.result()
-        planner_memory = self.memory_for_state(state, existing_memory=existing_memory)
+        planner_memory = self._state.memory_for_state(state, existing_memory=existing_memory)
         planner_context = self._memory.retrieve_for_planner(
             state,
             planner_memory,
@@ -855,9 +782,9 @@ class TurnWorkflow:
     ) -> tuple[GameState, str | None]:
         with ThreadPoolExecutor(max_workers=2) as executor:
             memory_future = executor.submit(self._store.load_memory_or_none)
-            state = self.load_state_readonly(cancel_token=cancel_token)
+            state = self._state.load_state_readonly(cancel_token=cancel_token)
             existing_memory = memory_future.result()
-        memory = self.memory_for_state(state, existing_memory=existing_memory)
+        memory = self._state.memory_for_state(state, existing_memory=existing_memory)
         latest_outcome = state.oracle_history[-1] if state.oracle_history else None
         if latest_outcome is None:
             context = self._memory.retrieve_for_planner(state, memory, question).render()
@@ -882,7 +809,7 @@ class TurnWorkflow:
         force_rebuild: bool = False,
     ) -> tuple[str | None, list[dict[str, str]], MemoryState]:
         if force_rebuild:
-            memory = self.memory_for_state(
+            memory = self._state.memory_for_state(
                 state,
                 force_rebuild=True,
                 checkpoint_overrides=checkpoint_overrides,
@@ -902,7 +829,7 @@ class TurnWorkflow:
         )
 
     def _load_turn_memory_state(self, state: GameState) -> MemoryState:
-        return self.memory_for_state(
+        return self._state.memory_for_state(
             state,
             existing_memory=self._store.load_memory_or_none(),
         )
@@ -927,7 +854,7 @@ class TurnWorkflow:
         working_memory: MemoryState | None,
     ) -> MemoryState:
         if working_memory is None:
-            return self.memory_for_state(state)
+            return self._state.memory_for_state(state)
         memory = self._memory.sync_from_state(
             state,
             working_memory.model_copy(deep=True),

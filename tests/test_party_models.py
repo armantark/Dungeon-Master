@@ -1,4 +1,4 @@
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnCharacterState,
     CairnMechanicsSource,
     CharacterSheet,

@@ -4,7 +4,7 @@ import json
 
 from pydantic import ValidationError
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.config import LLMConfig as NarrativeConfig
 from dungeon_master.llm.completion.contracts import CompletionFunction, CompletionRequest
 from dungeon_master.llm.completion.transport import (

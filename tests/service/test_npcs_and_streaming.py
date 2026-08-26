@@ -5,9 +5,12 @@ from typing import cast
 
 import pytest
 
-from dungeon_master.cancel import CancellationToken, RequestCancelledError
-from dungeon_master.memory import MemoryState
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken, RequestCancelledError
+from dungeon_master.application.game_service import TURN_STREAM_STAGE_ORDER, GameService
+from dungeon_master.application.updates.npcs import (
+    LegacyNPCRosterRepairResult,
+)
+from dungeon_master.domain.models import (
     NPC,
     CharacterSheet,
     GameState,
@@ -20,20 +23,17 @@ from dungeon_master.models import (
     StageStatus,
     ThreadStatus,
 )
-from dungeon_master.narrative import CompletionDelta
-from dungeon_master.npc_updater import (
-    LegacyNPCRosterRepairResult,
-)
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import TURN_STREAM_STAGE_ORDER, GameService
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import (
+from dungeon_master.llm.narration import CompletionDelta
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnPlan,
     TurnRoute,
     TurnRouter,
 )
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.memory import MemoryState
+from dungeon_master.persistence.state_store import StateStore
 from tests.factories import sample_state
 from tests.service.cairn_fakes import (
     FakeCairnEngine,

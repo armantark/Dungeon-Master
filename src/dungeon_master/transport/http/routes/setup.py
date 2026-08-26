@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from fastapi.responses import StreamingResponse  # noqa: TC002
 
-from dungeon_master.models import GameState
+from dungeon_master.domain.models import GameState
 from dungeon_master.transport.http.runtime import ServiceDep, StreamRuntimeDep
 from dungeon_master.transport.http.schemas import (
     CampaignEndRequest,
@@ -24,8 +24,8 @@ from dungeon_master.transport.http.streaming import start_game_state_stream, sta
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from dungeon_master.cancel import CancellationToken
-    from dungeon_master.narrative import CompletionDelta
+    from dungeon_master.application.cancellation import CancellationToken
+    from dungeon_master.llm.narration import CompletionDelta
 
 router = APIRouter()
 

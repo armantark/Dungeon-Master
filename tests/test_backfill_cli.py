@@ -4,17 +4,17 @@ import json
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING
 
-from dungeon_master.backfill_cli import main
-from dungeon_master.models import (
+from dungeon_master.application.game_service import GameService
+from dungeon_master.domain.models import (
     NPC,
     CairnCharacterState,
     CairnItemState,
     CairnMechanicsSource,
     NPCPlayerLabelKind,
 )
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService
-from dungeon_master.state_store import StateStore
+from dungeon_master.entrypoints.backfill import main
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 from tests.factories import sample_state
 from tests.test_service import FakeCairnEngine, FakeNpcUpdater
 

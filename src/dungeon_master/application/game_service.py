@@ -4,6 +4,8 @@ from collections.abc import Generator
 
 from dungeon_master.application import turn_commit
 from dungeon_master.application.campaign_workflow import CampaignWorkflow
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.application.capability_guard import CapabilityOracleGuard
 from dungeon_master.application.continuity import ContinuityReconciler
 from dungeon_master.application.continuity import ThreadUpdater as ThreadUpdaterPort
 from dungeon_master.application.service_models import GuardedYesNoOutcome, SaveBackfillReport
@@ -20,24 +22,12 @@ from dungeon_master.application.stage_timing import TURN_STREAM_STAGE_ORDER
 from dungeon_master.application.state_management import ApplicationState
 from dungeon_master.application.turn_plan_execution import TurnPlanExecutor
 from dungeon_master.application.turn_workflow import TurnWorkflow
-from dungeon_master.cairn import CairnEngine
-from dungeon_master.campaign import (
-    CampaignGenerator,
-    CampaignWorldResult,
-    CharacterDraftMode,
-    CharacterDraftResult,
-    CharacterGenerator,
-    CharacterQuizResult,
-    CharacterTemplatesResult,
-)
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.capability_oracle_guard import CapabilityOracleGuard
-from dungeon_master.character_effect_updater import CharacterEffectUpdater
+from dungeon_master.application.updates.character_effects import CharacterEffectUpdater
+from dungeon_master.application.updates.inventory import InventoryUpdater
+from dungeon_master.application.updates.npcs import NPCUpdater
+from dungeon_master.application.updates.threads import ThreadUpdater
 from dungeon_master.config import LLMRuntimeBundle, build_llm_runtime, single_llm_runtime
-from dungeon_master.explainer import ExplainerEngine, ExplanationResult
-from dungeon_master.inventory_updater import InventoryUpdater
-from dungeon_master.memory import CommittedTurnMemory, MemoryManager
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
@@ -55,12 +45,22 @@ from dungeon_master.models import (
     OracleOutcome,
     SceneStatus,
 )
-from dungeon_master.narrative import CompletionDelta, NarrativeConfig, NarrativeEngine
-from dungeon_master.npc_updater import NPCUpdater
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.state_store import StateStore
-from dungeon_master.thread_updater import ThreadUpdater
-from dungeon_master.turn_router import TurnRouter
+from dungeon_master.generation import (
+    CampaignGenerator,
+    CampaignWorldResult,
+    CharacterDraftMode,
+    CharacterDraftResult,
+    CharacterGenerator,
+    CharacterQuizResult,
+    CharacterTemplatesResult,
+)
+from dungeon_master.llm.explanation import ExplainerEngine, ExplanationResult
+from dungeon_master.llm.narration import CompletionDelta, NarrativeConfig, NarrativeEngine
+from dungeon_master.llm.planning import TurnRouter
+from dungeon_master.mechanics.engine import CairnEngine
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.memory import CommittedTurnMemory, MemoryManager
+from dungeon_master.persistence.state_store import StateStore
 
 __all__ = ["TURN_STREAM_STAGE_ORDER", "GameService", "NPCUpdaterPort", "SaveBackfillReport"]
 

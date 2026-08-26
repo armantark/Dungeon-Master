@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 
 from dungeon_master.llm.completion import CompletionFunction
+from dungeon_master.llm.narration import NarrativeConfig, _completion
 from dungeon_master.mechanics.combat import (
     AttackActor,
     CombatMechanics,
@@ -29,7 +30,6 @@ from dungeon_master.mechanics.survival import (
     SurvivalMechanics,
     SurvivalUpdate,
 )
-from dungeon_master.narrative import NarrativeConfig, _completion
 
 __all__ = [
     "AttackActor",

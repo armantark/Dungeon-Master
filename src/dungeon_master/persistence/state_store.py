@@ -6,8 +6,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from dungeon_master.domain.models import GameEvent, GameState, StrictModel
 from dungeon_master.memory import MemoryState
-from dungeon_master.models import GameEvent, GameState, StrictModel
 
 
 class TurnCheckpointRecord(StrictModel):

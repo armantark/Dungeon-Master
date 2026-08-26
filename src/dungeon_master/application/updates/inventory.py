@@ -8,15 +8,15 @@ from typing import Protocol
 
 from pydantic import Field, ValidationError, model_validator
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import (
     CharacterSheet,
     GameState,
     InventoryItem,
     OracleOutcome,
     StrictModel,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionFunction,
     CompletionRequest,
@@ -25,7 +25,7 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
-from dungeon_master.prompt_fragments import (
+from dungeon_master.llm.prompt_fragments import (
     JSON_ONLY,
     NO_KEYWORD_TRIGGERS,
     no_invention_rule,

@@ -3,23 +3,15 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Protocol
 
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.application.capability_guard import (
+    CapabilityOracleGuardResult,
+)
 from dungeon_master.application.continuity import (
     NPCUpdater as ContinuityNPCUpdaterPort,
 )
-from dungeon_master.cairn import AttackActor, SurvivalUpdate
-from dungeon_master.campaign import (
-    CampaignWorldResult,
-    CharacterDraftMode,
-    CharacterDraftResult,
-    CharacterQuizResult,
-    CharacterTemplatesResult,
-)
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.capability_oracle_guard import (
-    CapabilityOracleGuardResult,
-)
-from dungeon_master.explainer import ExplanationResult
-from dungeon_master.models import (
+from dungeon_master.application.updates.npcs import LegacyNPCRosterRepairResult
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
@@ -34,10 +26,18 @@ from dungeon_master.models import (
     Likelihood,
     OracleOutcome,
 )
-from dungeon_master.narrative import (
+from dungeon_master.generation import (
+    CampaignWorldResult,
+    CharacterDraftMode,
+    CharacterDraftResult,
+    CharacterQuizResult,
+    CharacterTemplatesResult,
+)
+from dungeon_master.llm.explanation import ExplanationResult
+from dungeon_master.llm.narration import (
     CompletionDelta,
 )
-from dungeon_master.npc_updater import LegacyNPCRosterRepairResult
+from dungeon_master.mechanics.engine import AttackActor, SurvivalUpdate
 
 
 class NarrativePort(Protocol):

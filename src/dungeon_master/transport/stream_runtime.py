@@ -11,10 +11,10 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Literal, TypeVar
 
-from dungeon_master.cancel import CancellationToken, RequestCancelledError
-from dungeon_master.models import GameState
-from dungeon_master.narrative import CompletionDelta
-from dungeon_master.turn_router import TurnPlanningError
+from dungeon_master.application.cancellation import CancellationToken, RequestCancelledError
+from dungeon_master.domain.models import GameState
+from dungeon_master.llm.narration import CompletionDelta
+from dungeon_master.llm.planning import TurnPlanningError
 
 logger = logging.getLogger(__name__)
 

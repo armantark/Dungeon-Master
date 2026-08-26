@@ -246,8 +246,8 @@ uv run dungeon-master --port 8002
 ```shell
 uv run python - <<'PY'
 from pathlib import Path
-from dungeon_master.models import CairnMechanicsSource
-from dungeon_master.state_store import StateStore
+from dungeon_master.domain.models import CairnMechanicsSource
+from dungeon_master.persistence.state_store import StateStore
 from tests.factories import sample_state
 
 state = sample_state()

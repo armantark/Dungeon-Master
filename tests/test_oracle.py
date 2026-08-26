@@ -1,5 +1,5 @@
-from dungeon_master.models import Likelihood, SceneStatus
-from dungeon_master.oracle import OracleEngine
+from dungeon_master.domain.models import Likelihood, SceneStatus
+from dungeon_master.mechanics.oracle import OracleEngine
 from tests.factories import sample_state
 
 

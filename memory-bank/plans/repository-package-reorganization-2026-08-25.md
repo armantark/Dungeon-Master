@@ -6,7 +6,7 @@ Make the repository easy to navigate by responsibility. Reduce the remaining god
 
 ## Frozen interfaces
 
-- Keep these Python imports valid: `dungeon_master.api`, `dungeon_master.cairn`, `dungeon_master.memory`, `dungeon_master.narrative`, `dungeon_master.service`, and `dungeon_master.turn_router`.
+- Keep these Python imports valid: `dungeon_master.transport.http.asgi`, `dungeon_master.mechanics.engine`, `dungeon_master.memory`, `dungeon_master.llm.narration`, `dungeon_master.application.game_service`, and `dungeon_master.llm.planning`.
 - Keep `GameService`, `CairnEngine`, `MemoryManager`, `NarrativeEngine`, `TurnRouter`, and `create_app` as the external interfaces.
 - Keep CLI entry points, HTTP paths, request and response payloads, save files, checkpoints, stream events, and OpenAPI output compatible.
 - Keep `web/src/lib/store.svelte.ts` and `web/src/lib/types.ts` as stable frontend import surfaces.
@@ -50,7 +50,7 @@ The implementation can use fewer folders when a proposed folder would contain on
 
 Owns:
 
-- `src/dungeon_master/cairn.py`
+- `src/dungeon_master/mechanics/engine.py`
 - `src/dungeon_master/mechanics/**`
 - `tests/test_cairn.py`
 
@@ -69,8 +69,8 @@ Criteria:
 Owns:
 
 - `src/dungeon_master/memory.py`
-- `src/dungeon_master/narrative.py`
-- `src/dungeon_master/turn_router.py`
+- `src/dungeon_master/llm/narration/engine.py`
+- `src/dungeon_master/llm/planning/router.py`
 - new `src/dungeon_master/memory/**` and `src/dungeon_master/llm/**`
 - `tests/test_memory.py`, `tests/test_narrative.py`, and `tests/test_turn_router.py`
 
@@ -107,8 +107,8 @@ Criteria:
 
 Owns:
 
-- `src/dungeon_master/service.py`
-- `src/dungeon_master/api.py`
+- `src/dungeon_master/application/game_service.py`
+- `src/dungeon_master/transport/http/asgi.py`
 - new application and HTTP packages not owned by other leaves
 - `tests/test_service.py`, `tests/test_api.py`
 - `pyproject.toml`

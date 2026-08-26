@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.config import ReasoningEffort
 
 if TYPE_CHECKING:

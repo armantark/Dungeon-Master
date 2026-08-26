@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CampaignEndReason,
     CampaignStatus,
     GameState,
@@ -13,7 +13,7 @@ from dungeon_master.models import (
     new_id,
     utc_now,
 )
-from dungeon_master.state_store import StateStore
+from dungeon_master.persistence.state_store import StateStore
 
 
 class SaveRecord(StrictModel):

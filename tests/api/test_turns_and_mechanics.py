@@ -11,11 +11,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from dungeon_master.api import (
-    create_app,
-)
-from dungeon_master.cairn import CairnEngine
-from dungeon_master.models import (
+from dungeon_master.application.game_service import GameService
+from dungeon_master.domain.models import (
     NPC,
     CairnCharacterState,
     CairnItemEffectKind,
@@ -36,18 +33,21 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     NarrativeConfig,
 )
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import GameService
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import (
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnPlan,
     TurnRoute,
     TurnRouter,
+)
+from dungeon_master.mechanics.engine import CairnEngine
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.persistence.state_store import StateStore
+from dungeon_master.transport.http.asgi import (
+    create_app,
 )
 from tests.api.mechanics_fakes import (
     FakeNpcUpdater,

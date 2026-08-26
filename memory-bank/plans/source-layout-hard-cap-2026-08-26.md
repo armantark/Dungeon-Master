@@ -45,7 +45,7 @@ src/dungeon_master/
 
 ### Leaf A: application source
 
-Owns `src/dungeon_master/service.py`, `src/dungeon_master/application/**`, and new application workflow modules only.
+Owns `src/dungeon_master/application/game_service.py`, `src/dungeon_master/application/**`, and new application workflow modules only.
 
 Criteria:
 
@@ -100,3 +100,8 @@ Criteria:
 
 - 2026-08-26: Baseline inventory found nine files above the cap and 22 non-conventional modules at `src/dungeon_master/` root.
 - 2026-08-26: Contract frozen. Status artifacts are explicitly disabled for this task.
+- 2026-08-26: Oversized application, mechanics, generation, test, and stylesheet files were split at responsibility boundaries; every owned source file is now below the cap.
+- 2026-08-26: All 22 root implementation modules moved into `application`, `config`, `domain`, `entrypoints`, `generation`, `infrastructure`, `llm`, `mechanics`, `persistence`, or `transport`; only `src/dungeon_master/__init__.py` remains at package root.
+- 2026-08-26: Imports, console entry points, README ownership guidance, current memory-bank guidance, and the development architecture-map citations were migrated to the final paths.
+- 2026-08-26: Independent deletion-focused review found and removed internal `ApplicationState` pass-through methods, widened the checker from selected source roots to all repository source, and corrected the last current-state facade references. The review passed on recheck.
+- 2026-08-26: Final deterministic verification passed: Ruff format/lint, repository source-layout checker, strict mypy, 338 backend tests excluding the live model judge, all three CLI help commands, Prettier, ESLint, Svelte diagnostics, 338 frontend tests, production build, and npm audit with zero findings. The unchanged live DeepEval attack case failed twice because generated prose left the goblin alive while the judge inferred death from `Success`; the exact scores and rationale are recorded in `papercuts.md`.

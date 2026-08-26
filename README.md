@@ -78,9 +78,14 @@ The HTTP surface is intentionally thin: every committed mutation returns the com
 
 - `src/dungeon_master/transport/http/`: FastAPI assembly, request schemas, runtime dependencies, route groups, and NDJSON response adaptation.
 - `src/dungeon_master/application/`: typed turn-plan execution, post-narration reconciliation, and canonical turn commit workflows.
-- `src/dungeon_master/mechanics/`: combat, character generation, inventory, and survival rules; `cairn.py` is the stable public facade.
-- `src/dungeon_master/llm/`: shared completion transport, typed planning, and narration; `turn_router.py` and `narrative.py` are stable public facades.
+- `src/dungeon_master/domain/`: canonical Pydantic state and event contracts.
+- `src/dungeon_master/generation/`: character and campaign generation contracts and workflows.
+- `src/dungeon_master/mechanics/`: deterministic oracle, combat, character generation, inventory, and survival rules.
+- `src/dungeon_master/llm/`: shared completion transport, typed planning, narration, explanation, and prompt fragments.
 - `src/dungeon_master/memory/`: bounded context projection, retrieval, rendering, and the stable `MemoryManager` interface.
+- `src/dungeon_master/persistence/`: atomic state files, checkpoints, events, derived memory, and save-library selection.
+- `src/dungeon_master/entrypoints/`: console commands for the server, save backfill, and fixture library.
+- `src/dungeon_master/config/` and `src/dungeon_master/infrastructure/`: runtime configuration and cross-cutting observability.
 - `web/src/features/`: product-facing Svelte components grouped by combat, inspector, play, saves, settings, and setup.
 - `web/src/contracts/`: TypeScript wire contracts grouped by backend domain; `lib/types.ts` is the stable import facade.
 - `web/src/state/`: the rune-backed `GameStore` plus explicit campaign, save-library, settings, and streaming workflows; `lib/store.svelte.ts` is the stable import facade.

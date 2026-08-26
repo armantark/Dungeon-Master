@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from pydantic import Field, ValidationError, model_validator
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     NPC,
     CampaignStatus,
     CharacterQuiz,
@@ -19,7 +19,7 @@ from dungeon_master.models import (
     OracleTables,
     StrictModel,
 )
-from dungeon_master.narrative import LITELLM_RETRYABLE_ERRORS
+from dungeon_master.llm.narration import LITELLM_RETRYABLE_ERRORS
 
 
 class CharacterDraftMode(StrEnum):

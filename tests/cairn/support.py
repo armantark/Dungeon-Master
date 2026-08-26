@@ -1,7 +1,6 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.llm.completion import CompletionRequest
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnCharacterState,
     CairnItemState,
     CairnItemTag,
@@ -12,7 +11,8 @@ from dungeon_master.models import (
     InventoryItem,
     PartyMember,
 )
-from dungeon_master.narrative import NarrativeConfig
+from dungeon_master.llm.completion import CompletionRequest
+from dungeon_master.llm.narration import NarrativeConfig
 from tests.factories import sample_state
 
 

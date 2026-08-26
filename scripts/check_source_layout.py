@@ -4,24 +4,32 @@ import sys
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_ROOTS = (
-    REPOSITORY_ROOT / "src",
-    REPOSITORY_ROOT / "tests",
-    REPOSITORY_ROOT / "scripts",
-    REPOSITORY_ROOT / "web" / "src",
-    REPOSITORY_ROOT / "web" / "src-tauri" / "src",
-)
 SOURCE_SUFFIXES = {".css", ".py", ".rs", ".svelte", ".ts"}
+IGNORED_DIRECTORIES = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svelte-kit",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "node_modules",
+    "target",
+}
 MAX_LINES = 999
 PACKAGE_ROOT = REPOSITORY_ROOT / "src" / "dungeon_master"
 ALLOWED_PACKAGE_ROOT_FILES = {"__init__.py", "py.typed"}
 
 
 def source_files() -> list[Path]:
-    files: set[Path] = set()
-    for root in SOURCE_ROOTS:
-        files.update(path for path in root.rglob("*") if path.suffix in SOURCE_SUFFIXES)
-    return sorted(files)
+    return sorted(
+        path
+        for path in REPOSITORY_ROOT.rglob("*")
+        if path.is_file()
+        and path.suffix in SOURCE_SUFFIXES
+        and not IGNORED_DIRECTORIES.intersection(path.relative_to(REPOSITORY_ROOT).parts)
+    )
 
 
 def line_count(path: Path) -> int:

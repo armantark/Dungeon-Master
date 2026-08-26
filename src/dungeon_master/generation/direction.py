@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dungeon_master.models import CampaignDangerProfile, CampaignGenre, CampaignSeed
+from dungeon_master.domain.models import CampaignDangerProfile, CampaignGenre, CampaignSeed
 
 GENRE_LABELS: dict[CampaignGenre, str] = {
     CampaignGenre.HIGH_FANTASY: "high fantasy",

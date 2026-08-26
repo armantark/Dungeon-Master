@@ -1,6 +1,6 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.narrative import CompletionRequest
+from dungeon_master.llm.narration import CompletionRequest
 
 
 class RecordingRouterCompletion:

@@ -10,8 +10,8 @@ import argparse
 
 import uvicorn
 
-from dungeon_master.api import app
-from dungeon_master.observability import log_level_from_env
+from dungeon_master.infrastructure.observability import log_level_from_env
+from dungeon_master.transport.http.asgi import app
 
 
 def main() -> None:
@@ -32,7 +32,7 @@ def main() -> None:
     log_level = log_level_from_env().lower()
 
     uvicorn.run(
-        "dungeon_master.api:app" if args.reload else app,
+        "dungeon_master.transport.http.asgi:app" if args.reload else app,
         host=args.host,
         port=args.port,
         reload=args.reload,

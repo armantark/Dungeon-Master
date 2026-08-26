@@ -141,7 +141,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Stage events + one new GameState",
     rationale: "Turn order lives in Python rather than being distributed across model calls.",
     citations: [
-      { file: "src/dungeon_master/service.py", line: 1120 },
+      { file: "src/dungeon_master/application/turn_workflow.py", line: 533 },
       { file: "src/dungeon_master/application/turn_plan_execution.py", line: 110 },
     ],
   },
@@ -182,7 +182,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     rationale: "Downstream code branches on typed fields, never on model prose.",
     citations: [
       { file: "src/dungeon_master/llm/planning/router.py", line: 51 },
-      { file: "src/dungeon_master/service.py", line: 1741 },
+      { file: "src/dungeon_master/application/game_service.py", line: 68 },
     ],
   },
   {
@@ -201,7 +201,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Rolled outcome + rule effects",
     rationale: "The model may describe success or failure, but Python decides which occurred.",
     citations: [
-      { file: "src/dungeon_master/oracle.py", line: 31 },
+      { file: "src/dungeon_master/mechanics/oracle.py", line: 31 },
       { file: "src/dungeon_master/mechanics/combat.py", line: 188 },
       { file: "src/dungeon_master/application/turn_plan_execution.py", line: 110 },
     ],
@@ -264,8 +264,8 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     rationale:
       "A partial turn cannot replace the previous valid save, and a bad narration can be regenerated from its named checkpoint.",
     citations: [
-      { file: "src/dungeon_master/state_store.py", line: 44 },
-      { file: "src/dungeon_master/state_store.py", line: 99 },
+      { file: "src/dungeon_master/persistence/state_store.py", line: 44 },
+      { file: "src/dungeon_master/persistence/state_store.py", line: 99 },
     ],
   },
   {
@@ -284,7 +284,7 @@ export const ARCHITECTURE_NODES: ArchitectureNode[] = [
     output: "Active save path + save metadata",
     rationale:
       "Save selection stays outside the turn protocol, while settings and credentials remain app-global.",
-    citations: [{ file: "src/dungeon_master/save_library.py", line: 44 }],
+    citations: [{ file: "src/dungeon_master/persistence/save_library.py", line: 44 }],
   },
   {
     id: "homes",

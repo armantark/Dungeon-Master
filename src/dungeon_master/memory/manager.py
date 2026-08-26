@@ -1,10 +1,10 @@
 """Facade object composing memory projection, retrieval, and rendering."""
 
+from dungeon_master.domain.models import GameState
 from dungeon_master.memory.projection import (
     active_encounter_line_for_state as _active_encounter_line_for_state,
 )
 from dungeon_master.memory.retrieval import MemoryRetrieval
-from dungeon_master.models import GameState
 
 
 class MemoryManager(MemoryRetrieval):

@@ -6,8 +6,7 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dungeon_master.mechanics.inventory import ResolvedActor, sync_survival_flags
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
@@ -21,6 +20,7 @@ from dungeon_master.models import (
     PendingEncounterAdvantage,
     Roll,
 )
+from dungeon_master.mechanics.inventory import ResolvedActor, sync_survival_flags
 
 D20_SIDES = 20
 D6_SIDES = 6

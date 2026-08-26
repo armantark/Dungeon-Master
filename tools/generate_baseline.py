@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Final
 
 from dungeon_master.config import LLMConfig
-from dungeon_master.narrative import NarrativeEngine
-from dungeon_master.turn_router import TurnRouter
+from dungeon_master.llm.narration import NarrativeEngine
+from dungeon_master.llm.planning import TurnRouter
 from tools.eval_harness import (
     EVAL_DATA_PATH,
     EVAL_USER_INPUTS,
@@ -138,9 +138,9 @@ _LEGACY_GENERATOR_SCRIPT = textwrap.dedent(
     from pathlib import Path
 
     from dungeon_master.config import LLMConfig
-    from dungeon_master.models import GameState, OracleKind, OracleOutcome, OracleTables
-    from dungeon_master.narrative import NarrativeEngine
-    from dungeon_master.turn_router import TurnRouter
+    from dungeon_master.domain.models import GameState, OracleKind, OracleOutcome, OracleTables
+    from dungeon_master.llm.narration import NarrativeEngine
+    from dungeon_master.llm.planning import TurnRouter
 
     EVAL_USER_INPUTS = (
         "I swing my sword at the goblin.",

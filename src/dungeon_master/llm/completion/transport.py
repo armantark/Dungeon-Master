@@ -19,17 +19,17 @@ from litellm.exceptions import (
     Timeout,
 )
 
-from dungeon_master.cancel import CancellationToken, RequestCancelledError
+from dungeon_master.application.cancellation import CancellationToken, RequestCancelledError
+from dungeon_master.infrastructure.observability import (
+    LLMCallRecord,
+    log_llm_call,
+    request_id_from_cancel_token,
+)
 from dungeon_master.llm.completion.contracts import (
     CompletionDelta,
     CompletionFunction,
     CompletionRequest,
     CompletionText,
-)
-from dungeon_master.observability import (
-    LLMCallRecord,
-    log_llm_call,
-    request_id_from_cancel_token,
 )
 
 if TYPE_CHECKING:

@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from dungeon_master.application.cancellation import CancellationToken
 from dungeon_master.application.continuity import ContinuityReconciler, NarratedTurn
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.character_effect_updater import CharacterEffectUpdateResult
-from dungeon_master.inventory_updater import InventoryUpdateResult
-from dungeon_master.memory import CommittedTurnMemory, MemoryManager, MemoryState
-from dungeon_master.models import (
+from dungeon_master.application.updates.character_effects import CharacterEffectUpdateResult
+from dungeon_master.application.updates.inventory import InventoryUpdateResult
+from dungeon_master.domain.models import (
     NPC,
     GameState,
     NPCPlayerLabelKind,
     OracleOutcome,
 )
+from dungeon_master.memory import CommittedTurnMemory, MemoryManager, MemoryState
 
 
 class CharacterEffectUpdater(Protocol):

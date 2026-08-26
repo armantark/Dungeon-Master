@@ -1,8 +1,8 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.inventory_updater import InventoryUpdater
-from dungeon_master.models import GameState, InventoryItem, OracleKind, OracleOutcome
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
+from dungeon_master.application.updates.inventory import InventoryUpdater
+from dungeon_master.domain.models import GameState, InventoryItem, OracleKind, OracleOutcome
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
 

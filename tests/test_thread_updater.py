@@ -1,8 +1,8 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import OracleKind, OracleOutcome, ThreadStatus
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
-from dungeon_master.thread_updater import ThreadUpdater
+from dungeon_master.application.updates.threads import ThreadUpdater
+from dungeon_master.domain.models import OracleKind, OracleOutcome, ThreadStatus
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
 

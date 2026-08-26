@@ -1,9 +1,6 @@
 import pytest
 
-from dungeon_master.cairn import (
-    CairnEngine,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CairnDayPhase,
     CairnItemEffectKind,
     CairnItemPower,
@@ -21,7 +18,10 @@ from dungeon_master.models import (
     InventoryItem,
     RetreatOutcome,
 )
-from dungeon_master.narrative import NarrativeConfig
+from dungeon_master.llm.narration import NarrativeConfig
+from dungeon_master.mechanics.engine import (
+    CairnEngine,
+)
 from tests.cairn.support import (
     RecordingAcquisitionCompletion,
     _active_encounter_state,

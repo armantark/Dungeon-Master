@@ -1,9 +1,4 @@
-from dungeon_master.memory import (
-    CommittedTurnMemory,
-    MemoryManager,
-    active_encounter_line_for_state,
-)
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     NPC,
     EncounterState,
     EnemyCombatant,
@@ -14,6 +9,11 @@ from dungeon_master.models import (
     OracleKind,
     OracleOutcome,
     SceneStatus,
+)
+from dungeon_master.memory import (
+    CommittedTurnMemory,
+    MemoryManager,
+    active_encounter_line_for_state,
 )
 from tests.factories import sample_state
 

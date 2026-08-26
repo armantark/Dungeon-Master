@@ -11,16 +11,8 @@ from collections.abc import Generator
 from threading import Event
 from typing import TYPE_CHECKING
 
-from dungeon_master.campaign import (
-    CampaignWorldResult,
-    CharacterDraftMode,
-    CharacterDraftResult,
-    CharacterQuizResult,
-    CharacterTemplatesResult,
-)
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.explainer import ExplanationResult
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import (
     CampaignSeed,
     CharacterQuiz,
     CharacterQuizAnswer,
@@ -30,7 +22,15 @@ from dungeon_master.models import (
     GameState,
     OracleOutcome,
 )
-from dungeon_master.narrative import (
+from dungeon_master.generation import (
+    CampaignWorldResult,
+    CharacterDraftMode,
+    CharacterDraftResult,
+    CharacterQuizResult,
+    CharacterTemplatesResult,
+)
+from dungeon_master.llm.explanation import ExplanationResult
+from dungeon_master.llm.narration import (
     CompletionDelta,
     CompletionRequest,
     NarrativeConfig,

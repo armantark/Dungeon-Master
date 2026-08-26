@@ -5,10 +5,10 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from dungeon_master.save_library import SaveLibrary
-from dungeon_master.service import GameService, SaveBackfillReport
-from dungeon_master.settings import state_path_from_env
-from dungeon_master.state_store import StateStore
+from dungeon_master.application.game_service import GameService, SaveBackfillReport
+from dungeon_master.config.paths import state_path_from_env
+from dungeon_master.persistence.save_library import SaveLibrary
+from dungeon_master.persistence.state_store import StateStore
 
 
 @dataclass(frozen=True)

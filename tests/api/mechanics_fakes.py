@@ -9,9 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from dungeon_master.cairn import AttackActor, SurvivalUpdate
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.application.updates.npcs import (
+    GeneratedNPCUpdateBatch,
+    LegacyNPCRosterRepairResult,
+    NPCUpdateResult,
+)
+from dungeon_master.application.updates.threads import (
+    GeneratedThreadUpdateBatch,
+    ThreadUpdateResult,
+)
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
@@ -36,12 +44,7 @@ from dungeon_master.models import (
     OracleOutcome,
     RetreatOutcome,
 )
-from dungeon_master.npc_updater import (
-    GeneratedNPCUpdateBatch,
-    LegacyNPCRosterRepairResult,
-    NPCUpdateResult,
-)
-from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
+from dungeon_master.mechanics.engine import AttackActor, SurvivalUpdate
 from tests.api.narrative_fakes import FakeCharacterGenerator
 from tests.factories import sample_state
 

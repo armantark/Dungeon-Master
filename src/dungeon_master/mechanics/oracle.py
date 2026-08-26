@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     NPC,
     GameState,
     Likelihood,

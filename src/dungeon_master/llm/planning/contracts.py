@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,

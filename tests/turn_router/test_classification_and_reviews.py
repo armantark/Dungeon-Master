@@ -1,13 +1,13 @@
 import pytest
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     Likelihood,
 )
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
-from dungeon_master.turn_router import (
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
+from dungeon_master.llm.planning import (
     SAVE_MECHANICS_REVIEW_SYSTEM_PROMPT,
     TURN_ROUTER_SYSTEM_PROMPT,
     PlannedTurnOp,

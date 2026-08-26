@@ -4,10 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import GameState, OracleOutcome
-from dungeon_master.npc_updater import GeneratedNPCUpdateBatch, NPCUpdateResult
-from dungeon_master.thread_updater import GeneratedThreadUpdateBatch, ThreadUpdateResult
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.application.updates.npcs import GeneratedNPCUpdateBatch, NPCUpdateResult
+from dungeon_master.application.updates.threads import (
+    GeneratedThreadUpdateBatch,
+    ThreadUpdateResult,
+)
+from dungeon_master.domain.models import GameState, OracleOutcome
 
 
 class ThreadUpdater(Protocol):

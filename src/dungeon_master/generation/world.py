@@ -4,7 +4,8 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
-from dungeon_master.cancel import CancellationToken
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import CampaignSeed, CharacterSheet, GameState
 from dungeon_master.generation.contracts import (
     GENERATION_ERRORS,
     CampaignGenerationError,
@@ -15,8 +16,7 @@ from dungeon_master.generation.direction import (
     render_creative_direction,
     render_danger_guidance,
 )
-from dungeon_master.models import CampaignSeed, CharacterSheet, GameState
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     CompletionDelta,
     CompletionFunction,
     CompletionRequest,
@@ -26,7 +26,7 @@ from dungeon_master.narrative import (
     extract_json_object,
     iter_text_deltas,
 )
-from dungeon_master.prompt_fragments import JSON_ONLY_PERSIST, SEED_AUTHORITY
+from dungeon_master.llm.prompt_fragments import JSON_ONLY_PERSIST, SEED_AUTHORITY
 
 CAMPAIGN_SYSTEM_PROMPT = f"""You generate the initial world state for a solo TTRPG after the player
 character has already been chosen.

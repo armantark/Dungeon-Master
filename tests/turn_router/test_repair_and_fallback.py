@@ -1,7 +1,7 @@
 import pytest
 
-from dungeon_master.narrative import NarrativeConfig
-from dungeon_master.turn_router import (
+from dungeon_master.llm.narration import NarrativeConfig
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnRoute,

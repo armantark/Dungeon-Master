@@ -15,28 +15,28 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from dungeon_master.api import (
-    create_app,
-)
 from dungeon_master.application.continuity import ThreadUpdater as ThreadUpdaterPort
-from dungeon_master.models import (
+from dungeon_master.application.game_service import GameService, NPCUpdaterPort
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
     Likelihood,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     NarrativeConfig,
 )
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import GameService, NPCUpdaterPort
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import (
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnPlan,
     TurnRoute,
     TurnRouter,
+)
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.persistence.state_store import StateStore
+from dungeon_master.transport.http.asgi import (
+    create_app,
 )
 
 if TYPE_CHECKING:

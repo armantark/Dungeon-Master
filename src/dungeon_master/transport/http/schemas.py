@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from dungeon_master.campaign import CharacterDraftMode
 from dungeon_master.config import CredentialSource, LLMPreset, LLMProvider
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnRestKind,
@@ -17,7 +16,8 @@ from dungeon_master.models import (
     CharacterSheet,
     Likelihood,
 )
-from dungeon_master.save_library import SaveSummary
+from dungeon_master.generation import CharacterDraftMode
+from dungeon_master.persistence.save_library import SaveSummary
 
 
 class ChaosFactorRequest(BaseModel):

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from fastapi.responses import StreamingResponse
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import GameState
-from dungeon_master.narrative import CompletionDelta
-from dungeon_master.save_library import SaveLibrary
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import GameState
+from dungeon_master.llm.narration import CompletionDelta
+from dungeon_master.persistence.save_library import SaveLibrary
 from dungeon_master.transport.stream_runtime import (
     PayloadKind,
     StreamRuntime,

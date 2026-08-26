@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic_core import ValidationError
 
 from dungeon_master.config import LLMConfig
-from dungeon_master.models import GameState, OracleKind, OracleOutcome, OracleTables
-from dungeon_master.narrative import (
+from dungeon_master.domain.models import GameState, OracleKind, OracleOutcome, OracleTables
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     ChatMessage,
     CompletionRequest,

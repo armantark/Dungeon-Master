@@ -5,9 +5,9 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import CharacterSheet, GameState, OracleOutcome
-from dungeon_master.narrative import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import CharacterSheet, GameState, OracleOutcome
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionDelta,
     CompletionFunction,

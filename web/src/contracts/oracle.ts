@@ -95,7 +95,7 @@ export interface OracleOutcome {
   cairn: CairnResolution | null;
 }
 
-// Persisted mirror of `dungeon_master.models.StageStatus`. Identical
+// Persisted mirror of `dungeon_master.domain.models.StageStatus`. Identical
 // string set to `streaming-types.ts:StreamStageStatus` — the wire and
 // disk enums are kept structurally equal so the in-trace checklist and
 // the live checklist can share the same renderer without a mapping.

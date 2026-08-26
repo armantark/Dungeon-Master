@@ -7,8 +7,8 @@ from enum import StrEnum
 
 from pydantic import Field, ValidationError
 
-from dungeon_master.cancel import CancellationToken
-from dungeon_master.models import (
+from dungeon_master.application.cancellation import CancellationToken
+from dungeon_master.domain.models import (
     CharacterSheet,
     GameState,
     Likelihood,
@@ -16,7 +16,7 @@ from dungeon_master.models import (
     OracleOutcome,
     StrictModel,
 )
-from dungeon_master.narrative import (
+from dungeon_master.llm.narration import (
     LITELLM_RETRYABLE_ERRORS,
     CompletionFunction,
     CompletionRequest,
@@ -25,7 +25,7 @@ from dungeon_master.narrative import (
     complete_text,
     extract_json_object,
 )
-from dungeon_master.prompt_fragments import JSON_ONLY
+from dungeon_master.llm.prompt_fragments import JSON_ONLY
 
 CAPABILITY_ORACLE_GUARD_SYSTEM_PROMPT = f"""You protect a solo tabletop RPG from
 unbounded ability-fishing via yes/no oracle questions.

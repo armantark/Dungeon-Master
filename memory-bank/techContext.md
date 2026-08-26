@@ -26,19 +26,19 @@ Frontend:
 
 Backend:
 
-- `src/dungeon_master/api.py`: stable FastAPI import facade.
+- `src/dungeon_master/transport/http/asgi.py`: FastAPI process entry point.
 - `src/dungeon_master/transport/http/`: app assembly, request schemas, dependency/runtime wiring, route groups, and NDJSON response adaptation.
 - `src/dungeon_master/transport/stream_runtime.py`: retained stream sessions, cancellation, replay, and live-tail subscribers.
-- `src/dungeon_master/service.py`: application facade for campaign lifecycle, persistence, direct commands, regeneration, and stream boundaries.
+- `src/dungeon_master/application/game_service.py`: application facade for campaign lifecycle, persistence, direct commands, regeneration, and stream boundaries.
 - `src/dungeon_master/application/turn_plan_execution.py`: composed typed-plan executor with explicit mechanics, oracle, capability-guard, and LLM dependencies.
 - `src/dungeon_master/application/continuity.py` and `turn_commit.py`: post-narration proposals and canonical commit tail.
-- `src/dungeon_master/mechanics/`: combat, character generation, inventory, and survival rules. `cairn.py` is the public facade.
+- `src/dungeon_master/mechanics/`: deterministic oracle, combat, character generation, inventory, and survival rules; `engine.py` exports `CairnEngine`.
 - `src/dungeon_master/llm/completion/`: provider transport and completion contracts.
-- `src/dungeon_master/llm/planning/`: typed plan contracts, prompts, review gates, normalization, and routing. `turn_router.py` is the public facade.
-- `src/dungeon_master/llm/narration/`: prose generation. `narrative.py` is the public facade.
+- `src/dungeon_master/llm/planning/`: typed plan contracts, prompts, review gates, normalization, and routing, exported through the package `__init__.py`.
+- `src/dungeon_master/llm/narration/`: prose generation, exported through the package `__init__.py`.
 - `src/dungeon_master/memory/`: bounded context projection, retrieval, rendering, and the public `MemoryManager` interface.
 - `src/dungeon_master/generation/`: campaign and character generation workflows.
-- `src/dungeon_master/state_store.py` and `save_library.py`: canonical local persistence, checkpoints, and save selection.
+- `src/dungeon_master/persistence/state_store.py` and `persistence/save_library.py`: canonical local persistence, checkpoints, and save selection.
 
 Frontend:
 

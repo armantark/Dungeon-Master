@@ -1,12 +1,18 @@
 from litellm.types.utils import ModelResponse
 
-from dungeon_master.models import NPC, NPCPlayerLabelKind, NPCStatus, OracleKind, OracleOutcome
-from dungeon_master.narrative import CompletionRequest, NarrativeConfig
-from dungeon_master.npc_updater import (
+from dungeon_master.application.updates.npcs import (
     NPC_UPDATER_SYSTEM_PROMPT,
     GeneratedNPCUpdateBatch,
     NPCUpdater,
 )
+from dungeon_master.domain.models import (
+    NPC,
+    NPCPlayerLabelKind,
+    NPCStatus,
+    OracleKind,
+    OracleOutcome,
+)
+from dungeon_master.llm.narration import CompletionRequest, NarrativeConfig
 from tests.factories import sample_state
 
 

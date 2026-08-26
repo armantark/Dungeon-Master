@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dungeon_master.generation.contracts import CharacterDraftMode
-from dungeon_master.models import (
+from dungeon_master.domain.models import (
     CampaignSeed,
     CampaignStatus,
     CharacterQuiz,
@@ -13,6 +12,7 @@ from dungeon_master.models import (
     InventoryItem,
     OracleTables,
 )
+from dungeon_master.generation.contracts import CharacterDraftMode
 
 
 def _placeholder_tables() -> OracleTables:

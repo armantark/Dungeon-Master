@@ -4,7 +4,7 @@ from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from dungeon_master.config import LLMConfig
-from dungeon_master.narrative import NarrativeEngine
+from dungeon_master.llm.narration import NarrativeEngine
 from tools.eval_harness import (
     EVAL_USER_INPUTS,
     EvalBaseline,

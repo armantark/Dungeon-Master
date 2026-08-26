@@ -1,10 +1,9 @@
 from pathlib import Path
 from typing import cast
 
-from dungeon_master.cairn import CairnEngine
-from dungeon_master.capability_oracle_guard import CapabilityOracleGuardResult
-from dungeon_master.memory import LocationMemory
-from dungeon_master.models import (
+from dungeon_master.application.capability_guard import CapabilityOracleGuardResult
+from dungeon_master.application.game_service import GameService
+from dungeon_master.domain.models import (
     AttackStance,
     CairnAbility,
     CairnCharacterState,
@@ -31,17 +30,18 @@ from dungeon_master.models import (
     PartyMember,
     RetreatOutcome,
 )
-from dungeon_master.narrative import NarrativeConfig
-from dungeon_master.oracle import OracleEngine
-from dungeon_master.service import GameService
-from dungeon_master.state_store import StateStore
-from dungeon_master.turn_router import (
+from dungeon_master.llm.narration import NarrativeConfig
+from dungeon_master.llm.planning import (
     PlannedTurnOp,
     PlannedTurnOpKind,
     TurnPlan,
     TurnRoute,
     TurnRouter,
 )
+from dungeon_master.mechanics.engine import CairnEngine
+from dungeon_master.mechanics.oracle import OracleEngine
+from dungeon_master.memory import LocationMemory
+from dungeon_master.persistence.state_store import StateStore
 from tests.factories import sample_state
 from tests.service.cairn_fakes import (
     FakeCairnEngine,

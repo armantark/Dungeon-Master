@@ -9,7 +9,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
-from dungeon_master.models import OracleKind
+from dungeon_master.domain.models import OracleKind
 
 type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "default"]
 type ReasoningPolicy = ReasoningEffort | Literal["auto"]
