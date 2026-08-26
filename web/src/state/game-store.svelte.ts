@@ -8,43 +8,17 @@
 //   the latest pending OracleOutcome and the in-flight request live in the
 //   same state object as the persisted state.
 
-import { api, StreamTransportError } from "../lib/api";
-import { loadOocNotes, saveOocNotes } from "./save/ooc-notes";
-import { parseTurn, SLASH_HELP } from "../lib/slash";
+import { api } from "../lib/api";
+import { saveOocNotes } from "./save/ooc-notes";
+import { CampaignWorkflow, type ClientNote } from "./play";
+import { SaveLibraryWorkflow, type LibraryStatus } from "./save";
 import {
-  clearStreamResume,
-  loadStreamResume,
-  saveStreamResume,
-  updateStreamResumeStages,
-} from "./save/stream-resume";
-import {
-  applyStageEvent,
-  applyStateTerminal,
-  payloadTerminal,
-  stateTerminal,
-  type StageProgress,
-} from "./stream-runner";
-import type { StreamHandlers, StreamResult } from "./stream/streaming";
-import {
-  buildAcquirePrompt,
-  buildRetreatPrompt,
-  createClientNote,
-  createExplanationNote,
-  createOraclePreviewNote,
-  type ClientNote,
-} from "./play";
-import { createdSaveId, mergePersistedNotes, type LibraryStatus } from "./save";
-import {
-  cacheLlmSettings,
-  formatRuntimeError,
-  presetForProvider,
-  providerForPreset,
-  validateApiKey,
+  RuntimeSettingsWorkflow,
   type CredentialSetupStatus,
   type LlmSettingsStatus,
   type RuntimeBootstrapStatus,
 } from "./runtime";
-import { emptyStreamingState, type RollPhase, type StreamingState } from "./stream";
+import { emptyStreamingState, StreamWorkflow, type RollPhase, type StreamingState } from "./stream";
 import type {
   CampaignEndReason,
   CampaignSeed,
@@ -209,8 +183,6 @@ class GameStore {
   #scrollSeq = 0;
   inspectorFocusRequest: InspectorFocusRequest | null = $state(null);
   #inspectorFocusSeq = 0;
-  #abortController: AbortController | null = null;
-  #cancelRequested = false;
 
   // F-12 Save library --------------------------------------------------------
   //
@@ -271,6 +243,10 @@ class GameStore {
   // `_guard_request_idle` rejects swaps until the player's turn
   // settles).
   settingsSaveError: string | null = $state(null);
+  #streamWorkflow = new StreamWorkflow(this);
+  #saveWorkflow = new SaveLibraryWorkflow(this, this.#streamWorkflow);
+  #runtimeWorkflow = new RuntimeSettingsWorkflow(this, () => this.bootstrap());
+  #campaignWorkflow = new CampaignWorkflow(this, this.#streamWorkflow);
 
   // Derived: the most recent oracle outcome on the persisted state. Exposed
   // as a getter (via `$derived.by`) so the dice tumbler can subscribe and
@@ -281,31 +257,11 @@ class GameStore {
   });
 
   async refresh(): Promise<void> {
-    await this.#run((signal) => api.getState(signal));
+    await this.#streamWorkflow.runState((signal) => api.getState(signal));
   }
 
   async bootstrapRuntime(): Promise<void> {
-    this.runtimeStatus = "checking";
-    this.runtimeError = null;
-    this.credentialSetupError = null;
-    this.credentialSetupStatus = "idle";
-    try {
-      const response = await api.getLlmSettings();
-      this.#cacheLlmSettings(response);
-      this.credentialSetupProvider = providerForPreset(response.preset);
-      if (response.needs_key) {
-        this.runtimeStatus = "needs_key";
-        this.state = null;
-        return;
-      }
-      await this.bootstrap();
-      this.runtimeStatus = "ready";
-    } catch (exc) {
-      this.runtimeStatus = "error";
-      this.runtimeError = this.#formatError(exc);
-      this.settingsStatus = "error";
-      this.settingsError = this.runtimeError;
-    }
+    await this.#runtimeWorkflow.bootstrap();
   }
 
   /**
@@ -323,39 +279,7 @@ class GameStore {
    * new id with stale campaign data.
    */
   async bootstrap(): Promise<void> {
-    this.libraryStatus = "loading";
-    this.libraryError = null;
-    try {
-      const response = await api.bootstrapLibrary();
-      this.library = response.saves;
-      if (response.active_save_id === null) {
-        this.libraryStatus = "empty";
-        this.activeSaveId = null;
-        this.state = null;
-        return;
-      }
-      const state = await this.#fetchSaveState();
-      if (state === null) {
-        this.libraryStatus = "selecting";
-        return;
-      }
-      this.#publishSaveBinding(response.active_save_id, state);
-      this.#hydrateOocNotes();
-      this.libraryStatus = "ready";
-      // After the canonical state is bound we check for an in-flight
-      // request the previous page abandoned. Reattach is fire-and-
-      // forget from bootstrap's perspective: if it resolves to a
-      // final_state, the store updates as usual; if it 404s (session
-      // gone) we silently clear the descriptor and the player just
-      // sees the persisted state. We deliberately don't await this
-      // — bootstrap should land on `ready` quickly so the chat
-      // surface can render its existing log while the resumed stream
-      // tails in over top.
-      void this.#tryResumeStream();
-    } catch (exc) {
-      this.libraryStatus = "empty";
-      this.libraryError = this.#formatError(exc);
-    }
+    await this.#saveWorkflow.bootstrap();
   }
 
   /**
@@ -376,31 +300,7 @@ class GameStore {
    * call sites uniform).
    */
   async createSave(select = true): Promise<string | null> {
-    this.libraryError = null;
-    try {
-      const beforeIds = new Set(this.library.map((entry) => entry.save_id));
-      const response = await api.createSave(select);
-      this.library = response.saves;
-      const newSaveId = createdSaveId(beforeIds, response.saves);
-      if (select) {
-        if (response.active_save_id === null) {
-          throw new Error("The new save was created without becoming active.");
-        }
-        const state = await this.#fetchSaveState();
-        if (state === null) {
-          this.libraryStatus = "selecting";
-          return newSaveId;
-        }
-        this.#resetEphemera();
-        this.#publishSaveBinding(response.active_save_id, state);
-        this.#hydrateOocNotes();
-        this.libraryStatus = "ready";
-      }
-      return newSaveId;
-    } catch (exc) {
-      this.libraryError = this.#formatError(exc);
-      return null;
-    }
+    return await this.#saveWorkflow.create(select);
   }
 
   /**
@@ -415,32 +315,7 @@ class GameStore {
    * same way `createSave` does.
    */
   async selectSave(saveId: string): Promise<void> {
-    if (saveId === this.activeSaveId && this.state !== null) {
-      // Selecting the already-active save is a no-op rather than a
-      // round-trip — the splash uses this path when the player picks
-      // their current campaign by mistake.
-      this.libraryStatus = "ready";
-      return;
-    }
-    this.libraryError = null;
-    try {
-      const response = await api.selectSave(saveId);
-      this.library = response.saves;
-      if (response.active_save_id === null) {
-        throw new Error("The selected save did not become active.");
-      }
-      const state = await this.#fetchSaveState();
-      if (state === null) {
-        this.libraryStatus = "selecting";
-        return;
-      }
-      this.#resetEphemera();
-      this.#publishSaveBinding(response.active_save_id, state);
-      this.#hydrateOocNotes();
-      this.libraryStatus = "ready";
-    } catch (exc) {
-      this.libraryError = this.#formatError(exc);
-    }
+    await this.#saveWorkflow.select(saveId);
   }
 
   /**
@@ -450,26 +325,7 @@ class GameStore {
    * the active save's "you are here" cue without re-asking the server.
    */
   openLibrary(): void {
-    if (this.libraryStatus === "ready") {
-      this.libraryStatus = "selecting";
-    }
-    // Refresh the summaries fire-and-forget so the splash isn't stale
-    // (a long-running session may have advanced the active save's
-    // scene/encounter counters that the cards display on hover).
-    void api
-      .bootstrapLibrary()
-      .then((response) => {
-        this.library = response.saves;
-        // This refresh updates shelf metadata only. `activeSaveId` is
-        // the id paired with the currently loaded state, so changing it
-        // from a manifest response would split the binding if another
-        // tab selected a different save. A real switch goes through
-        // `selectSave`, which fetches and publishes both values.
-      })
-      .catch(() => {
-        // Stale data is acceptable — the splash still works against
-        // whatever we last loaded.
-      });
+    this.#saveWorkflow.open();
   }
 
   /**
@@ -478,9 +334,7 @@ class GameStore {
    * save is created.
    */
   closeLibrary(): void {
-    if (this.activeSaveId !== null && this.state !== null) {
-      this.libraryStatus = "ready";
-    }
+    this.#saveWorkflow.close();
   }
 
   /**
@@ -495,36 +349,11 @@ class GameStore {
    * feels instant after the first open.
    */
   async openSettings(): Promise<void> {
-    this.settingsOpen = true;
-    this.settingsSaveError = null;
-    if (this.settings === null) {
-      this.settingsStatus = "loading";
-    }
-    try {
-      const response = await api.getLlmSettings();
-      this.#cacheLlmSettings(response);
-    } catch (exc) {
-      this.settingsStatus = "error";
-      this.settingsError = this.#formatError(exc);
-    }
+    await this.#runtimeWorkflow.openSettings();
   }
 
   closeSettings(): void {
-    this.settingsOpen = false;
-    this.settingsSaveError = null;
-    // We deliberately don't reset `settings` to null — keeping the
-    // last-known payload around means re-opening the modal is
-    // instantaneous (the cached cards render while the refresh
-    // round-trips).
-    if (this.settingsStatus === "saving" || this.settingsStatus === "loading") {
-      // A still-pending request will resolve onto a closed modal;
-      // setting `idle` here would clobber the eventual `ready`.
-      // Leave the status alone — the next open will refresh.
-      return;
-    }
-    if (this.settingsStatus === "error") {
-      this.settingsStatus = "idle";
-    }
+    this.#runtimeWorkflow.closeSettings();
   }
 
   /**
@@ -539,203 +368,67 @@ class GameStore {
    * again.
    */
   async updateLlmPreset(preset: LLMPreset): Promise<boolean> {
-    if (this.settings !== null && this.settings.preset === preset) {
-      return true;
-    }
-    this.settingsStatus = "saving";
-    this.settingsSaveError = null;
-    try {
-      const response = await api.updateLlmSettings(preset);
-      this.#cacheLlmSettings(response);
-      return true;
-    } catch (exc) {
-      this.settingsStatus = "ready";
-      this.settingsSaveError = this.#formatError(exc);
-      return false;
-    }
+    return await this.#runtimeWorkflow.updatePreset(preset);
   }
 
   openCredentialSetup(provider: LLMProvider): void {
-    this.credentialSetupProvider = provider;
-    this.credentialSetupError = null;
-    this.credentialSetupOpen = true;
+    this.#runtimeWorkflow.openCredentialSetup(provider);
   }
 
   closeCredentialSetup(): void {
-    if (this.credentialSetupStatus === "saving") return;
-    if (this.runtimeStatus === "needs_key") return;
-    this.credentialSetupOpen = false;
-    this.credentialSetupError = null;
+    this.#runtimeWorkflow.closeCredentialSetup();
   }
 
   async saveLlmCredentials(provider: LLMProvider, apiKey: string): Promise<boolean> {
-    const cleaned = validateApiKey(apiKey);
-    if (cleaned === null) {
-      this.credentialSetupStatus = "error";
-      this.credentialSetupError = "API key cannot be empty.";
-      return false;
-    }
-    this.credentialSetupStatus = "saving";
-    this.credentialSetupError = null;
-    try {
-      let response = await api.updateLlmCredentials(provider, cleaned);
-      this.#cacheLlmSettings(response);
-      const targetPreset = presetForProvider(provider);
-      if (response.preset !== targetPreset) {
-        response = await api.updateLlmSettings(targetPreset);
-        this.#cacheLlmSettings(response);
-      }
-      this.credentialSetupStatus = "idle";
-      this.credentialSetupOpen = false;
-      await this.bootstrap();
-      this.runtimeStatus = "ready";
-      return true;
-    } catch (exc) {
-      this.credentialSetupStatus = "error";
-      this.credentialSetupError = this.#formatError(exc);
-      this.runtimeStatus = "needs_key";
-      return false;
-    }
+    return await this.#runtimeWorkflow.saveCredentials(provider, apiKey);
   }
 
   async reset(): Promise<void> {
-    await this.#run((signal) => api.reset(signal), { cancelLabel: "Stop reset" });
+    await this.#campaignWorkflow.reset();
   }
 
   async setChaos(value: number): Promise<void> {
-    await this.#run((signal) => api.setChaos(value, signal));
+    await this.#campaignWorkflow.setChaos(value);
   }
 
   async updateNotes(settingNotes: string, playerNotes: string): Promise<void> {
-    await this.#run((signal) => api.updateNotes(settingNotes, playerNotes, signal));
+    await this.#campaignWorkflow.updateNotes(settingNotes, playerNotes);
   }
 
-  /**
-   * B-02 persist campaign directives (OOC steering surface).
-   *
-   * Routed through the same `#run` plumbing as every other state
-   * mutation so the loading shimmer / cancel button behave
-   * consistently — the backend swap of "did the action_log gain
-   * an entry?" is invisible to the call site, which is the right
-   * level of abstraction for the Inspector editor: it just wants
-   * to commit and trust that the next render sees the new
-   * directives.
-   */
   async updateDirectives(worldGuidance: string, playGuidance: string): Promise<void> {
-    await this.#run((signal) => api.updateDirectives(worldGuidance, playGuidance, signal));
+    await this.#campaignWorkflow.updateDirectives(worldGuidance, playGuidance);
   }
 
-  /**
-   * F-15 persist a new campaign seed.
-   *
-   * Routed through the same `#run` plumbing as every other state
-   * mutation so the loading shimmer behaves consistently. The
-   * backend rejects this with 409 once the campaign has actually
-   * started — that's by design (the world was generated against
-   * the previous seed and changing it now would desync the
-   * fiction). The 409 detail surfaces on `state.error` like any
-   * other backend conflict.
-   *
-   * Why we don't local-cache the seed before the round-trip: the
-   * editor already mirrors the in-flight value in its own local
-   * state and rebases off `game.state.campaign_seed` when the
-   * call succeeds. Optimistic local updates would just create a
-   * "save failed but the picker still shows the new value" foot
-   * gun for very little speed gain.
-   */
   async updateCampaignSeed(seed: CampaignSeed): Promise<void> {
-    await this.#run((signal) => api.updateCampaignSeed(seed, signal));
+    await this.#campaignWorkflow.updateCampaignSeed(seed);
   }
 
   async askYesNo(question: string, likelihood: Likelihood): Promise<void> {
-    const cleaned = question.trim();
-    if (!cleaned) return;
-    const outcome = await this.#call((signal) => api.previewYesNo(cleaned, likelihood, signal), {
-      cancelLabel: "Stop preview",
-    });
-    if (outcome === null) return;
-    this.#oraclePreviewNote(cleaned, outcome);
+    await this.#campaignWorkflow.askYesNo(question, likelihood);
   }
 
   async randomEvent(): Promise<void> {
-    await this.#runWithRoll((signal) => api.randomEvent(signal));
+    await this.#campaignWorkflow.randomEvent();
   }
 
   async sceneCheck(expectedScene: string): Promise<void> {
-    await this.#runWithRoll((signal) => api.sceneCheck(expectedScene, signal));
+    await this.#campaignWorkflow.sceneCheck(expectedScene);
   }
 
   async submitAction(action: string): Promise<void> {
-    // Player actions don't roll mechanically, so we skip the tumble phase
-    // and just show the loading shimmer. Stream first; fall back to the
-    // unary endpoint if the backend hasn't shipped streaming yet.
-    await this.#runStreaming({
-      stream: (handlers, signal) => api.streamSubmitAction(action, handlers, signal),
-      fallback: (signal) => api.submitAction(action, signal),
-      cancelLabel: "Stop response",
-      rollAware: false,
-    });
+    await this.#campaignWorkflow.submitAction(action);
   }
 
-  /**
-   * F-10 OOC rules explainer. Streams an explanation through the
-   * `final_payload` channel and lands the answer as an ephemeral
-   * `ClientNote` (kind `"explanation"`) — the question and answer
-   * stay on the same note so the chat surface can render a single
-   * OOC card rather than two disjoint bubbles.
-   *
-   * Why we deliberately do NOT mutate `state.action_log`:
-   *   The OOC channel is non-canonical by contract. Persisting the
-   *   exchange would mean future memory rebuilds and narrative
-   *   prompts include the explainer's prose, which would slowly
-   *   poison the in-fiction voice. Keeping the record client-side
-   *   matches the backend's `_load_state_readonly` guarantee and
-   *   makes "ephemeral" a UX promise we can verify (reload clears).
-   *
-   * Streaming UI: while in flight, the ChatFeed renders an OOC
-   * provisional bubble keyed off `streaming.route === "explanation"`.
-   * On stream completion the provisional bubble is replaced by the
-   * persisted ClientNote in one tick — the question is captured on
-   * the note up-front so the visual identity (Q + A pair) is stable
-   * across the swap.
-   */
   async explain(question: string): Promise<void> {
-    const cleaned = question.trim();
-    if (!cleaned) return;
-    const answer = await this.#runStreamingPayload<string>({
-      stream: (handlers, signal) => api.streamExplain(cleaned, handlers, signal),
-      fallback: async (signal) => {
-        const response = await api.explain(cleaned, signal);
-        return response.answer;
-      },
-      finalKind: "explanation",
-      extract: (payload) => (payload as { answer: string }).answer,
-      cancelLabel: "Stop explaining",
-    });
-    if (answer === null) return;
-    const trimmed = answer.trim();
-    if (trimmed === "") return;
-    this.#explanationNote(cleaned, trimmed);
+    await this.#campaignWorkflow.explain(question);
   }
 
   async submitTurn(text: string): Promise<void> {
-    // Natural chat may or may not roll; the backend router decides. The
-    // streaming variant emits a `mechanics_ready` event before any prose
-    // tokens, so the dice receipt pins as soon as the deterministic
-    // resolution is known and the prose streams on top.
-    await this.#runStreaming({
-      stream: (handlers, signal) => api.streamSubmitTurn(text, handlers, signal),
-      fallback: (signal) => api.submitTurn(text, signal),
-      cancelLabel: "Stop response",
-      rollAware: true,
-    });
+    await this.#campaignWorkflow.submitTurn(text);
   }
 
   async fetchCharacterTemplates(): Promise<CharacterSheet[]> {
-    const response = await this.#call((signal) => api.getCharacterTemplates(signal), {
-      cancelLabel: "Stop templates",
-    });
-    return response?.templates ?? [];
+    return await this.#campaignWorkflow.fetchCharacterTemplates();
   }
 
   async generateCharacterDraft(
@@ -743,30 +436,11 @@ class GameStore {
     prompt?: string,
     template?: CharacterSheet,
   ): Promise<CharacterSheet | null> {
-    return await this.#runStreamingPayload<CharacterSheet>({
-      stream: (handlers, signal) =>
-        api.streamCharacterDraft(mode, handlers, prompt, template, signal),
-      fallback: async (signal) => {
-        const response = await api.generateCharacterDraft(mode, prompt, template, signal);
-        return response.draft;
-      },
-      finalKind: "character_draft",
-      extract: (payload) => (payload as { draft: CharacterSheet }).draft,
-      cancelLabel: "Stop draft",
-    });
+    return await this.#campaignWorkflow.generateCharacterDraft(mode, prompt, template);
   }
 
   async generateCharacterQuiz(concept: string): Promise<CharacterQuiz | null> {
-    return await this.#runStreamingPayload<CharacterQuiz>({
-      stream: (handlers, signal) => api.streamCharacterQuiz(concept, handlers, signal),
-      fallback: async (signal) => {
-        const response = await api.generateCharacterQuiz(concept, signal);
-        return response.quiz;
-      },
-      finalKind: "character_quiz",
-      extract: (payload) => (payload as { quiz: CharacterQuiz }).quiz,
-      cancelLabel: "Stop interview",
-    });
+    return await this.#campaignWorkflow.generateCharacterQuiz(concept);
   }
 
   async generateQuizzedCharacterDraft(
@@ -774,143 +448,27 @@ class GameStore {
     answers: CharacterQuizAnswer[],
     finalNote: string | null,
   ): Promise<CharacterSheet | null> {
-    return await this.#runStreamingPayload<CharacterSheet>({
-      stream: (handlers, signal) =>
-        api.streamQuizzedCharacterDraft(concept, answers, finalNote, handlers, signal),
-      fallback: async (signal) => {
-        const response = await api.generateQuizzedCharacterDraft(
-          concept,
-          answers,
-          finalNote,
-          signal,
-        );
-        return response.draft;
-      },
-      finalKind: "character_draft",
-      extract: (payload) => (payload as { draft: CharacterSheet }).draft,
-      cancelLabel: "Stop draft",
-    });
+    return await this.#campaignWorkflow.generateQuizzedCharacterDraft(concept, answers, finalNote);
   }
 
   async finalizeCharacter(character: CharacterSheet): Promise<void> {
-    await this.#run((signal) => api.finalizeCharacter(character, signal), {
-      cancelLabel: "Stop finalize",
-    });
+    await this.#campaignWorkflow.finalizeCharacter(character);
   }
 
-  /**
-   * F-06 explicit terminal close. We pass `null` for an empty
-   * summary so the backend's deterministic-default branch fires —
-   * that keeps the rule "End-Banner always has prose to render"
-   * enforced server-side, which means new clients can't accidentally
-   * push an empty summary into the canon. The backend rejects this
-   * call with a 409 if the encounter is still active or if death
-   * is requested while the character is alive; we surface the
-   * detail string so the player sees *why* the close was refused.
-   */
   async endCampaign(reason: CampaignEndReason, summary: string): Promise<void> {
-    const trimmed = summary.trim();
-    const payloadSummary = trimmed === "" ? null : trimmed;
-    await this.#run((signal) => api.endCampaign(reason, payloadSummary, signal), {
-      cancelLabel: "Stop close",
-    });
+    await this.#campaignWorkflow.endCampaign(reason, summary);
   }
 
   async startCampaign(): Promise<void> {
-    await this.#runStreaming({
-      stream: (handlers, signal) => api.streamStartCampaign(handlers, signal),
-      fallback: (signal) => api.startCampaign(signal),
-      cancelLabel: "Stop generation",
-      rollAware: false,
-    });
+    await this.#campaignWorkflow.startCampaign();
   }
 
   async regenerateMessage(eventId: string): Promise<void> {
-    await this.#runStreaming({
-      stream: (handlers, signal) => api.streamRegenerateMessage(eventId, handlers, signal),
-      fallback: (signal) => api.regenerateMessage(eventId, signal),
-      cancelLabel: "Stop repair",
-      rollAware: true,
-    });
+    await this.#campaignWorkflow.regenerateMessage(eventId);
   }
 
-  /**
-   * Single entry point for the Composer. Parses slash commands and
-   * dispatches; falls back to a free-text player action.
-   *
-   * Returns true when the input was consumed (so the Composer can
-   * clear its buffer). Returns false on a no-op or failed backend
-   * dispatch so the player can retry the same text without retyping.
-   */
   async submit(rawText: string): Promise<boolean> {
-    const parsed = parseTurn(rawText);
-
-    switch (parsed.kind) {
-      case "error":
-        if (parsed.message) this.#note("error", parsed.message);
-        return parsed.message !== "";
-      case "help":
-        this.#note("help", SLASH_HELP);
-        return true;
-      case "reset":
-        await this.reset();
-        break;
-      case "chaos":
-        await this.setChaos(parsed.value);
-        break;
-      case "event":
-        await this.randomEvent();
-        break;
-      case "scene":
-        await this.sceneCheck(parsed.expected);
-        break;
-      case "ask":
-        await this.askYesNo(parsed.question, parsed.likelihood);
-        break;
-      case "retreat":
-        // We deliberately translate `/retreat` into a free-text turn
-        // rather than hitting the explicit `/api/cairn/retreat`
-        // endpoint. The unified turn pipeline gives us narration,
-        // memory updates, and a chat receipt — three things the bare
-        // deterministic endpoint doesn't produce. The planner already
-        // classifies "I retreat" → RETREAT, so this is the same
-        // behavior the player gets from typing it as prose.
-        await this.submitTurn(buildRetreatPrompt(parsed.reason));
-        break;
-      case "acquire":
-        // Same funnel-through-the-planner reasoning as /retreat. The
-        // explicit `/api/cairn/acquire` endpoint exists for callers
-        // that want a deterministic primitive, but the chat-first
-        // invariant says every player turn should produce narration
-        // and memory updates. The planner classifies "I take/loot/buy"
-        // as ACQUIRE_ITEM, so the slash and natural-language paths
-        // converge on the exact same backend pipeline.
-        await this.submitTurn(buildAcquirePrompt(parsed.verb, parsed.body));
-        break;
-      case "explain":
-        // F-10 OOC explainer. The question never round-trips through
-        // the planner — the explainer is a separate, read-only LLM
-        // path that intentionally does not mutate canon. Routing
-        // through `submitTurn` would persist the exchange in
-        // `action_log` and contaminate future memory rebuilds, which
-        // is exactly what we don't want.
-        await this.explain(parsed.question);
-        break;
-      case "end":
-        // F-06 terminal close. Unlike /retreat and /acquire, this
-        // does *not* funnel through the planner — terminal-state
-        // transitions are a lifecycle op, not an in-fiction action,
-        // so we hit the dedicated `/campaign/end` endpoint directly
-        // and let the End-Banner read off the resulting state. The
-        // backend writes a system event for the close so the chat
-        // archive still has a closing beat.
-        await this.endCampaign(parsed.reason, parsed.summary);
-        break;
-      case "action":
-        await this.submitTurn(parsed.text);
-        break;
-    }
-    return this.error === null;
+    return await this.#campaignWorkflow.submit(rawText);
   }
 
   toggleInspector(): void {
@@ -981,53 +539,7 @@ class GameStore {
   }
 
   cancelCurrentRequest(): void {
-    if (!this.isLoading || this.#abortController === null) return;
-    // A Stop-button mash would otherwise re-fire the backend cancel
-    // POST for every click between the abort and the finally-block
-    // teardown. Idempotency is fine on the backend side (the registry
-    // entry has already been cancelled), but re-firing is wasteful
-    // and pollutes browser devtools.
-    if (this.#cancelRequested) return;
-    this.#cancelRequested = true;
-
-    // Order matters here. We fire the backend cancel BEFORE aborting
-    // the local fetch:
-    //   1. Aborting the fetch first would tear down the connection
-    //      synchronously, which on some browsers cancels in-flight
-    //      requests on the same origin during microtask draining. By
-    //      kicking the cancel POST first we guarantee the backend
-    //      registry sees the request_id while the connection is still
-    //      live.
-    //   2. The cancel POST is fire-and-forget — we don't await it. The
-    //      backend's discard-only persistence contract (see
-    //      `service.py::_persist_streamed_state`) means we can rely on
-    //      "the server will throw away whatever it had in flight"
-    //      without needing the cancel POST's response to update local
-    //      state. Awaiting would just delay the UX collapse the user
-    //      asked for when they hit Stop.
-    //
-    // We deliberately use a *fresh* AbortController for the cancel
-    // POST itself rather than the one we're about to abort, otherwise
-    // the cancel would race against its own teardown and we'd never
-    // hit the backend.
-    const requestId = this.streaming.requestId;
-    if (requestId !== null) {
-      void api.cancelRequest(requestId).catch(() => {
-        // Swallow: the local abort below collapses the UI either way,
-        // and a failed cancel POST just means the LLM keeps burning
-        // tokens server-side until it would have completed anyway —
-        // which is bad but not user-visible in this client.
-      });
-    }
-
-    // Clear the provisional buffer up-front so the chat surface
-    // collapses the in-flight bubble immediately rather than waiting
-    // for the fetch teardown to round-trip through the finally block.
-    // The backend discards on cancel, so there is no canonical state
-    // we'd ever want to preserve from the partial stream.
-    this.streaming = emptyStreamingState();
-
-    this.#abortController.abort();
+    this.#streamWorkflow.cancel();
   }
 
   // True only while a stream is active for chat-flavored output. The
@@ -1037,637 +549,6 @@ class GameStore {
   // so there's exactly one source of truth: `streaming.active`.
   get isStreaming(): boolean {
     return this.streaming.active;
-  }
-
-  // --- internals ---
-
-  async #fetchSaveState(): Promise<GameState | null> {
-    const state = await this.#call((signal) => api.getState(signal));
-    if (state === null) {
-      this.libraryError = this.error;
-      return null;
-    }
-    return state;
-  }
-
-  #publishSaveBinding(saveId: string, state: GameState): void {
-    // Both writes are synchronous after the state fetch has completed;
-    // Svelte batches them into one render, so consumers never observe
-    // the selected id paired with the previous save's GameState.
-    this.activeSaveId = saveId;
-    this.state = state;
-  }
-
-  /**
-   * F-12 clear every client-only buffer that was scoped to the
-   * previous save. Called from `createSave` and `selectSave` on the
-   * happy path; deliberately *not* called on bootstrap failure (the
-   * splash needs to keep its `libraryError` visible).
-   *
-   * We don't touch `inspectorOpen` because the player's preference for
-   * having the inspector open is a UX setting, not save-scoped — if
-   * they had it open in their last save, it stays open in the next.
-   */
-  #resetEphemera(): void {
-    this.notes = [];
-    this.error = null;
-    this.scrollRequest = null;
-    this.inspectorFocusRequest = null;
-    this.streaming = emptyStreamingState();
-    this.pendingOracle = null;
-    this.rollPhase = "idle";
-  }
-
-  #note(kind: ClientNote["kind"], text: string): void {
-    this.notes = [...this.notes, createClientNote(kind, text)];
-  }
-
-  // F-10: separate helper because explanation notes carry both the
-  // question and answer. We could overload `#note(...)` instead, but
-  // that would mean every other call site has to remember to leave
-  // the question undefined; a focused helper keeps the OOC shape
-  // self-documenting at the call site.
-  //
-  // We persist explanation notes to localStorage (per-save) so the
-  // OOC scrollback survives a reload. The action_log still never
-  // sees them — see save/ooc-notes.ts for the rationale.
-  #explanationNote(question: string, answer: string): void {
-    this.notes = [...this.notes, createExplanationNote(question, answer)];
-    saveOocNotes(this.activeSaveId, this.notes);
-  }
-
-  #oraclePreviewNote(question: string, outcome: OracleOutcome): void {
-    this.notes = [...this.notes, createOraclePreviewNote(question, outcome)];
-  }
-
-  #cacheLlmSettings(response: LLMSettingsResponse): void {
-    const cached = cacheLlmSettings(response);
-    this.settings = cached.settings;
-    this.settingsStatus = cached.status;
-    this.settingsError = cached.error;
-  }
-
-  // Pull the per-save OOC scrollback off localStorage and merge it
-  // into the in-memory notes list. Called after every save bind
-  // (`bootstrap`, `createSave(select=true)`, `selectSave`) once
-  // `activeSaveId` is the new save's id and `#resetEphemera` has
-  // already cleared the old in-memory log.
-  //
-  // We append rather than replace so a stream that completed *before*
-  // hydration finished (vanishingly unlikely, but possible if the
-  // bootstrap getState is slow and the player hits /explain
-  // immediately) doesn't get clobbered by the persisted history. The
-  // dedup-by-id guards against the same flow if hydration is racy.
-  #hydrateOocNotes(): void {
-    const persisted = loadOocNotes(this.activeSaveId);
-    this.notes = mergePersistedNotes(this.notes, persisted);
-  }
-
-  async #run(
-    call: (signal: AbortSignal) => Promise<GameState>,
-    options?: { cancelLabel?: string },
-  ): Promise<void> {
-    const next = await this.#call(call, options);
-    if (next !== null) this.state = next;
-  }
-
-  /**
-   * Try to reattach to a stream the previous page left behind.
-   *
-   * Called from `bootstrap` after the active save is bound. The flow:
-   *   1. Read the resume descriptor for this save (TTL- and shape-
-   *      validated by `loadStreamResume`). If absent, nothing to do.
-   *   2. Open the GET /api/requests/{request_id}/stream endpoint
-   *      through the same `#runStreaming` plumbing as a fresh turn,
-   *      flagged with `streaming.resuming: true` so the chat surface
-   *      can render a "resuming…" cue instead of the normal
-   *      "streaming…" tag. We pass `rollAware: false` because we
-   *      can't tell from the descriptor whether the original turn
-   *      had a roll, and replaying a tumble for a stream that's
-   *      already past mechanics_ready would feel wrong.
-   *   3. Any transport-level failure (404 → session unknown,
-   *      409 → wrong save bound) clears the descriptor and lets
-   *      the player carry on with their fresh state. We deliberately
-   *      don't surface a banner — the persisted state already
-   *      reflects whatever the backend committed before we lost
-   *      the connection.
-   */
-  async #tryResumeStream(): Promise<void> {
-    const descriptor = loadStreamResume(this.activeSaveId);
-    if (descriptor === null) return;
-    if (this.streaming.active || this.isLoading) return;
-
-    // Open the stream through the same runStreaming plumbing as a
-    // fresh request. The `fallback` is a no-op that returns the
-    // current state — there's nothing sensible to fall back to for a
-    // resume (the original POST already happened on the previous
-    // page), so we surface any transport failure as an error.
-    try {
-      // Restore persisted stages so the checklist appears immediately
-      // before the reattach round-trip completes. The backend may
-      // replay stage events that supersede these, which is fine —
-      // applyStageEvent merges by stage_id.
-      const restoredStages: StageProgress[] = (descriptor.stages ?? []).map((s) => ({
-        stageId: s.stageId,
-        label: s.label,
-        status: s.status as StageProgress["status"],
-        order: s.order,
-        startedAt: s.startedAt,
-        completedAt: s.completedAt,
-      }));
-
-      this.streaming = {
-        ...emptyStreamingState(),
-        active: true,
-        resuming: true,
-        stages: restoredStages,
-      };
-      this.error = null;
-      this.isLoading = true;
-      this.cancelLabel = "Stop response";
-      this.#abortController = new AbortController();
-      this.#cancelRequested = false;
-
-      let observedTerminal = false;
-      const handlers: StreamHandlers = {
-        onMeta: (event) => {
-          this.streaming = {
-            ...this.streaming,
-            route: event.route,
-            requestId: event.request_id,
-          };
-        },
-        onStage: (event) => {
-          const next = applyStageEvent(this.streaming.stages, event);
-          this.streaming = { ...this.streaming, stages: next };
-          updateStreamResumeStages(this.activeSaveId, next);
-        },
-        onMechanics: (event) => {
-          this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
-          this.pendingOracle = event.outcome;
-        },
-        onOracleOutcome: (event) => {
-          this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
-          this.pendingOracle = event.outcome;
-        },
-        onThinkingDelta: (event) => {
-          this.streaming = {
-            ...this.streaming,
-            thinking: this.streaming.thinking + event.text,
-          };
-        },
-        onContentDelta: (event) => {
-          this.streaming = {
-            ...this.streaming,
-            content: this.streaming.content + event.text,
-          };
-        },
-      };
-
-      try {
-        const result = await api.reattachStream(
-          descriptor.request_id,
-          handlers,
-          this.#abortController.signal,
-        );
-        observedTerminal = applyStateTerminal(stateTerminal(result), {
-          replaceState: (state) => {
-            this.state = state;
-          },
-          reportError: (message) => {
-            this.error = message;
-          },
-        });
-      } catch (exc) {
-        if (this.#isAbortError(exc)) {
-          // Bootstrap-driven resume isn't user-cancellable yet; an
-          // abort here means a remount tore us down, which is fine.
-        } else if (
-          exc instanceof StreamTransportError &&
-          (exc.status === 404 || exc.status === 409)
-        ) {
-          // Session is gone (GC'd, wrong save) — drop the descriptor
-          // silently. The player keeps their persisted state.
-          observedTerminal = true;
-        } else {
-          // Anything else we surface as an error so the player isn't
-          // staring at a stuck "resuming…" tag forever.
-          this.error = this.#formatError(exc);
-          observedTerminal = true;
-        }
-      }
-      if (observedTerminal) {
-        clearStreamResume(this.activeSaveId);
-      }
-    } finally {
-      this.#abortController = null;
-      this.#cancelRequested = false;
-      this.cancelLabel = null;
-      this.pendingOracle = null;
-      this.isLoading = false;
-      this.streaming = emptyStreamingState();
-    }
-  }
-
-  // Streaming run for endpoints that mutate GameState (turn, action,
-  // regenerate, campaign/start). The flow is:
-  //   1. Open the NDJSON stream. Update `streaming.*` on every event.
-  //   2. On `mechanics_ready` / `oracle_outcome`, pin the deterministic
-  //      outcome immediately so the receipt animates while prose is
-  //      still streaming.
-  //   3. On `final_state`, replace `state` wholesale and clear the
-  //      provisional buffer. The action_log entry produced by the
-  //      backend is the canonical record — the provisional bubble is
-  //      replaced, not merged.
-  //   4. On any transport error indicating "stream not implemented"
-  //      (404 / 405), transparently fall back to the unary endpoint.
-  //      This keeps the frontend usable while the backend pass lands.
-  //
-  // `rollAware` mirrors the old #runWithRoll behavior: when an oracle
-  // outcome is produced, animate the dice tumble before revealing the
-  // narrative. With streaming, the deterministic outcome arrives
-  // before the prose anyway, so we tumble between
-  // `mechanics_ready` and the first `content_delta` rather than
-  // blocking on a full response.
-  async #runStreaming(opts: {
-    stream: (handlers: StreamHandlers, signal: AbortSignal) => Promise<StreamResult>;
-    fallback: (signal: AbortSignal) => Promise<GameState>;
-    cancelLabel?: string;
-    rollAware: boolean;
-  }): Promise<void> {
-    this.error = null;
-    this.isLoading = true;
-    this.cancelLabel = opts.cancelLabel ?? "Stop response";
-    this.#abortController = new AbortController();
-    this.#cancelRequested = false;
-    this.streaming = { ...emptyStreamingState(), active: true };
-    if (opts.rollAware) this.rollPhase = "rolling";
-
-    const previousLength = this.state?.oracle_history.length ?? 0;
-    let mechanicsArrived = false;
-    let didFallback = false;
-    // Track whether the stream observed a terminal event (final_state
-    // or backend-authored error). We use this to decide whether the
-    // resume descriptor should outlive `#runStreaming`'s finally
-    // block: if the request finished cleanly (or the backend gave up
-    // with an explicit error), nothing remains to resume; if the
-    // network died mid-stream without a terminal, we keep the
-    // descriptor so the next page load can reattach.
-    let observedTerminal = false;
-
-    const handlers: StreamHandlers = {
-      onMeta: (event) => {
-        this.streaming = {
-          ...this.streaming,
-          route: event.route,
-          requestId: event.request_id,
-        };
-        // First moment we know the backend's request_id — write the
-        // descriptor before any deltas land so an immediate refresh
-        // still finds something to reattach to.
-        saveStreamResume(this.activeSaveId, {
-          request_id: event.request_id,
-          route: event.route,
-          started_at: new Date().toISOString(),
-        });
-      },
-      onStage: (event) => {
-        const next = applyStageEvent(this.streaming.stages, event);
-        this.streaming = { ...this.streaming, stages: next };
-        updateStreamResumeStages(this.activeSaveId, next);
-      },
-      onMechanics: (event) => {
-        this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
-        this.pendingOracle = event.outcome;
-        mechanicsArrived = true;
-        if (opts.rollAware) {
-          void this.#tumbleAfterMechanics();
-        }
-      },
-      onOracleOutcome: (event) => {
-        this.streaming = { ...this.streaming, pendingOutcome: event.outcome };
-        this.pendingOracle = event.outcome;
-        mechanicsArrived = true;
-        if (opts.rollAware) void this.#tumbleAfterMechanics();
-      },
-      onThinkingDelta: (event) => {
-        this.streaming = {
-          ...this.streaming,
-          thinking: this.streaming.thinking + event.text,
-        };
-      },
-      onContentDelta: (event) => {
-        this.streaming = {
-          ...this.streaming,
-          content: this.streaming.content + event.text,
-        };
-      },
-    };
-
-    try {
-      const result = await opts.stream(handlers, this.#abortController.signal);
-      const terminal = stateTerminal(result);
-      observedTerminal = applyStateTerminal(terminal, {
-        replaceState: (state) => {
-          this.state = state;
-        },
-        reportError: (message) => {
-          this.error = message;
-        },
-      });
-      if (terminal.kind === "aborted" && terminal.reason === "client") {
-        if (this.#cancelRequested) {
-          this.#note("info", "Stopped waiting for the current response.");
-        }
-      } else if (terminal.kind === "aborted" && terminal.reason === "server") {
-        // Stream closed without a final event. Treat as a recoverable
-        // error so the user knows the server bailed; we don't fall
-        // back to the unary endpoint here because we may have already
-        // mutated the action_log via deltas the backend chose to
-        // commit in pieces.
-        this.error = "Stream ended unexpectedly. The server may have timed out.";
-      } else if (terminal.kind === "error") {
-        // applyStateTerminal already adopted the backend error and any
-        // partial canonical state it returned.
-      }
-    } catch (exc) {
-      if (this.#isAbortError(exc)) {
-        if (this.#cancelRequested) {
-          this.#note("info", "Stopped waiting for the current response.");
-        }
-      } else if (this.#isFallbackEligible(exc)) {
-        // Backend hasn't shipped streaming for this endpoint yet —
-        // run the unary path so the UI keeps working in the
-        // transition window. We only fall back when we haven't yet
-        // observed any stream events: if mechanics or deltas arrived,
-        // the request is already in motion and re-issuing would
-        // double-resolve.
-        if (!mechanicsArrived && this.streaming.content === "") {
-          didFallback = true;
-          try {
-            const next = await opts.fallback(this.#abortController.signal);
-            this.state = next;
-            const newOutcome = next.oracle_history[next.oracle_history.length - 1] ?? null;
-            this.pendingOracle = newOutcome;
-            const newOracleArrived = next.oracle_history.length > previousLength;
-            if (newOracleArrived && opts.rollAware) {
-              await this.#sleep(900);
-              this.rollPhase = "settling";
-              await this.#sleep(380);
-            }
-          } catch (fallbackExc) {
-            if (this.#isAbortError(fallbackExc)) {
-              if (this.#cancelRequested) {
-                this.#note("info", "Stopped waiting for the current response.");
-              }
-            } else {
-              this.error = this.#formatError(fallbackExc);
-            }
-          }
-        } else {
-          this.error = this.#formatError(exc);
-        }
-      } else {
-        this.error = this.#formatError(exc);
-      }
-    } finally {
-      // The resume descriptor only outlives this turn when the
-      // network died mid-stream without a terminal event AND the
-      // user didn't explicitly cancel. In every other case the
-      // request is done — keeping the descriptor would just produce
-      // a 404 on the next bootstrap. The fallback path is treated
-      // as terminal too because the unary fetch already produced
-      // the final state, so there's nothing left to reattach to.
-      // Snapshot the cancel flag *before* we reset it below — the
-      // two writes have to read the same value in either order.
-      const cancelled = this.#cancelRequested;
-      const reachedTerminal = observedTerminal || didFallback || cancelled;
-      if (reachedTerminal) {
-        clearStreamResume(this.activeSaveId);
-      }
-      this.#abortController = null;
-      this.#cancelRequested = false;
-      this.cancelLabel = null;
-      this.pendingOracle = null;
-      this.rollPhase = "idle";
-      this.isLoading = false;
-      this.streaming = emptyStreamingState();
-      // `didFallback` is captured for debugging / future telemetry; we
-      // intentionally don't surface it to the user. The point of the
-      // fallback is that it's invisible.
-      void didFallback;
-    }
-  }
-
-  // Streaming run for non-state endpoints (quiz, draft). Returns the
-  // typed final payload. Falls back to the unary endpoint on a 404/405
-  // exactly like #runStreaming so quiz/draft generation still works
-  // before the backend pass ships streaming for those routes.
-  async #runStreamingPayload<TFinal>(opts: {
-    stream: (handlers: StreamHandlers, signal: AbortSignal) => Promise<StreamResult>;
-    fallback: (signal: AbortSignal) => Promise<TFinal>;
-    finalKind: "character_quiz" | "character_draft" | "explanation";
-    extract: (payload: unknown) => TFinal;
-    cancelLabel?: string;
-  }): Promise<TFinal | null> {
-    this.error = null;
-    this.isLoading = true;
-    this.cancelLabel = opts.cancelLabel ?? "Stop response";
-    this.#abortController = new AbortController();
-    this.#cancelRequested = false;
-    this.streaming = { ...emptyStreamingState(), active: true };
-
-    let extracted: TFinal | null = null;
-    let observedAnyEvent = false;
-
-    const handlers: StreamHandlers = {
-      onMeta: (event) => {
-        observedAnyEvent = true;
-        this.streaming = {
-          ...this.streaming,
-          route: event.route,
-          requestId: event.request_id,
-        };
-      },
-      onStage: (event) => {
-        observedAnyEvent = true;
-        this.streaming = {
-          ...this.streaming,
-          stages: applyStageEvent(this.streaming.stages, event),
-        };
-      },
-      onThinkingDelta: (event) => {
-        observedAnyEvent = true;
-        this.streaming = {
-          ...this.streaming,
-          thinking: this.streaming.thinking + event.text,
-        };
-      },
-      onContentDelta: (event) => {
-        observedAnyEvent = true;
-        this.streaming = {
-          ...this.streaming,
-          content: this.streaming.content + event.text,
-        };
-      },
-    };
-
-    try {
-      const result = await opts.stream(handlers, this.#abortController.signal);
-      const terminal = payloadTerminal(result);
-      if (terminal.kind === "payload") {
-        if (terminal.event.kind !== opts.finalKind) {
-          this.error = `Unexpected payload kind '${terminal.event.kind}' for this request.`;
-        } else {
-          try {
-            extracted = opts.extract(terminal.event.payload);
-          } catch (exc) {
-            this.error = this.#formatError(exc);
-          }
-        }
-      } else if (terminal.kind === "error") {
-        this.error = terminal.event.message;
-      } else if (terminal.reason === "server" && !this.#cancelRequested) {
-        this.error = "The request ended before a final result arrived.";
-      }
-    } catch (exc) {
-      if (this.#isAbortError(exc)) {
-        if (this.#cancelRequested) {
-          this.#note("info", "Stopped waiting for the current response.");
-        }
-      } else if (this.#isFallbackEligible(exc) && !observedAnyEvent) {
-        try {
-          extracted = await opts.fallback(this.#abortController.signal);
-        } catch (fallbackExc) {
-          if (this.#isAbortError(fallbackExc)) {
-            if (this.#cancelRequested) {
-              this.#note("info", "Stopped waiting for the current response.");
-            }
-          } else {
-            this.error = this.#formatError(fallbackExc);
-          }
-        }
-      } else {
-        this.error = this.#formatError(exc);
-      }
-    } finally {
-      this.#abortController = null;
-      this.#cancelRequested = false;
-      this.cancelLabel = null;
-      this.isLoading = false;
-      this.streaming = emptyStreamingState();
-    }
-    return extracted;
-  }
-
-  async #tumbleAfterMechanics(): Promise<void> {
-    // Short tumble to sell the physicality of the roll, then settle
-    // back to idle so the prose stream isn't dimmed by the rolling
-    // animation. We don't reset rollPhase mid-stream if the user
-    // already cancelled; the finally block in #runStreaming handles
-    // that case by clearing rollPhase to idle.
-    await this.#sleep(700);
-    if (this.rollPhase === "rolling") this.rollPhase = "settling";
-    await this.#sleep(280);
-    if (this.rollPhase === "settling") this.rollPhase = "idle";
-  }
-
-  // True when the transport failure is recoverable by trying the
-  // unary endpoint. We only treat 404/405 as fallback-eligible — every
-  // other status (500, 502, 503) is a real failure that the unary
-  // endpoint will also fail, and the stream-vs-unary churn would just
-  // double the bad-state surface for the user.
-  #isFallbackEligible(exc: unknown): boolean {
-    if (!(exc instanceof StreamTransportError)) return false;
-    return exc.status === 404 || exc.status === 405;
-  }
-
-  async #runWithRoll(
-    call: (signal: AbortSignal) => Promise<GameState>,
-    options?: { cancelLabel?: string },
-  ): Promise<void> {
-    this.error = null;
-    this.rollPhase = "rolling";
-    this.isLoading = true;
-    this.cancelLabel = options?.cancelLabel ?? "Stop response";
-    this.#abortController = new AbortController();
-    this.#cancelRequested = false;
-
-    try {
-      // We resolve the API call first so we have the deterministic Roll
-      // results to animate toward, but we hold the narrative reveal until
-      // the dice have visibly settled. Without this, the model's latency
-      // would short-circuit the physical tactility we're trying to evoke.
-      const previousLength = this.state?.oracle_history.length ?? 0;
-      const next = await call(this.#abortController.signal);
-      const newOutcome = next.oracle_history[next.oracle_history.length - 1] ?? null;
-      this.pendingOracle = newOutcome;
-
-      const newOracleArrived = next.oracle_history.length > previousLength;
-      if (newOracleArrived) {
-        await this.#sleep(900);
-        this.rollPhase = "settling";
-        await this.#sleep(380);
-      }
-
-      this.state = next;
-    } catch (exc) {
-      if (this.#isAbortError(exc)) {
-        if (this.#cancelRequested) {
-          this.#note("info", "Stopped waiting for the current response.");
-        }
-      } else {
-        this.error = this.#formatError(exc);
-      }
-    } finally {
-      this.#abortController = null;
-      this.#cancelRequested = false;
-      this.cancelLabel = null;
-      this.pendingOracle = null;
-      this.rollPhase = "idle";
-      this.isLoading = false;
-    }
-  }
-
-  async #call<T>(
-    call: (signal: AbortSignal) => Promise<T>,
-    options?: { cancelLabel?: string },
-  ): Promise<T | null> {
-    this.isLoading = true;
-    this.error = null;
-    this.cancelLabel = options?.cancelLabel ?? "Stop response";
-    this.#abortController = new AbortController();
-    this.#cancelRequested = false;
-
-    try {
-      return await call(this.#abortController.signal);
-    } catch (exc) {
-      if (this.#isAbortError(exc)) {
-        if (this.#cancelRequested) {
-          this.#note("info", "Stopped waiting for the current response.");
-        }
-        return null;
-      }
-      this.error = this.#formatError(exc);
-      return null;
-    } finally {
-      this.#abortController = null;
-      this.#cancelRequested = false;
-      this.cancelLabel = null;
-      this.isLoading = false;
-    }
-  }
-
-  #sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  #formatError(exc: unknown): string {
-    return formatRuntimeError(exc);
-  }
-
-  #isAbortError(exc: unknown): boolean {
-    return exc instanceof DOMException && exc.name === "AbortError";
   }
 }
 
