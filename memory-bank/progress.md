@@ -38,7 +38,7 @@
 - Project setup exists in `pyproject.toml`, `.env.example`, `.gitignore`, and `README.md`.
 - A persistent feature backlog now exists at `memory-bank/featureKanban.md`, organized as a Kanban-style ticket board for staged planning.
 - Desktop beta scaffolding now exists too: `web/src-tauri/` (Tauri v2 shell), `web/src-tauri/app-icon.png` + `web/src-tauri/icons/` (rounded desktop icon source and generated platform assets), `scripts/build_tauri_sidecar.py` (PyInstaller sidecar build), and `.github/workflows/desktop-release.yml` (draft desktop release pipeline).
-- The current `main` source now builds locally as a Tauri macOS bundle. On 2026-08-27, `npm run tauri:build` completed after updating the PyInstaller source-layout seam to `src/dungeon_master/entrypoints/server.py`; it produced a 65 MiB Apple Silicon DMG with SHA-256 `dc96c8858ebd0ff425059b035d0fa4a08dcd54cc771ecb2d0c424ffc9c51ef58`. The DMG verified successfully, but the local app is still only ad-hoc signed and no new GitHub release exists.
+- The current `main` source now builds locally as a Tauri macOS bundle. On 2026-08-27, `npm run tauri:build` completed after updating the PyInstaller source-layout seam to `src/dungeon_master/entrypoints/server.py`; it produced a 65 MiB Apple Silicon DMG with SHA-256 `dc96c8858ebd0ff425059b035d0fa4a08dcd54cc771ecb2d0c424ffc9c51ef58`. The DMG verified successfully, and `desktop-v0.1.2` is now a public prerelease with Apple Silicon and Windows artifacts uploaded. Signing/notarization remains future release work; Linux and Intel macOS matrix jobs had not completed at the last status check.
 
 ## What Has Been Decided
 
