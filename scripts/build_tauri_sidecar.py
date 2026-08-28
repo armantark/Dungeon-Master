@@ -13,7 +13,7 @@ PYINSTALLER_ROOT = ROOT / ".tauri-sidecar"
 DIST_DIR = PYINSTALLER_ROOT / "dist"
 WORK_DIR = PYINSTALLER_ROOT / "work"
 SPEC_DIR = PYINSTALLER_ROOT / "spec"
-ENTRYPOINT = ROOT / "src" / "dungeon_master" / "cli.py"
+ENTRYPOINT = ROOT / "src" / "dungeon_master" / "entrypoints" / "server.py"
 APP_NAME = "dungeon-master-backend"
 
 # Uvicorn discovers parts of its runtime dynamically; being explicit keeps the
